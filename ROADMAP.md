@@ -12,6 +12,7 @@
 - [x] 851 条中文↔danbooru 词典
 - [x] 单工作流 (AnimaStandard V7) 端到端验证
 - [x] 一键启动脚本 start_airpaint.bat (后端 + 隧道)
+- [x] 意图扩写 (氛围->场景) + 角色词典 (char_dict.yaml)
 
 ---
 

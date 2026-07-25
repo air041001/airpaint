@@ -22,6 +22,12 @@ CFG = yaml.safe_load((BASE / "config.yaml").read_text(encoding="utf-8"))
 DICT = yaml.safe_load((BASE / "dict.yaml").read_text(encoding="utf-8")) or {}
 DICT = {str(k).strip().lower(): str(v).strip() for k, v in DICT.items() if v is not None}
 
+# 角色词典: 中文名 -> danbooru 精确 tag. Qwen3-8B 认不准角色 tag (字面翻译/编造/漏认),
+# 故角色走词典可靠命中, 命中后把 tag 作为上下文喂给 LLM (见 decisions.md D12).
+_CHAR_DICT_PATH = BASE / "char_dict.yaml"
+CHAR_DICT = yaml.safe_load(_CHAR_DICT_PATH.read_text(encoding="utf-8")) if _CHAR_DICT_PATH.exists() else {}
+CHAR_DICT = {str(k).strip(): str(v).strip() for k, v in CHAR_DICT.items() if v is not None}
+
 COMFY = CFG["comfy_url"].rstrip("/")
 TOKENS = set(CFG.get("tokens", []))
 DAILY_LIMIT = int(CFG.get("daily_limit", 30))
@@ -83,24 +89,51 @@ _TRANSLATE_CACHE: dict[str, str] = {}
 _TRANSLATE_CACHE_MAX = 500
 
 SILICONFLOW_SYSTEM_PROMPT = (
-    "Translate Chinese anime image descriptions into English booru-style tags. "
-    "Each tag is ONE concrete visual element. Output lowercase tags joined by ', ' only. "
-    "No sentences, no repetition, no meta words, no explanations.\n"
-    "If people appear, always start with a count tag (1girl / 2girls / 1boy). "
-    "Preserve any english the user already wrote. Keep under 200 characters.\n"
-    "Example input: 红发绿眼的女孩, 穿校服, 在教室看书\n"
-    "Example output: 1girl, red hair, green eyes, school uniform, reading, book, classroom, indoors, sitting\n"
-    "Example input: 银发狐耳少女, 生气, 樱花飘落\n"
-    "Example output: 1girl, silver hair, fox ears, angry, cherry blossoms, falling petals, outdoors"
+    "You are a prompt engineer for anime image generation. "
+    "Convert user input into english danbooru-style tags. "
+    "Output ONLY lowercase tags separated by commas and spaces. "
+    "No explanations, no periods, no quotes, no markdown.\n\n"
+    "Rules:\n"
+    "1. If the input provides known character tags, include them EXACTLY as given.\n"
+    "2. If user describes a feeling/mood (e.g. 治愈, 忧郁, 春天的感觉), expand into matching scene+lighting+style tags.\n"
+    "3. If user describes specific details (hair/eyes/clothing), preserve them.\n"
+    "4. Subject: if a person/character is mentioned or implied, include a count tag (1girl/1boy). "
+    "If the input is PURELY a mood/scene with no person, focus on scenery and do NOT force a character.\n"
+    "5. Keep total under 200 characters.\n\n"
+    "Examples:\n"
+    "Input: 白发蓝眼睛猫耳少女\n"
+    "Output: 1girl, white hair, blue eyes, cat ears, smile, school uniform, standing, indoors, soft lighting, anime style\n\n"
+    "Input: 想要春天的感觉\n"
+    "Output: spring, cherry blossoms, petals falling, gentle breeze, warm sunlight, pastel colors, peaceful, garden, anime style\n\n"
+    "Input: [Character: march_7th_(honkai:_star_rail)] 三月七在樱花树下\n"
+    "Output: march_7th_(honkai:_star_rail), 1girl, solo, cherry blossoms, tree, petals, spring, smile, standing, outdoors, soft lighting, anime style"
 )
 
 
+def detect_characters(text: str) -> list[tuple[str, str]]:
+    """扫描输入里出现的已知角色名, 返回 [(中文名, danbooru_tag)]. 子串匹配."""
+    return [(name, tag) for name, tag in CHAR_DICT.items() if name in text]
+
+
 async def siliconflow_translate(text: str) -> str:
-    """走硅基流动 Qwen 模型翻译, 失败抛异常 (由上层转 HTTPException)"""
+    """走硅基流动 Qwen 模型翻译 + 意图扩写, 失败抛异常 (由上层转 HTTPException)"""
     api_key = CFG.get("siliconflow_api_key", "").strip()
     model = CFG.get("siliconflow_model", "Qwen/Qwen3-8B")
     if not api_key:
         raise RuntimeError("siliconflow_api_key 未在 config.yaml 中配置")
+
+    chars = detect_characters(text)
+    # 快速路径: 输入基本只是一个已知角色名 (无其他描述) -> 直接出 tag, 跳过 LLM.
+    # 原因: LLM 对裸角色名会疯狂编场景/武器 (实测 7.9s + sword/combat/archer 等噪声 tag).
+    if chars:
+        remain = text
+        for name, _ in chars:
+            remain = remain.replace(name, "")
+        if not re.sub(r"[,，、;；\s\n]+", "", remain):
+            return ", ".join(tag for _, tag in chars) + ", 1girl, solo"
+
+    # 角色命中: 把可靠 tag 作为上下文喂给 LLM (LLM 认不准角色 tag, 只让它管场景/氛围扩写)
+    char_ctx = f"[Character: {', '.join(tag for _, tag in chars)}] " if chars else ""
 
     r = await CLIENT.post(
         "https://api.siliconflow.cn/v1/chat/completions",
@@ -110,7 +143,7 @@ async def siliconflow_translate(text: str) -> str:
             "messages": [
                 {"role": "system", "content": SILICONFLOW_SYSTEM_PROMPT},
                 # /no_think: Qwen3 软开关, 强制不进思考模式 (思考会慢到 30s+ 且易复读)
-                {"role": "user", "content": "/no_think " + text},
+                {"role": "user", "content": "/no_think " + char_ctx + text},
             ],
             "temperature": 0.2,
             "max_tokens": 180,

@@ -50,6 +50,8 @@ ComfyUI  127.0.0.1:8188  (不对公网开放, 用 run_nvidia_gpu_fast_fp16_accum
    - `google`: gtx 端点逐词翻译 (本机需翻墙, 已基本弃用)。
    - `none`: 未命中部分原样保留。
 
+siliconflow 路径含**意图扩写**: `detect_characters()` 扫 `char_dict.yaml` 命中角色名 (Qwen3-8B 认不准角色 tag, 走词典); 裸角色名直接出 `tag, 1girl, solo` 跳过 LLM; 否则把角色 tag 作 `[Character: ...]` 上下文喂 LLM, LLM 扩写氛围/场景, 纯氛围输入不强制加人物。详见 decisions.md D12/D13。
+
 ### Workflow Engine (工作流注入)
 `build_prompt(wf_name, prompt_en, w, h)`:
 1. 读 `workflows/<file>.json`。

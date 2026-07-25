@@ -1,0 +1,30 @@
+# 角色中文名 -> danbooru 精确 tag
+# Qwen3-8B 认不准角色 tag (会字面翻译/编造/漏认), 故角色走词典可靠命中,
+# 命中后把 tag 作为上下文喂给 LLM, LLM 只负责场景/氛围扩写.
+# 命中逻辑: 子串匹配 (角色名出现在输入里即命中).
+# 标签格式参考 danbooru.donmai.us, 不确定的可去站内搜索校对后再加.
+# 按需扩充, 不限以下角色.
+
+# ---- 原神 ----
+雷电将军: raiden_shogun
+珊瑚宫心海: sangonomiya_kokomi
+甘雨: ganyu_(genshin_impact)
+芙宁娜: furina_(genshin_impact)
+纳西妲: nahida_(genshin_impact)
+钟离: zhongli_(genshin_impact)
+神里绫华: kamisato_ayaka
+胡桃: hu_tao_(genshin_impact)
+可莉: klee_(genshin_impact)
+妮露: nilou_(genshin_impact)
+夜兰: yelan_(genshin_impact)
+申鹤: shenhe_(genshin_impact)
+
+# ---- 崩坏:星穹铁道 ----
+三月七: march_7th_(honkai:_star_rail)
+镜流: jingliu_(honkai:_star_rail)
+黄泉: acheron_(honkai:_star_rail)
+姬子: himeko_(honkai:_star_rail)
+卡芙卡: kafka_(honkai:_star_rail)
+
+# ---- 其他 ----
+初音未来: hatsune_miku

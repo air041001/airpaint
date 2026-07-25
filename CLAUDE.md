@@ -22,7 +22,7 @@
 | ComfyUI 客户端 | `submit_and_wait()` | `/prompt` 提交 + `/history` 轮询 + `/view` 取图 |
 | 队列 | `worker()` `QUEUE` | 单并发 asyncio.Queue (GPU 串行) |
 | 静态托管 | `/` `/images` | `/` 返回 `web/index.html`, `/images` 出图 |
-| **Intent Engine** | — | **尚未实现**, 见 `docs/decisions.md`(迈向核心目标的方向) |
+| **Intent Engine** | `detect_characters()` `char_dict.yaml` | **部分实现**: 氛围扩写+角色词典; 完整意图解析(否定/歧义/构图)待做, 见 decisions.md D12/D13 |
 
 ## 运作规则(开发时遵守)
 

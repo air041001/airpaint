@@ -165,3 +165,31 @@ cherry blossoms, tree, outdoors
 - Intent Engine: 当前是平铺「中文->tag」, 拟解析用户意图结构 (角色/动作/场景/风格/构图、否定、歧义), 见 decisions.md 待决策项。
 - 用量/任务持久化 (SQLite), 见 ROADMAP Phase 3。
 - 根目录纳入 git 版本管理 (目前仅 web/ 是仓库)。
+
+---
+
+## 第 10 条 2026-07-25 - 意图识别 (氛围扩写 + 角色词典)
+
+### 完成内容
+
+把「中文->tag 平铺翻译」升级为「理解模糊意图并扩写」: 用户说个感觉(治愈/春天/安静)就能出完整画面; 角色名可靠命中 danbooru tag。这是项目的差异化点。
+
+### 遇到的问题与解决方案
+
+**问题 A: 用户只会说「想要春天的感觉」, 平铺翻译没法处理模糊氛围**
+- 系统提示词升级为 prompt-engineer 角色 + few-shot, 加规则: 氛围 -> scene+lighting+style 扩写。
+- 主体策略: 看输入决定 (提人物才加 1girl, 纯氛围出风景)。
+- 实测氛围扩写 1-3s, 几乎不增时。
+
+**问题 B: Qwen3-8B 认不准角色 tag**
+- 规则「命名角色用精确 danbooru tag」在小模型上是空头支票: 雷电将军->`lightning general`、珊瑚宫心海->`coral_palace_himeko`(错)、甘雨->没认出是角色(读成"甜雨")。仅示例里的三月七对 (在抄)。
+- 解法: 新建 `char_dict.yaml`, 命中后把 tag 作上下文喂 LLM, LLM 只扩场景。契合词典优先哲学。
+
+**问题 C: 裸角色名(如"甘雨")触发 LLM 疯狂编场景/武器, 7.9s + 噪声 tag**
+- 快速路径: 输入只是角色名时直接出 `tag, 1girl, solo` 跳过 LLM, 0s。
+
+### 端到端验证
+
+输入「三月七在樱花树下, 想要治愈的氛围」->
+`march_7th_(honkai:_star_rail), 1girl, solo, cherry blossoms, tree, petals, spring, gentle breeze, warm sunlight, soft lighting, peaceful, calm, anime style` (4.1s)
+-> 出图 `images/6f59dada02bd.png`。详见 decisions.md D12/D13。

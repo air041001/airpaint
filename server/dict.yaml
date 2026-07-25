@@ -496,7 +496,6 @@ W坐: w-sitting
 弹吉他: playing guitar
 唱歌: singing
 睡觉: sleeping
-# (dup removed) 打哈欠: yawning
 伸懒腰: stretching arms
 双手合十: hands clasped
 比心: finger heart
@@ -596,7 +595,6 @@ W坐: w-sitting
 晴天: clear sky
 多云: cloudy
 阴天: overcast
-# (dup removed) 雨天: rain
 暴雨: heavy rain
 雪天: snow
 大雪: heavy snow
@@ -675,7 +673,6 @@ W坐: w-sitting
 蜡烛: candle
 灯笼: lantern
 星星: star
-# (dup removed) 月亮: moon
 云朵: cloud
 泡泡: bubbles
 羽毛: feather
@@ -742,7 +739,6 @@ W坐: w-sitting
 欧美风: western style
 
 # ==================== 光效/氛围 ====================
-# (dup removed) 梦幻: dreamy atmosphere
 浪漫: romantic atmosphere
 神秘: mysterious atmosphere
 温馨: cozy atmosphere
@@ -785,7 +781,6 @@ flat色彩: flat colors
 # ==================== 数量/组合 ====================
 单人: solo
 双人: two girls
-# (dup removed) 多人: multiple girls
 群体: crowd
 成对: paired
 对称构图: symmetrical composition
@@ -800,7 +795,6 @@ flat色彩: flat colors
 面对面: facing each other
 追逐: chasing
 打闹: play fighting
-# (dup removed) 对视: looking at each other
 依靠: leaning on
 搭肩: arm around shoulder
 挽手: arm in arm
@@ -875,10 +869,7 @@ flat色彩: flat colors
 看烟花: watching fireworks
 放风筝: flying kite
 拍照: taking photo
-# (dup removed) 画画: painting
 弹琴: playing instrument
-# (dup removed) 唱歌: singing
-# (dup removed) 跳舞: dancing
 派对: party
 万圣节: halloween
 圣诞节: christmas
@@ -898,7 +889,6 @@ flat色彩: flat colors
 雨滴: raindrops
 水滴: water droplets
 水花: water splash
-# (dup removed) 泡泡: bubbles
 烟雾: smoke
 蒸汽: steam
 火焰: flames
@@ -910,7 +900,6 @@ flat色彩: flat colors
 光斑: light leaks
 
 # ==================== 摄影画面 ====================
-# (dup removed) 景深: depth of field
 虚化: bokeh
 广角: wide angle
 鱼眼: fisheye
@@ -926,3 +915,85 @@ flat色彩: flat colors
 胶片质感: film grain
 拍立得: polaroid
 老照片: vintage photo
+
+# ==================== 感觉/氛围/情绪 ====================
+治愈系: healing, soothing, warm, gentle, peaceful, soft lighting, pastel colors
+忧郁: melancholic, sad, gloomy, rain, blue tones, soft lighting, muted colors
+寂寞: lonely, solitude, empty, quiet, minimal, soft lighting, muted colors
+温暖: warm, cozy, gentle, golden hour, soft lighting, orange tones
+高冷: cold, distant, cool colors, minimal, clean, sharp lighting
+幻想: fantasy, magical, ethereal, glowing, sparkles, soft lighting
+黑暗: dark, horror, gothic, deep shadows, red accents, dramatic lighting
+压抑: oppressive, dark, heavy, gloomy, muted colors, dramatic lighting
+轻松: relaxed, casual, carefree, bright, soft lighting, warm tones
+愉快: cheerful, happy, bright, vibrant colors, sunlight, warm tones
+活力: energetic, dynamic, lively, vibrant colors, motion, bright lighting
+青春: youthful, fresh, vibrant, school uniform, sunlight, cherry blossoms
+未来: futuristic, sci-fi, neon, cyberpunk, glowing, high tech
+末日: apocalyptic, ruins, destruction, dark, dramatic lighting
+天堂: heavenly, angelic, divine, glowing, white, gold, clouds
+地狱: hellish, demonic, fire, brimstone, dark, red, dramatic lighting
+深渊: abyss, deep, dark, underwater, blue, black, mysterious
+银河: milky way, galaxy, stars, night sky, dark blue, glowing
+深海: deep sea, underwater, ocean, blue, dark, bioluminescent
+花海: flower field, flowers, colorful, spring, soft lighting
+枫叶: maple leaves, autumn, red, orange, falling leaves
+雪景: snow, winter, white, cold, peaceful, soft lighting
+雨景: rain, wet, umbrella, reflection, moody, blue tones
+夜景: night, city lights, neon, dark, glowing, urban
+黄昏: dusk, sunset, golden hour, orange, warm, silhouette
+黎明: dawn, sunrise, morning, soft light, pink, blue
+正午: noon, bright, harsh light, shadows, blue sky
+午后: afternoon, warm, soft light, golden, lazy
+清晨: early morning, mist, soft light, fresh, cool
+傍晚: evening, sunset, golden hour, warm, orange
+
+# ==================== 风格/美学 ====================
+日系: japanese style, anime, soft colors, clean lines
+日系动漫: anime style, japanese animation, cel shading, vibrant colors
+像素: pixel art, retro, 8-bit, 16-bit, limited palette
+黏土: clay style, 3d, cute, soft, rounded
+剪纸: paper cutout, layered, silhouette, craft
+剪影: silhouette, backlit, dramatic, minimal
+繁复: ornate, detailed, intricate, elaborate
+简约: simple, clean, minimal, modern
+现代: modern, contemporary, clean, sleek
+古典: classical, traditional, elegant, refined
+巴洛克: baroque, ornate, dramatic, gold, rich
+洛可可: rococo, ornate, pastel, playful, decorative
+维多利亚: victorian, elegant, lace, corset, refined
+爱德华: edwardian, elegant, vintage, refined
+装饰艺术: art deco, geometric, gold, elegant, 1920s
+新艺术: art nouveau, flowing, organic, elegant
+立体主义: cubism, geometric, abstract, fragmented
+印象派: impressionism, soft brushstrokes, light, color
+表现主义: expressionism, emotional, bold, distorted
+超现实: surreal, dreamlike, bizarre, impossible
+达达: dada, absurd, collage, avant-garde
+波普: pop art, bold, colorful, commercial
+街头: street style, urban, casual, graffiti
+原宿: harajuku, colorful, eclectic, japanese street
+甜美: sweet, cute, pastel, soft, feminine
+盐系: cool, casual, minimal, neutral colors
+森系: mori girl, natural, earthy, layered, vintage
+暗黑: dark, gothic, black, edgy, dramatic
+病娇: yandere, dark, twisted, cute, dangerous
+傲娇: tsundere, cute, angry, blush, twintails
+天然呆: airheaded, cute, innocent, clumsy
+三无: emotionless, quiet, mysterious, cool
+中二: chuunibyou, dramatic, edgy, dark, cool
+燃: fiery, passionate, dynamic, action, energy
+萌: moe, cute, adorable, innocent, big eyes
+可爱: cute, adorable, sweet, charming
+帅气: cool, handsome, stylish, confident
+美丽: beautiful, elegant, stunning, graceful
+英俊: handsome, cool, stylish, confident
+漂亮: pretty, beautiful, attractive, charming
+性感: sexy, seductive, alluring, mature
+妖娆: seductive, alluring, mysterious, mature
+清纯: pure, innocent, fresh, natural
+天真: innocent, naive, pure, sweet
+成熟: mature, elegant, sophisticated, adult
+御姐: mature, elegant, sophisticated, confident
+少女: girl, young, cute, innocent
+少年: boy, young, energetic, cheerful
