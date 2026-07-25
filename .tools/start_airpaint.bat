@@ -10,7 +10,7 @@ echo   airpaint.xyz 启动
 echo   后端:   http://127.0.0.1:8000
 echo   公网:   https://airpaint.xyz        (网页)
 echo           https://api.airpaint.xyz     (API)
-echo   Ctrl+C 退出会同时关闭后端和隧道
+echo   Ctrl+C 停隧道 (后端在另一窗口, 需单独关, 见末尾)
 echo ============================================
 echo.
 
@@ -30,5 +30,5 @@ echo [隧道] 启动 cloudflared ...
 "E:\cloudflared\cloudflared.exe" tunnel run airpaint
 
 echo.
-echo 服务已停止. (后端窗口需手动关闭)
+echo 隧道已停. 请关闭 "airpaint 后端" 窗口 (Ctrl+C 或点右上角 X).
 pause
