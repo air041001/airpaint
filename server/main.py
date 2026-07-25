@@ -52,7 +52,8 @@ WEB_DIR = BASE.parent / "web"
 
 @app.get("/", include_in_schema=False)
 async def index():
-    return FileResponse(WEB_DIR / "index.html")
+    # no-cache: 前端改了 (如修 fail-to-fetch) 后, 访客浏览器永远拿最新 HTML, 不被旧缓存卡住
+    return FileResponse(WEB_DIR / "index.html", headers={"Cache-Control": "no-cache"})
 
 JOBS: dict[str, dict] = {}          # job_id -> job
 QUEUE: asyncio.Queue[str] = asyncio.Queue()
