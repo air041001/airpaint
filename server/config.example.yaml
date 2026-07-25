@@ -1,0 +1,41 @@
+# 复制为 config.yaml 后按需修改 (config.yaml 含密钥, 已 gitignore, 永不提交公开仓库)
+host: 127.0.0.1
+port: 8000
+comfy_url: http://127.0.0.1:8188
+
+# 允许访问后端的前端来源 (CORS Origin). 前端网页与 API 同域不同子域, 需显式列出网页域名
+allow_origins:
+  - "https://airpaint.xyz"
+  - "https://www.airpaint.xyz"
+  - "http://127.0.0.1:8000"
+
+# 邀请码即 token, 每个朋友发一个, 可随时删减 (勿推真实码到公开仓库)
+tokens:
+  - "friend-xxxx"
+  - "friend-yyyy"
+
+daily_limit: 30          # 每个 token 每天最多生成张数
+timeout_seconds: 300     # 单张图超时 (工作流带人脸修复, 偏慢)
+
+# 翻译后端: siliconflow (国内直连, LLM 直出 danbooru tag, 推荐) | google (需翻墙) | none
+translate: siliconflow
+siliconflow_api_key: "sk-你的硅基流动key"
+siliconflow_model: "Qwen/Qwen3-8B"
+
+# 被禁止的提示词关键词 (小写子串匹配), 按需扩充
+banned_words: []
+
+# ---- 工作流配置 ----
+# file: ComfyUI 开启 Dev Mode 后用 "Save (API Format)" 导出的 JSON, 放 server/workflows/
+# prompt_node / seed_node / size_node: 节点在 API JSON 里的 id (字符串数字)
+# 找法: 打开导出 JSON, 找 CLIPTextEncode(正面)、KSampler(seed)、EmptyLatentImage(width/height)
+# negative_node 可选; 不配则用工作流自带的负面词模板
+workflows:
+  anima:
+    label: "AnimaStandard V7"
+    file: workflows/AnimaStandardV7.json
+    prompt_node: "54"
+    seed_node: "6"
+    size_node: "56"
+    sizes: ["832x1216", "1216x832", "1024x1024"]
+    quality_prefix: "masterpiece, best quality, ultra detailed, "

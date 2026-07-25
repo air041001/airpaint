@@ -1,0 +1,14 @@
+# 含密钥/邀请码, 永不提交
+config.yaml
+
+# 运行时产物
+images/
+__pycache__/
+*.pyc
+*.log
+
+# 便携版 gh CLI (大文件, 自行下载即可, 非源码)
+.tools/gh/
+
+# web/ 是独立 git 仓库 (air041001/air), 不纳入本仓库避免子模块混乱
+web/

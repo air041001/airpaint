@@ -1,0 +1,928 @@
+# 中文 -> danbooru tag 常用词典 (可自行扩充, 格式: 中文: english tag)
+# 词典命中不消耗翻译 API, 速度最快; 未命中的词才走翻译兜底
+
+# ==================== 发型 ====================
+长发: long hair
+短发: short hair
+中长发: medium hair
+极长发: very long hair
+及腰长发: absurdly long hair
+双马尾: twintails
+单马尾: ponytail
+侧马尾: side ponytail
+高马尾: high ponytail
+低马尾: low ponytail
+麻花辫: braid
+双麻花辫: twin braids
+法式辫: french braid
+包子头: double bun
+单包子头: single bun
+卷发: curly hair
+直发: straight hair
+呆毛: ahoge
+两根呆毛: two ahoges
+渐变发: gradient hair
+挑染: multicolored hair
+分叉发尾: split-ended hair
+波浪卷: wavy hair
+盘发: hair bun
+公主切: hime cut
+姬发式: hime cut
+波波头: bob cut
+寸头: buzz cut
+光头: bald
+脏辫: dreadlocks
+鱼骨辫: fishtail braid
+刘海: bangs
+空气刘海: blunt bangs
+斜刘海: swept bangs
+中分: parted bangs
+齐刘海: blunt bangs
+侧分刘海: side swept bangs
+遮眼刘海: hair over one eye
+遮眼发: hair over eyes
+发带: hairband
+蝴蝶结发饰: hair bow
+发夹: hair clip
+发簪: hair stick
+发花: hair flower
+丝带发饰: hair ribbon
+兔耳发饰: bunny hair ornament
+猫耳发饰: cat hair ornament
+耳机发饰: headphones
+
+# ==================== 发色 ====================
+白发: white hair
+银发: silver hair
+黑发: black hair
+金发: blonde hair
+粉发: pink hair
+红发: red hair
+蓝发: blue hair
+绿发: green hair
+紫发: purple hair
+棕发: brown hair
+灰发: grey hair
+橙发: orange hair
+青发: aqua hair
+浅蓝发: light blue hair
+深蓝发: dark blue hair
+浅紫发: light purple hair
+深紫发: dark purple hair
+浅粉发: light pink hair
+玫瑰金发: rose gold hair
+铂金发: platinum blonde
+亚麻色: ash blonde
+奶茶色: light brown hair
+彩虹发: multicolored hair
+双色发: two-tone hair
+渐变发色: gradient hair
+挑染发: streaked hair
+
+# ==================== 眼睛 ====================
+蓝眼睛: blue eyes
+绿眼睛: green eyes
+红眼睛: red eyes
+黄眼睛: yellow eyes
+紫眼睛: purple eyes
+棕眼睛: brown eyes
+黑眼睛: black eyes
+灰眼睛: grey eyes
+金眼睛: gold eyes
+粉眼睛: pink eyes
+橙眼睛: orange eyes
+青眼睛: aqua eyes
+浅蓝眼睛: light blue eyes
+深蓝眼睛: dark blue eyes
+浅绿眼睛: light green eyes
+翡翠眼: emerald eyes
+宝石眼: jeweled eyes
+异色瞳: heterochromia
+左蓝右红: heterochromia blue and red
+猫眼: cat eyes
+蛇瞳: slit pupils
+星星瞳: star-shaped pupils
+十字瞳: cross-shaped pupils
+螺旋瞳: spiral eyes
+心形瞳: heart-shaped pupils
+发光眼: glowing eyes
+闭眼: closed eyes
+睁眼: open eyes
+半闭眼: half-closed eyes
+眨眼: one eye closed
+泪眼: teary eyes
+无神眼: empty eyes
+锐利眼神: sharp eyes
+
+# ==================== 表情 ====================
+微笑: smile
+温柔微笑: gentle smile
+坏笑: smirk
+大笑: laughing
+轻笑: chuckle
+偷笑: giggle
+脸红: blush
+重度脸红: heavy blush
+微红: light blush
+害羞: shy
+尴尬: embarrassed
+惊讶: surprised
+震惊: shocked
+害怕: scared
+生气: angry
+暴怒: furious
+悲伤: sad
+哭泣: crying
+流泪: tears
+含泪: teary eyes
+大哭: sobbing
+无语: deadpan
+面无表情: expressionless
+冷淡: cold expression
+无奈: wry smile
+得意: smug
+困惑: confused
+好奇: curious
+憧憬: sparkling eyes
+心形眼: heart-shaped eyes
+星星眼: star-shaped eyes
+翻白眼: rolling eyes
+斗鸡眼: cross-eyed
+伸舌头: tongue out
+咬唇: biting lip
+嘟嘴: pouting
+吹气: puffing
+打哈欠: yawning
+舔嘴唇: licking lips
+
+# ==================== 嘴部 ====================
+张嘴: open mouth
+闭嘴: closed mouth
+小张嘴: slightly open mouth
+露齿笑: toothy smile
+虎牙: fang
+尖牙: sharp teeth
+兔牙: buck teeth
+舔: licking
+吐舌: tongue out
+长舌: long tongue
+叉舌: forked tongue
+
+# ==================== 体型 ====================
+苗条: slim
+纤细: slender
+丰满: curvy
+微胖: plump
+娇小: petite
+高挑: tall
+矮小: short
+肌肉: muscular
+健美: athletic
+丰满胸部: large breasts
+巨乳: huge breasts
+平胸: flat chest
+中等胸部: medium breasts
+小胸: small breasts
+翘臀: wide hips
+长腿: long legs
+短腿: short legs
+细腰: narrow waist
+宽肩: broad shoulders
+窄肩: narrow shoulders
+
+# ==================== 皮肤 ====================
+白皙皮肤: pale skin
+小麦色皮肤: tan
+深色皮肤: dark skin
+健康肤色: fair skin
+苍白色: very pale
+泛红皮肤: flushed skin
+
+# ==================== 动物特征 ====================
+猫耳: cat ears
+狗耳: dog ears
+兔耳: bunny ears
+狐耳: fox ears
+狼耳: wolf ears
+熊耳: bear ears
+牛耳: cow ears
+羊耳: sheep ears
+猪耳: pig ears
+猫尾: cat tail
+狗尾: dog tail
+狐尾: fox tail
+狼尾: wolf tail
+兔尾: bunny tail
+牛角: cow horns
+恶魔角: demon horns
+龙角: dragon horns
+羊角: ram horns
+独角: unicorn horn
+翅膀: wings
+天使翅膀: angel wings
+恶魔翅膀: demon wings
+蝴蝶翅膀: butterfly wings
+龙翅膀: dragon wings
+鸟翅膀: bird wings
+妖精翅膀: fairy wings
+猫爪: cat paws
+爪子: claws
+鳞片: scales
+尾巴: tail
+多条尾巴: multiple tails
+九尾: nine tails
+鱼尾: mermaid tail
+尖耳: pointed ears
+精灵耳: elf ears
+兽耳: animal ears
+毛茸茸: fluffy
+
+# ==================== 服装-上衣 ====================
+校服: school uniform
+水手服: sailor collar
+制服: uniform
+军装: military uniform
+西装: suit
+衬衫: shirt
+白衬衫: white shirt
+黑衬衫: black shirt
+T恤: t-shirt
+背心: tank top
+吊带衫: camisole
+毛衣: sweater
+针织衫: knitwear
+卫衣: hoodie
+外套: coat
+夹克: jacket
+牛仔外套: denim jacket
+风衣: trench coat
+大衣: overcoat
+羽绒服: down jacket
+和服: kimono
+浴衣: yukata
+振袖: furisode
+汉服: hanfu
+旗袍: cheongsam
+唐装: tangzhuang
+道服: dougi
+巫女服: miko
+修女服: nun habit
+女仆装: maid outfit
+护士服: nurse outfit
+泳装: swimsuit
+比基尼: bikini
+一件式泳衣: one-piece swimsuit
+学校泳装: school swimsuit
+运动服: sportswear
+体操服: gym uniform
+啦啦队服: cheerleader uniform
+洛丽塔: lolita fashion
+哥特: gothic lolita
+朋克: punk fashion
+街头风: street fashion
+复古风: retro fashion
+
+# ==================== 服装-下装 ====================
+裙子: skirt
+短裙: short skirt
+长裙: long skirt
+百褶裙: pleated skirt
+格子裙: plaid skirt
+牛仔裙: denim skirt
+A字裙: a-line skirt
+蛋糕裙: tiered skirt
+包臀裙: pencil skirt
+裤子: pants
+牛仔裤: jeans
+短裤: shorts
+热裤: short shorts
+百慕大短裤: bermuda shorts
+打底裤: leggings
+瑜伽裤: yoga pants
+阔腿裤: wide-leg pants
+工装裤: cargo pants
+西装裤: slacks
+内裤: panties
+比基尼内裤: bikini bottom
+丁字裤: thong
+安全裤: bloomers
+
+# ==================== 服装-连衣裙/连体 ====================
+连衣裙: dress
+吊带裙: slip dress
+衬衫裙: shirt dress
+背心裙: pinafore dress
+晚礼服: evening gown
+婚纱: wedding dress
+公主裙: princess dress
+碎花裙: floral dress
+吊带连衣裙: suspender dress
+背带裙: overall dress
+连体裤: jumpsuit
+工装连体裤: overalls
+
+# ==================== 鞋袜 ====================
+高跟鞋: high heels
+平底鞋: flats
+运动鞋: sneakers
+靴子: boots
+长靴: knee boots
+过膝靴: thigh boots
+短靴: ankle boots
+雨靴: rain boots
+凉鞋: sandals
+拖鞋: slippers
+木屐: geta
+玛丽珍鞋: mary janes
+乐福鞋: loafers
+帆布鞋: canvas shoes
+松糕鞋: platform shoes
+白丝: white thighhighs
+黑丝: black thighhighs
+肉丝: pantyhose
+过膝袜: thighhighs
+及膝袜: knee socks
+短袜: ankle socks
+条纹袜: striped thighhighs
+渔网袜: fishnets
+蕾丝袜: lace thighhighs
+不对称袜: mismatched thighhighs
+吊带袜: garter belt
+
+# ==================== 配饰 ====================
+眼镜: glasses
+墨镜: sunglasses
+单片眼镜: monocle
+圆框眼镜: round glasses
+半框眼镜: half-rim glasses
+猫眼眼镜: cat-eye glasses
+围巾: scarf
+披肩: shawl
+领带: necktie
+领结: bowtie
+蝴蝶结: ribbon bow
+项圈: collar
+choker: choker
+项链: necklace
+耳环: earrings
+耳钉: ear studs
+手链: bracelet
+手镯: bangle
+戒指: ring
+皇冠: crown
+头冠: tiara
+面纱: veil
+面具: mask
+口罩: face mask
+眼罩: blindfold
+创可贴: bandaid
+手套: gloves
+长手套: evening gloves
+半指手套: fingerless gloves
+皮手套: leather gloves
+毛线手套: mittens
+手袖: detached sleeves
+缎带: ribbon
+腰带: belt
+围裙: apron
+书包: school bag
+背包: backpack
+手提包: handbag
+挎包: shoulder bag
+书包扣: school bag charm
+扇子: folding fan
+油纸伞: paper umbrella
+雨伞: umbrella
+阳伞: parasol
+魔杖: magic wand
+权杖: scepter
+剑: sword
+大剑: greatsword
+匕首: dagger
+弓: bow
+盾牌: shield
+枪: gun
+步枪: rifle
+手枪: handgun
+
+# ==================== 帽子 ====================
+帽子: hat
+贝雷帽: beret
+鸭舌帽: baseball cap
+礼帽: top hat
+草帽: straw hat
+女巫帽: witch hat
+魔法帽: wizard hat
+圣诞帽: santa hat
+军帽: military cap
+护士帽: nurse cap
+猫耳帽: cat ear hat
+渔夫帽: bucket hat
+毛线帽: beanie
+宽檐帽: sun hat
+花环: flower wreath
+
+# ==================== 姿势-站姿 ====================
+站立: standing
+双手叉腰: hands on hips
+双手交叉: arms crossed
+双手举高: arms up
+单手举起: one arm up
+背手: hands behind back
+叉腿站: legs apart
+踮脚: tiptoe
+靠墙: leaning
+回头: looking back
+转身: turning around
+弯腰: bending
+侧身: sideways
+
+# ==================== 姿势-坐姿 ====================
+坐: sitting
+盘腿坐: cross-legged
+跪坐: seiza
+侧坐: sitting sideways
+抱膝坐: hugging knees
+双腿悬空坐: legs dangling
+椅子坐: sitting on chair
+地上坐: sitting on floor
+蹲: squatting
+W坐: w-sitting
+熊猫坐: panda sit
+
+# ==================== 姿势-躺姿 ====================
+躺: lying
+仰躺: lying on back
+侧躺: lying on side
+趴: lying on stomach
+俯卧: face down
+仰卧: face up
+半躺: reclining
+
+# ==================== 姿势-动作 ====================
+举手: raising hand
+伸手: reaching out
+指向: pointing
+招手: waving
+握手: shaking hands
+托腮: hand on own cheek
+捂嘴: covering mouth
+遮眼: covering eyes
+捂胸: hands on chest
+叉腰: hands on hips
+抱胸: arms crossed
+撑脸: chin rest
+挠头: scratching head
+整理头发: adjusting hair
+撩发: hair flip
+提裙: lifting skirt
+拉裙角: holding skirt
+伸展: stretching
+跳跃: jumping
+奔跑: running
+走路: walking
+跳舞: dancing
+转身回眸: looking over shoulder
+回头看: looking back
+仰头: looking up
+低头: looking down
+侧目: looking to the side
+闭目养神: eyes closed
+撑伞: holding umbrella
+看书: reading book
+写字: writing
+画画: drawing
+弹钢琴: playing piano
+弹吉他: playing guitar
+唱歌: singing
+睡觉: sleeping
+# (dup removed) 打哈欠: yawning
+伸懒腰: stretching arms
+双手合十: hands clasped
+比心: finger heart
+比耶: peace sign
+竖拇指: thumbs up
+鼓掌: clapping
+握拳: clenching fist
+吹口哨: whistling
+
+# ==================== 构图/镜头 ====================
+全身: full body
+半身: upper body
+上半身: upper body
+面部特写: close-up face
+脸部特写: portrait
+全身立绘: full body
+脚部特写: feet focus
+手部特写: hands focus
+背影: from behind
+侧面: from side
+俯视: from above
+仰视: from below
+前视: from front
+背面: back view
+多人: multiple girls
+两人: two girls
+三人: three girls
+对视: eye contact
+
+# ==================== 背景/场景 ====================
+室内: indoors
+室外: outdoors
+教室: classroom
+图书馆: library
+咖啡厅: cafe
+餐厅: restaurant
+厨房: kitchen
+卧室: bedroom
+客厅: living room
+浴室: bathroom
+温泉: hot spring
+游泳池: pool
+海滩: beach
+森林: forest
+草地: meadow
+花田: flower field
+花园: garden
+山上: mountain
+雪地: snow
+雨天: rain
+樱花: cherry blossoms
+星空: starry sky
+夜空: night sky
+夕阳: sunset
+日出: sunrise
+蓝天白云: blue sky and clouds
+城市: city
+街道: city street
+商店街: shopping street
+校园: school
+操场: schoolyard
+天台: rooftop
+走廊: hallway
+阶梯: stairs
+桥: bridge
+河边: riverside
+湖边: lakeside
+海边: seaside
+水下: underwater
+天空: sky
+云端: above clouds
+宇宙: space
+月亮: moon
+废墟: ruins
+城堡: castle
+神社: shrine
+寺庙: temple
+教堂: church
+游乐园: amusement park
+摩天轮: ferris wheel
+旋转木马: carousel
+便利店: convenience store
+超市: supermarket
+医院: hospital
+实验室: laboratory
+飞船: spaceship
+飞船内: spaceship interior
+未来都市: futuristic city
+赛博朋克: cyberpunk
+废土: post-apocalyptic
+
+# ==================== 天气/季节 ====================
+春天: spring
+夏天: summer
+秋天: autumn
+冬天: winter
+晴天: clear sky
+多云: cloudy
+阴天: overcast
+# (dup removed) 雨天: rain
+暴雨: heavy rain
+雪天: snow
+大雪: heavy snow
+雾: fog
+彩虹: rainbow
+闪电: lightning
+风: windy
+落叶: autumn leaves
+飘雪: snowflakes
+樱花飘落: falling cherry blossoms
+阳光: sunlight
+月光: moonlight
+星光: starlight
+
+# ==================== 光影效果 ====================
+逆光: backlighting
+侧光: side lighting
+柔光: soft lighting
+强光: harsh lighting
+丁达尔效应: god rays
+体积光: volumetric lighting
+霓虹光: neon lighting
+烛光: candlelight
+屏幕光: screen glow
+发光: glowing
+粒子光: light particles
+镜头光晕: lens flare
+阴影: dramatic shadows
+斑驳光影: dappled light
+
+# ==================== 道具/物品 ====================
+书本: book
+画本: sketchbook
+笔: pen
+铅笔: pencil
+毛笔: calligraphy brush
+画笔: paintbrush
+调色板: palette
+画架: easel
+相机: camera
+手机: smartphone
+笔记本电脑: laptop
+平板: tablet
+耳机: headphones
+头戴耳机: over-ear headphones
+麦克风: microphone
+吉他: guitar
+小提琴: violin
+钢琴: piano
+鼓: drums
+萨克斯: saxophone
+竖琴: harp
+茶杯: teacup
+咖啡杯: coffee cup
+酒杯: wine glass
+水瓶: water bottle
+冰淇淋: ice cream
+蛋糕: cake
+面包: bread
+寿司: sushi
+拉面: ramen
+饭团: onigiri
+草莓: strawberry
+苹果: apple
+香蕉: banana
+西瓜: watermelon
+花束: bouquet
+玫瑰花: rose
+向日葵: sunflower
+郁金香: tulip
+百合: lily
+薰衣草: lavender
+蒲公英: dandelion
+四叶草: four-leaf clover
+气球: balloon
+蜡烛: candle
+灯笼: lantern
+星星: star
+# (dup removed) 月亮: moon
+云朵: cloud
+泡泡: bubbles
+羽毛: feather
+水晶: crystal
+宝石: gemstone
+钻石: diamond
+珍珠: pearl
+金币: gold coin
+怀表: pocket watch
+沙漏: hourglass
+骰子: dice
+扑克牌: playing cards
+棋盘: chess board
+日记本: diary
+信封: envelope
+地图: map
+指南针: compass
+望远镜: binoculars
+显微镜: microscope
+地球仪: globe
+天平: balance scale
+钥匙: key
+锁: lock
+链条: chain
+铃铛: bell
+风筝: kite
+雪花球: snow globe
+八音盒: music box
+南瓜: pumpkin
+蛋: egg
+蘑菇: mushroom
+
+# ==================== 风格/品质 ====================
+杰作: masterpiece
+最佳品质: best quality
+高质量: high quality
+超精细: ultra-detailed
+极其精细: extremely detailed
+唯美: very aesthetic
+二次元: anime style
+水彩: watercolor
+油画: oil painting
+素描: sketch
+铅笔画: pencil drawing
+水墨: ink wash painting
+浮世绘: ukiyo-e
+像素画: pixel art
+低多边形: low poly
+黏土风格: clay style
+折纸: origami
+暗黑风: dark style
+梦幻: dreamy
+童话风: fairy tale
+蒸汽朋克: steampunk
+复古: retro
+极简: minimalist
+华丽: ornate
+赛博: cyberpunk
+未来主义: futurism
+奇幻: fantasy
+哥特风: gothic
+和风: japanese style
+中国风: chinese style
+欧美风: western style
+
+# ==================== 光效/氛围 ====================
+# (dup removed) 梦幻: dreamy atmosphere
+浪漫: romantic atmosphere
+神秘: mysterious atmosphere
+温馨: cozy atmosphere
+孤独: lonely atmosphere
+紧张: tense atmosphere
+宁静: peaceful atmosphere
+欢快: cheerful atmosphere
+忧伤: melancholic atmosphere
+史诗感: epic
+宏大: grand
+治愈: wholesome
+恐怖: horror
+诡异: eerie
+怀旧: nostalgic
+未来感: futuristic
+
+# ==================== 特效/画面 ====================
+模糊: blur
+景深: depth of field
+动态模糊: motion blur
+粒子效果: particle effects
+光晕: bloom
+色彩鲜艳: vibrant colors
+柔和色调: pastel colors
+单色: monochrome
+黑白: greyscale
+暖色调: warm colors
+冷色调: cool colors
+高对比: high contrast
+低对比: low contrast
+手绘感: hand-drawn
+flat色彩: flat colors
+渐变色彩: gradient colors
+赛璐璐: cel shading
+水彩感: watercolor style
+油画感: painterly
+线稿: lineart
+上色: colored
+
+# ==================== 数量/组合 ====================
+单人: solo
+双人: two girls
+# (dup removed) 多人: multiple girls
+群体: crowd
+成对: paired
+对称构图: symmetrical composition
+不对称: asymmetrical composition
+
+# ==================== 关系/互动 ====================
+拥抱: hugging
+牵手: holding hands
+亲吻: kissing
+贴贴: yuri
+背靠背: back to back
+面对面: facing each other
+追逐: chasing
+打闹: play fighting
+# (dup removed) 对视: looking at each other
+依靠: leaning on
+搭肩: arm around shoulder
+挽手: arm in arm
+
+# ==================== 天使/恶魔/奇幻 ====================
+天使: angel
+恶魔: demon
+女巫: witch
+魔法少女: magical girl
+精灵: elf
+妖精: fairy
+仙女: fairy
+人鱼: mermaid
+龙: dragon
+凤凰: phoenix
+独角兽: unicorn
+幽灵: ghost
+吸血鬼: vampire
+僵尸: zombie
+骷髅: skeleton
+机器人: robot
+机甲: mecha
+外星人: alien
+史莱姆: slime
+忍者: ninja
+武士: samurai
+骑士: knight
+国王: king
+女王: queen
+公主: princess
+王子: prince
+修女: nun
+神官: priest
+僧侣: monk
+巫女: miko
+阴阳师: onmyoji
+刺客: assassin
+盗贼: rogue
+弓箭手: archer
+法师: mage
+召唤师: summoner
+剑士: swordsman
+枪手: gunner
+
+# ==================== 日常/活动 ====================
+上学: going to school
+上课: in class
+考试: exam
+放学: after school
+写作业: doing homework
+读书: reading
+午睡: napping
+购物: shopping
+做饭: cooking
+打扫: cleaning
+洗澡: bathing
+化妆: applying makeup
+更衣: changing clothes
+散步: taking a walk
+跑步: jogging
+骑自行车: cycling
+游泳: swimming
+潜水: diving
+滑雪: skiing
+滑冰: ice skating
+冲浪: surfing
+登山: mountain climbing
+露营: camping
+野餐: picnic
+钓鱼: fishing
+赏花: flower viewing
+看烟花: watching fireworks
+放风筝: flying kite
+拍照: taking photo
+# (dup removed) 画画: painting
+弹琴: playing instrument
+# (dup removed) 唱歌: singing
+# (dup removed) 跳舞: dancing
+派对: party
+万圣节: halloween
+圣诞节: christmas
+生日: birthday
+情人节: valentine
+夏日祭: summer festival
+花火大会: fireworks festival
+温泉旅行: hot spring trip
+毕业典礼: graduation ceremony
+入学式: school entrance ceremony
+婚礼: wedding
+葬礼: funeral
+
+# ==================== 天气/环境细节 ====================
+花瓣飘落: falling petals
+落叶纷飞: falling leaves
+雨滴: raindrops
+水滴: water droplets
+水花: water splash
+# (dup removed) 泡泡: bubbles
+烟雾: smoke
+蒸汽: steam
+火焰: flames
+冰: ice
+霜: frost
+露珠: dewdrops
+蛛网: spider web
+灰尘: dust
+光斑: light leaks
+
+# ==================== 摄影画面 ====================
+# (dup removed) 景深: depth of field
+虚化: bokeh
+广角: wide angle
+鱼眼: fisheye
+微距: macro
+长焦: telephoto
+俯拍: high angle
+仰拍: low angle
+荷兰角: dutch angle
+过肩镜头: over-the-shoulder shot
+主观视角: pov
+第一人称: first-person view
+电影感: cinematic
+胶片质感: film grain
+拍立得: polaroid
+老照片: vintage photo
