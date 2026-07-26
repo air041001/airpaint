@@ -9,6 +9,8 @@
 前后端共用固定域名 `airpaint.xyz`, 经 cloudflared **命名隧道**穿透内网(不暴露本机端口)。
 当前阶段: **MVP 已上线, 单工作流 (AnimaStandard V7)**。
 
+> **最近改动** (压缩后先看这行, 省重读 docs; 每完成一阶段更新此行): 2026-07-26 启动脚本 bat 编码修复 + start_tunnel.bat, 见 DEVLOG 第11条 / decisions D14。
+
 ## 模块地图
 
 `server/main.py` 是单文件后端, 逻辑分块(改动时定位用):
@@ -26,7 +28,7 @@
 
 ## 运作规则(开发时遵守)
 
-1. **开工前**先读 `docs/` 相关文档 + 对应代码, 不凭印象改。
+1. **开工前**先读相关代码/文档, 不凭印象改。**节俭读法**: 先 `Grep` 定位(最后一条编号 / 符号 / 关键词), 再 `Read` 指定段(offset/limit), 不整读大文件; 模块地图在本文件常驻, 不重读。
 2. 改了接口 → 同步 `docs/api.md`; 改了架构 → 同步 `docs/architecture.md`。
 3. 有设计取舍 → 记 `docs/decisions.md`(**记原因, 不只记结果**)。
 4. 完成一个阶段 → 更新 `ROADMAP.md` 勾选 + `docs/DEVLOG.md` 追加条目(做了什么 / 遇到什么 / 怎么解 / 下一步)。
@@ -34,10 +36,25 @@
 6. 若需求偏离「理解用户意图」核心目标, **主动提更贴合的方案**, 不机械执行。
 7. **收工前自查**: 哪些文档该同步却没动? 主动提醒开发者是否遗漏。
 
+## 上下文节俭(省 token)
+
+每次压缩后上下文清空, 重读 docs 是最大浪费。守则:
+
+- **先 Grep 再 Read**: 同步文档用 `grep "^## "` 找最后编号/标题, 只 Read 那段对格式, 不整读。
+- **改代码同理**: `grep` 符号定位 -> Read 该函数段, 不扫全 `main.py`。
+- **最近改动行**: 本文件「这是什么」末行是最新进度, 压缩后先看它。
+- **不复述已读**: harness 提示 "file unchanged" 就别再 Read 同一文件。
+- **编辑后不回读**: Edit/Write 成功就别再 Read 验证(报错即失败)。
+- **DEVLOG/decisions 记干货**: 根因 + 解法 + 指针(见 Dxx), 不复述代码, 不写流水。
+- **并行批量调用**: 独立操作一次发出。
+
 ## 敏感信息
 
-`server/config.yaml` 含 token 与 API key, 已 `.gitignore`, **永不推公开仓库**。
-密钥只活在 config.yaml, 不要写进任何 md 文档或代码注释。
+`server/config.yaml` 含 token 与 API key, 已 `.gitignore`。密钥只活在 config.yaml, 不写进任何 md 或代码注释。
+
+- **结构性保证**: config.yaml 在 .gitignore; 新增含密钥文件先确认已 ignore。
+- 仓库当前**私有**(air041001/airpaint), 不每次 push 扫密钥(扫描便宜但无谓)。
+- **转公开前**统一审计一次: `grep -rnE "sk-|cfk_|friend-[0-9]" --exclude-dir=.git .`, 无真实 key/token 再公开。
 
 ## 文档索引
 
@@ -46,4 +63,4 @@
 - `docs/decisions.md` — 设计决策与原因(防遗忘核心)
 - `docs/DEVLOG.md` — 开发日志(按阶段)
 - `ROADMAP.md` — 阶段规划
-- `.tools/` — `start_airpaint.bat`(一键起后端+隧道) `test_e2e.py`(端到端测试) `bind.sh`(已退役, 旧临时隧道用)
+- `.tools/` — `start_airpaint.bat`(一键起后端+隧道) `start_tunnel.bat`(单独补隧道) `test_e2e.py`(端到端测试) `bind.sh`(已退役)
