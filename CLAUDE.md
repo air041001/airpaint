@@ -9,7 +9,7 @@
 前后端共用固定域名 `airpaint.xyz`, 经 cloudflared **命名隧道**穿透内网(不暴露本机端口)。
 当前阶段: **MVP 已上线, 单工作流 (AnimaStandard V7)**。
 
-> **最近改动** (压缩后先看这行, 省重读 docs; 每完成一阶段更新此行): 2026-07-26 启动脚本 bat 编码修复 + start_tunnel.bat, 见 DEVLOG 第11条 / decisions D14。
+> **最近改动** (压缩后先看这行, 省重读 docs; 每完成一阶段更新此行): 2026-07-26 Prompt Engine 三层重构 (角色优先 + Known-tags 上下文), 见 DEVLOG 第12条 / decisions D15。
 
 ## 模块地图
 
@@ -19,7 +19,7 @@
 |---|---|---|
 | 鉴权/限流 | `auth()` `USAGE` | Bearer token + 日限, **内存计数(重启清零)** |
 | 内容过滤 | `check_banned()` | banned_words 子串匹配 |
-| **Prompt Engine** | `translate()` `siliconflow_translate()` `dict.yaml` | 中文→danbooru tag, 词典优先 / LLM 兜底 / LRU 缓存 500 |
+| **Prompt Engine** | `translate()` `match_characters()` `siliconflow_translate()` `dict.yaml` `char_dict.yaml` | 三层: 角色->词典->LLM(只翻未命中) / LRU 缓存 500 |
 | **Workflow Engine** | `sanitize_for_api()` `build_prompt()` | 清洗前端专属节点 + 注入 prompt/seed/size, **统一所有 seed** |
 | ComfyUI 客户端 | `submit_and_wait()` | `/prompt` 提交 + `/history` 轮询 + `/view` 取图 |
 | 队列 | `worker()` `QUEUE` | 单并发 asyncio.Queue (GPU 串行) |

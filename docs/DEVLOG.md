@@ -218,3 +218,20 @@ cherry blossoms, tree, outdoors
 ### 下一步
 
 回到意图识别拓展 (decisions.md 待决策项: 否定/歧义/构图解析)。
+
+---
+
+## 第 12 条 2026-07-26 - Prompt Engine 三层重构 (角色优先 + Known-tags 上下文)
+
+### 完成内容
+翻译链路从「词典命中后整段送 LLM」改成三层: 角色子串匹配、词典匹配(剩余文本)、LLM 只翻未命中。LLM 上下文显式给 Known character/attribute tags, 只输出新增 tag, 后端 prepend 已知 tag。采纳用户 v2 设计的结构, 避开开倒车部分。
+
+### 关键改动 / 为什么
+- **角色优先 + 删名再查词典**: 之前先词典后角色, 角色名不在词典走 miss, 绕。
+- **Known attribute tags 喂 LLM**: 之前整段原文(含已命中的"白发")重发, LLM 重翻一遍; 现在只翻 misses, 省 token + 防重复。
+- **LLM 只出新增 tag, 后端 prepend**: 已知 tag 不会被 LLM 改坏。
+- **prompt 不拆 3 份**: 保留单 prompt + few-shot + 内容规则(氛围 vs 具体), 不按字数分(方案 ≤15 字归 mood 那套分不准, "白发猫耳少女" 6 字是 specific)。
+- **沿用 D2 修复**: 顶层 enable_thinking + /no_think + 无 frequency_penalty (方案放 extra_body / 加 freq 0.5 会重新引入复读 bug)。
+
+### 验证
+match_characters / 快速路径 / none 路径 / LLM 直连 / 端到端 全过。「三月七在樱花树下, 想要治愈的氛围」输出 `march_7th_(honkai:_star_rail), cherry blossoms, ..., peaceful, calm atmosphere` (角色 tag 不重复, 氛围扩写正确)。详见 decisions D15。

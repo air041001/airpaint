@@ -91,50 +91,46 @@ _TRANSLATE_CACHE_MAX = 500
 
 SILICONFLOW_SYSTEM_PROMPT = (
     "You are a prompt engineer for anime image generation. "
-    "Convert user input into english danbooru-style tags. "
-    "Output ONLY lowercase tags separated by commas and spaces. "
+    "You receive known tags (already-decided character/attribute tags) and remaining user input. "
+    "Translate/expand ONLY the remaining input into english danbooru-style tags. "
+    "Do NOT repeat or rephrase the known tags. "
+    "Output ONLY new lowercase tags separated by commas. "
     "No explanations, no periods, no quotes, no markdown.\n\n"
     "Rules:\n"
-    "1. If the input provides known character tags, include them EXACTLY as given.\n"
-    "2. If user describes a feeling/mood (e.g. 治愈, 忧郁, 春天的感觉), expand into matching scene+lighting+style tags.\n"
-    "3. If user describes specific details (hair/eyes/clothing), preserve them.\n"
-    "4. Subject: if a person/character is mentioned or implied, include a count tag (1girl/1boy). "
-    "If the input is PURELY a mood/scene with no person, focus on scenery and do NOT force a character.\n"
-    "5. Keep total under 200 characters.\n\n"
+    "1. If the remaining input is a feeling/mood (e.g. 治愈, 忧郁, 春天的感觉), expand into scene+lighting+style tags.\n"
+    "2. If the remaining input has specific details (hair/eyes/clothing/action), translate them.\n"
+    "3. Subject: if a person/character is implied by the remaining input, include a count tag (1girl/1boy). "
+    "If the remaining is PURELY a mood/scene with no person, focus on scenery and do NOT force a character.\n"
+    "4. Keep total under 150 characters.\n\n"
     "Examples:\n"
-    "Input: 白发蓝眼睛猫耳少女\n"
-    "Output: 1girl, white hair, blue eyes, cat ears, smile, school uniform, standing, indoors, soft lighting, anime style\n\n"
-    "Input: 想要春天的感觉\n"
+    "Known character tags: march_7th_(honkai:_star_rail)\n"
+    "Remaining: 在樱花树下\n"
+    "Output: 1girl, solo, cherry blossoms, tree, petals, spring, smile, standing, outdoors, soft lighting, anime style\n\n"
+    "Remaining: 想要春天的感觉\n"
     "Output: spring, cherry blossoms, petals falling, gentle breeze, warm sunlight, pastel colors, peaceful, garden, anime style\n\n"
-    "Input: [Character: march_7th_(honkai:_star_rail)] 三月七在樱花树下\n"
-    "Output: march_7th_(honkai:_star_rail), 1girl, solo, cherry blossoms, tree, petals, spring, smile, standing, outdoors, soft lighting, anime style"
+    "Remaining: 白发蓝眼睛猫耳少女\n"
+    "Output: 1girl, white hair, blue eyes, cat ears, smile, school uniform, standing, indoors, soft lighting, anime style"
 )
 
 
-def detect_characters(text: str) -> list[tuple[str, str]]:
-    """扫描输入里出现的已知角色名, 返回 [(中文名, danbooru_tag)]. 子串匹配."""
-    return [(name, tag) for name, tag in CHAR_DICT.items() if name in text]
+def match_characters(text: str) -> tuple[list[str], str]:
+    """子串匹配角色名. 返回 (角色 tag 列表, 移除角色名后的剩余文本)."""
+    found_tags: list[str] = []
+    remaining = text
+    for name, tag in CHAR_DICT.items():
+        if name in text:
+            found_tags.append(tag)
+            remaining = remaining.replace(name, "")
+    return found_tags, remaining
 
 
-async def siliconflow_translate(text: str) -> str:
-    """走硅基流动 Qwen 模型翻译 + 意图扩写, 失败抛异常 (由上层转 HTTPException)"""
+async def siliconflow_translate(context: str) -> str:
+    """走硅基流动 Qwen 翻译/扩写. context 是结构化上下文 (Known tags + Remaining).
+    返回 LLM 新增的 tag (不含已知 tag, 由 translate 拼接). 失败抛异常 (上层转 HTTPException)."""
     api_key = CFG.get("siliconflow_api_key", "").strip()
     model = CFG.get("siliconflow_model", "Qwen/Qwen3-8B")
     if not api_key:
         raise RuntimeError("siliconflow_api_key 未在 config.yaml 中配置")
-
-    chars = detect_characters(text)
-    # 快速路径: 输入基本只是一个已知角色名 (无其他描述) -> 直接出 tag, 跳过 LLM.
-    # 原因: LLM 对裸角色名会疯狂编场景/武器 (实测 7.9s + sword/combat/archer 等噪声 tag).
-    if chars:
-        remain = text
-        for name, _ in chars:
-            remain = remain.replace(name, "")
-        if not re.sub(r"[,，、;；\s\n]+", "", remain):
-            return ", ".join(tag for _, tag in chars) + ", 1girl, solo"
-
-    # 角色命中: 把可靠 tag 作为上下文喂给 LLM (LLM 认不准角色 tag, 只让它管场景/氛围扩写)
-    char_ctx = f"[Character: {', '.join(tag for _, tag in chars)}] " if chars else ""
 
     r = await CLIENT.post(
         "https://api.siliconflow.cn/v1/chat/completions",
@@ -144,12 +140,12 @@ async def siliconflow_translate(text: str) -> str:
             "messages": [
                 {"role": "system", "content": SILICONFLOW_SYSTEM_PROMPT},
                 # /no_think: Qwen3 软开关, 强制不进思考模式 (思考会慢到 30s+ 且易复读)
-                {"role": "user", "content": "/no_think " + char_ctx + text},
+                {"role": "user", "content": "/no_think " + context},
             ],
             "temperature": 0.2,
             "max_tokens": 180,
             # ★ 关键: enable_thinking 必须放顶层, 放 extra_body 里硅基流动不认 -> 思考没关掉.
-            #   实测放顶层后 3s 出结果, 放 extra_body 里要 27s+ 并出现 tag 复读退化.
+            #   实测放顶层后 3s 出结果, 放 extra_body 里要 27s+ 并出现 tag 复读退化. (见 D2)
             "enable_thinking": False,
         },
         timeout=30,
@@ -175,55 +171,68 @@ async def siliconflow_translate(text: str) -> str:
 
 
 async def translate(text: str) -> str:
-    """中文 -> danbooru tag. 优先命中本地词典, 剩余部分整段送 LLM."""
+    """中文 -> danbooru tag. 三层: 角色匹配 -> 词典匹配 -> LLM 扩写(只处理未命中)."""
     backend = CFG.get("translate", "none")
 
-    # 按逗号切, 逐段查词典; 全部命中就不用调 API
-    parts = [p.strip() for p in re.split(r"[,，、;；\n]+", text) if p.strip()]
-    if not parts:
-        raise HTTPException(400, "提示词为空")
+    # Layer 0: 角色子串匹配 (移除角色名, 得到剩余文本)
+    char_tags, remaining = match_characters(text)
 
-    hits, misses, miss_idx = [], [], []
-    for i, p in enumerate(parts):
+    # Layer 1: 剩余文本按逗号切, 逐段查属性/感觉词典
+    parts = [p.strip() for p in re.split(r"[,，、;；\n]+", remaining) if p.strip()]
+    hits, misses = [], []
+    for p in parts:
         h = DICT.get(p.lower())
-        hits.append(h)
         if h is None:
             misses.append(p)
-            miss_idx.append(i)
+        else:
+            hits.append(h)
 
-    # 全部命中词典: 直接拼接返回
+    # 全命中 (无 misses): 不调 LLM
     if not misses:
-        return ", ".join(hits)
+        # 裸角色名快速路径: 只有角色没别的描述 -> 补 1girl, solo
+        # (LLM 对裸角色名会疯狂编场景/武器, 实测 7.9s + 噪声 tag, 见 D13)
+        if char_tags and not hits and not parts:
+            return ", ".join(char_tags) + ", 1girl, solo"
+        all_tags = char_tags + hits
+        if all_tags:
+            return ", ".join(all_tags)
+        raise HTTPException(400, "提示词为空")
 
-    # 有未命中: 按配置的后端处理
+    # Layer 2: 有未命中 -> 后端处理
     if backend == "none":
-        # 未翻译部分原样保留 (仅当用户混输英文 tag 时合适)
-        return ", ".join(h if h is not None else parts[i] for i, h in enumerate(hits))
+        # 未翻译部分原样保留 (混输英文 tag 时合适)
+        return ", ".join(char_tags + hits + misses)
 
     if backend == "siliconflow":
-        # 整段中文送 LLM (上下文完整, 质量更好), 而不是逐词翻译
-        cache_key = text.strip()
+        # 构造上下文: 已知 tag 喂给 LLM, 只让它翻/扩 misses (不重复已知 tag)
+        ctx_lines = []
+        if char_tags:
+            ctx_lines.append(f"Known character tags: {', '.join(char_tags)}")
+        if hits:
+            ctx_lines.append(f"Known attribute tags: {', '.join(hits)}")
+        ctx_lines.append(f"Remaining: {', '.join(misses)}")
+        context = "\n".join(ctx_lines)
+
+        cache_key = context
         if cache_key in _TRANSLATE_CACHE:
             return _TRANSLATE_CACHE[cache_key]
         try:
-            translated = await siliconflow_translate(text)
+            new_tags = await siliconflow_translate(context)
         except Exception as e:
             raise HTTPException(502, f"翻译失败, 请稍后重试 ({e})")
-        # 简单容量控制
+        # 拼接: 已知 tag + LLM 新增 tag
+        result = ", ".join(t for t in char_tags + hits + [new_tags] if t)
         if len(_TRANSLATE_CACHE) >= _TRANSLATE_CACHE_MAX:
             _TRANSLATE_CACHE.pop(next(iter(_TRANSLATE_CACHE)))
-        _TRANSLATE_CACHE[cache_key] = translated
-        return translated
+        _TRANSLATE_CACHE[cache_key] = result
+        return result
 
     if backend == "google":
         try:
             translated_missing = await google_translate_batch(misses)
         except Exception as e:
             raise HTTPException(502, f"翻译失败, 请稍后重试 ({e})")
-        result = list(hits)
-        for i, t in zip(miss_idx, translated_missing):
-            result[i] = t
-        return ", ".join(result)
+        return ", ".join(char_tags + hits + translated_missing)
 
     raise HTTPException(500, f"未知的 translate 后端: {backend}")
 

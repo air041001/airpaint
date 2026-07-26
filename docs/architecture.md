@@ -46,15 +46,16 @@ ComfyUI  127.0.0.1:8188  (不对公网开放, 用 run_nvidia_gpu_fast_fp16_accum
 - 对中文原文和翻译后英文各查一次。
 
 ### Prompt Engine (翻译)
-`translate(text)` 流程:
-1. 按逗号切分, 逐段查 `dict.yaml` (851 条中→danbooru)。
-2. 全命中 → 直接拼接返回 (零 API 调用, 最快)。
-3. 有未命中 → 按 `translate` 配置选后端:
-   - `siliconflow`: 整段中文送 Qwen3-8B (上下文完整质量更好), `/no_think` + 顶层 `enable_thinking:False` 关思考, 失败抛 502 不静默降级。LRU 缓存 500 条。
-   - `google`: gtx 端点逐词翻译 (本机需翻墙, 已基本弃用)。
-   - `none`: 未命中部分原样保留。
+`translate(text)` 三层流程:
+1. **角色匹配** (`match_characters`, `char_dict.yaml`): 子串扫描角色名, 返回 tag 列表 + 移除角色名后的剩余文本。
+2. **词典匹配** (`dict.yaml`, 851 条): 剩余文本按逗号切分逐段精确匹配, 分 hits / misses。
+3. 全命中 (无 misses): 裸角色名 (只有角色无描述) -> `tag, 1girl, solo` 跳过 LLM; 否则 `角色tag + 词典tag` 拼接。
+4. 有未命中 -> 按后端:
+   - `siliconflow`: 构造上下文 (Known character tags / Known attribute tags / Remaining misses) 送 Qwen3-8B。LLM **只输出新增 tag** (不重复已知), 后端 prepend 已知 tag。`/no_think` + 顶层 `enable_thinking:False` 关思考 (见 D2), 失败抛 502。LRU 缓存 500 (key=上下文)。
+   - `google`: gtx 逐词翻 misses (本机需翻墙, 已弃用)。
+   - `none`: misses 原样保留。
 
-siliconflow 路径含**意图扩写**: `detect_characters()` 扫 `char_dict.yaml` 命中角色名 (Qwen3-8B 认不准角色 tag, 走词典); 裸角色名直接出 `tag, 1girl, solo` 跳过 LLM; 否则把角色 tag 作 `[Character: ...]` 上下文喂 LLM, LLM 扩写氛围/场景, 纯氛围输入不强制加人物。详见 decisions.md D12/D13。
+意图扩写由单条 system prompt (few-shot + 内容规则: 氛围->scene, 具体特征->翻译, 纯氛围不强制人物) 处理, 见 D12/D13/D15。
 
 ### Workflow Engine (工作流注入)
 `build_prompt(wf_name, prompt_en, w, h)`:

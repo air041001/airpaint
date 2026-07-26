@@ -101,6 +101,13 @@
 **收益**: 双击即正常起 cloudflared, 无乱码报错; 隧道单独挂了能一键补起, 不必重跑整个 `start_airpaint.bat`。
 **代价**: cloudflared 日志里的 UTF-8 中文 (如"以太网"、路径里的用户名) 在 GBK 控制台显示为乱码, 纯装饰性, 不影响功能 (关键日志 `Registered tunnel connection` 是 ASCII)。bat 文件不能用普通 UTF-8 编辑器直接改, 改完需重新存 GBK, 略增维护成本。
 
+## D15. Prompt Engine 三层: 角色优先 + Known-tags 上下文, LLM 只出新增 tag
+
+**背景**: 用户提供 v2 设计(三层架构 + 意图三分类)。对照代码 70% 已实现(D12/D13); 真正新增价值是「角色优先删名再查词典」和「词典命中作 Known attribute tags 喂 LLM, LLM 只翻 misses」。但 v2 代码有几处开倒车: enable_thinking 放 extra_body、加 frequency_penalty 0.5、prompt 无 few-shot、全命中路径丢 1girl/solo、按字数分意图。
+**决定**: 采纳结构改进(角色优先 / Known-tags 上下文 / LLM 只出新增 tag 后端 prepend); 但: ① prompt 不拆三份, 保留单 prompt + few-shot + 内容规则; ② 意图不按字数分, 用内容规则(氛围 vs 具体); ③ 沿用 D2 修复(顶层 enable_thinking + /no_think + 无 freq penalty); ④ 保留裸角色名快速路径(返 1girl, solo)。
+**收益**: LLM 只翻未命中, 省 token + 已知 tag 不被改坏 + 防重复。char-first 顺序更清晰。
+**代价**: translate/siliconflow_translate 重构, siliconflow_translate 不再自检角色(上移到 translate); 调用方只有 translate, 安全。
+
 ## 待决策 / 方向
 
 - **Intent Engine**: 当前是平铺的「中文→tag」, 无意图解析。迈向「理解用户意图」核心目标的下一步是
