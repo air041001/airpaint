@@ -94,6 +94,13 @@
 **主体策略**: 看输入决定 -- 提了人物/角色才加计数 tag (1girl/1boy); 纯氛围/场景不加, 出风景。
 **实测**: 氛围扩写 1-3s, 裸角色名 0s, 混合(角色特征+氛围)能保特征并扩场景。总耗时 3s+36s生图约 40s, 在 1 分钟预算内。
 
+## D14. .bat 启动脚本: GBK + CRLF, 不用 UTF-8/chcp
+
+**背景**: 双击 `start_airpaint.bat` 后网站报 1033。排查: 后端 8000 健康, 但 cloudflared 进程不存在; 手动跑同一条 `cloudflared tunnel run airpaint` 却秒连 4 连接。命令本身没问题, 是 bat 没把 cloudflared 跑起来。三个叠加根因: ① bat 是 Unix LF 行尾, cmd.exe 解析 .bat 需 CRLF, LF 时 `REM`/`echo` 行被切碎 (`REM 检查后端是否在跑` 被当命令执行); ② `if errorlevel 1 (...)` 块内 echo 含括号 `(127.0.0.1:8188)`, 扰乱 cmd 块匹配, 报 `. was unexpected at this time`, bat 中断, cloudflared 行没执行; ③ bat 存 UTF-8, cmd 按 GBK(codepage 936)解析, `chcp 65001` 只改显示不改解析编码, 中文行偶发乱码报错。`start_airpaint.bat` 之前"看着能跑", 是因 `start cmd /k` 启后端那行纯 ASCII 且位置靠前, 侥幸执行 -> 后端活、隧道死 -> 1033。
+**决定**: .bat 存 **GBK** 编码 (中文 Windows 原生 codepage, cmd 解析无歧义) + **CRLF** 行尾 + `if errorlevel 1 (...)` 块改单行 `if errorlevel 1 echo ...` + echo 行不带括号 + 去 `chcp 65001` (GBK 文件不需要, 且 chcp 对 cmd 解析无效)。新增 `start_tunnel.bat`: 后端已在跑、隧道挂了时单独补隧道, 不碰后端 (避免 8000 端口冲突)。
+**收益**: 双击即正常起 cloudflared, 无乱码报错; 隧道单独挂了能一键补起, 不必重跑整个 `start_airpaint.bat`。
+**代价**: cloudflared 日志里的 UTF-8 中文 (如"以太网"、路径里的用户名) 在 GBK 控制台显示为乱码, 纯装饰性, 不影响功能 (关键日志 `Registered tunnel connection` 是 ASCII)。bat 文件不能用普通 UTF-8 编辑器直接改, 改完需重新存 GBK, 略增维护成本。
+
 ## 待决策 / 方向
 
 - **Intent Engine**: 当前是平铺的「中文→tag」, 无意图解析。迈向「理解用户意图」核心目标的下一步是

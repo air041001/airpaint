@@ -34,6 +34,7 @@
 ### 2.3 一键启动
 - [x] start_airpaint.bat: 一键拉起 FastAPI + cloudflared (ComfyUI 仍由用户 bat 单独启)
 - [x] 启动前健康检查 (ComfyUI 是否运行)
+- [x] start_tunnel.bat: 隧道单独挂了时补起, 不碰后端
 - [ ] 进一步: 连 ComfyUI 一起拉起 (可选)
 
 ---
@@ -56,7 +57,7 @@
 - [ ] Docker + docker-compose
 - [x] cloudflared named tunnel (固定域名 airpaint.xyz)
 - [ ] pytest 单元测试
-- [ ] 根目录纳入 git (目前仅 web/ 是仓库, server/docs/.tools 未版本管理)
+- [x] 根目录纳入 git (air041001/airpaint 私有仓库; server/docs/.tools 已版本管理, config.yaml 等密钥已 gitignore)
 
 ---
 

@@ -28,6 +28,10 @@ ComfyUI  127.0.0.1:8188  (不对公网开放, 用 run_nvidia_gpu_fast_fp16_accum
 > 前端与 API 同域不同子域: 网页在 `airpaint.xyz`, API 在 `api.airpaint.xyz`。
 > 跨子域算跨域, 故 `config.yaml` 的 `allow_origins` 仍需显式列 `https://airpaint.xyz`。
 
+> **启动**: ComfyUI 用 `run_nvidia_gpu_fast_fp16_accumulation.bat`; 后端+隧道用 `.tools/start_airpaint.bat` (双窗口);
+> 隧道单独挂了用 `.tools/start_tunnel.bat` 补起 (不碰后端, 避免 8000 端口冲突)。
+> bat 必须存 GBK+CRLF, 否则 cmd 解析错乱 cloudflared 行不执行 (见 decisions.md D14)。
+
 ## 后端模块 (server/main.py)
 
 单文件, 按职责分块:

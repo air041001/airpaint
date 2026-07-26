@@ -1,34 +1,30 @@
 @echo off
-REM ä¸€é”®å¯åŠ¨ airpaint.xyz æœåŠ¡ (åç«¯ + å‘½åéš§é“)
-REM ç”¨æ³•: åŒå‡»æˆ–å‘½ä»¤è¡Œè¿è¡Œ start_airpaint.bat
-REM ä¾èµ–: ComfyUI å·²åœ¨ 127.0.0.1:8188 è·‘ç€ (ä½ ç”¨ run_nvidia_gpu_fast_fp16_accumulation.bat å¯åŠ¨)
-chcp 65001 >nul
-title airpaint.xyz æœåŠ¡
+REM Ò»¼üÆô¶¯ airpaint.xyz ·şÎñ - ºó¶Ë + ÃüÃûËíµÀ
+REM ÓÃ·¨: Ë«»÷»òÃüÁîĞĞÔËĞĞ start_airpaint.bat
+REM ÒÀÀµ: ComfyUI ÒÑÔÚ 127.0.0.1:8188 ÅÜ×Å - ÓÃ run_nvidia_gpu_fast_fp16_accumulation.bat Æô¶¯
+title airpaint.xyz ·şÎñ
 
 echo ============================================
-echo   airpaint.xyz å¯åŠ¨
-echo   åç«¯:   http://127.0.0.1:8000
-echo   å…¬ç½‘:   https://airpaint.xyz        (ç½‘é¡µ)
-echo           https://api.airpaint.xyz     (API)
-echo   Ctrl+C åœéš§é“ (åç«¯åœ¨å¦ä¸€çª—å£, éœ€å•ç‹¬å…³, è§æœ«å°¾)
+echo   airpaint.xyz Æô¶¯
+echo   ºó¶Ë:   http://127.0.0.1:8000
+echo   ¹«Íø:   https://airpaint.xyz        ÍøÒ³
+echo           https://api.airpaint.xyz     API
+echo   Ctrl+C Í£ËíµÀ - ºó¶ËÔÚÁíÒ»´°¿Ú, Ğèµ¥¶À¹Ø, ¼ûÄ©Î²
 echo ============================================
 echo.
 
-REM æ£€æŸ¥ ComfyUI æ˜¯å¦åœ¨è·‘
+REM ¼ì²é ComfyUI ÊÇ·ñÔÚÅÜ
 curl -s -o nul http://127.0.0.1:8188/system_stats >nul 2>&1
-if errorlevel 1 (
-    echo [è­¦å‘Š] æ²¡æ£€æµ‹åˆ° ComfyUI (127.0.0.1:8188). è¯·å…ˆå¯åŠ¨ ComfyUI, å¦åˆ™ç”Ÿå›¾ä¼šå¤±è´¥.
-    echo.
-)
+if errorlevel 1 echo [¾¯¸æ] Ã»¼ì²âµ½ ComfyUI 8188, ÇëÏÈÆô¶¯ ComfyUI ·ñÔòÉúÍ¼»áÊ§°Ü.
 
-REM å¯åŠ¨åç«¯ (æ–°çª—å£)
-start "airpaint åç«¯" cmd /k "cd /d %~dp0\..\server && python main.py"
+REM Æô¶¯ºó¶Ë - ĞÂ´°¿Ú
+start "airpaint ºó¶Ë" cmd /k "cd /d %~dp0\..\server && python main.py"
 timeout /t 3 /nobreak >nul
 
-REM å¯åŠ¨ cloudflared å‘½åéš§é“ (å½“å‰çª—å£, å‰å°è¿è¡Œä¾¿äºçœ‹æ—¥å¿—)
-echo [éš§é“] å¯åŠ¨ cloudflared ...
+REM Æô¶¯ cloudflared ÃüÃûËíµÀ - µ±Ç°´°¿ÚÇ°Ì¨ÔËĞĞ±ãÓÚ¿´ÈÕÖ¾
+echo [ËíµÀ] Æô¶¯ cloudflared ...
 "E:\cloudflared\cloudflared.exe" tunnel run airpaint
 
 echo.
-echo éš§é“å·²åœ. è¯·å…³é—­ "airpaint åç«¯" çª—å£ (Ctrl+C æˆ–ç‚¹å³ä¸Šè§’ X).
+echo ËíµÀÒÑÍ£. Çë¹Ø±Õ airpaint ºó¶Ë ´°¿Ú - Ctrl+C »òµãÓÒÉÏ½Ç X.
 pause

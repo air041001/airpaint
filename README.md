@@ -72,7 +72,8 @@ python .tools/test_e2e.py
 
 ## 工具 (.tools/)
 
-- `start_airpaint.bat` - 一键起后端 + 命名隧道
+- `start_airpaint.bat` - 一键起后端 + 命名隧道 (ComfyUI 需先启)
+- `start_tunnel.bat` - 后端已在跑、隧道挂了时单独补隧道 (不碰后端, 避免 8000 端口冲突)
 - `test_e2e.py` - 端到端生图测试
 - `inspect_wf.py` - 工作流节点 id 校准
 - `bind.sh` / `bind.README.md` - **已退役** (旧临时隧道换地址用, 命名隧道后不再需要)

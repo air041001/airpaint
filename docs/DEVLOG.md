@@ -193,3 +193,28 @@ cherry blossoms, tree, outdoors
 输入「三月七在樱花树下, 想要治愈的氛围」->
 `march_7th_(honkai:_star_rail), 1girl, solo, cherry blossoms, tree, petals, spring, gentle breeze, warm sunlight, soft lighting, peaceful, calm, anime style` (4.1s)
 -> 出图 `images/6f59dada02bd.png`。详见 decisions.md D12/D13。
+
+---
+
+## 第 11 条 2026-07-26 - 启动脚本修复 (bat 编码 + 行尾)
+
+### 完成内容
+
+修 `start_airpaint.bat` 双击秒退 (致网站 1033); 新增 `start_tunnel.bat` 单独补隧道。
+
+### 遇到的问题与解决方案
+
+**现象**: 双击 `start_airpaint.bat` 后网站 1033。排查发现后端 8000 健康 (`{"ok":true,"comfy":true}`), 但 cloudflared 进程不存在; 手动跑同一条 `cloudflared tunnel run airpaint` 却秒连 4 连接。命令没问题, 是 bat 没把 cloudflared 跑起来。
+
+**三个叠加根因**:
+1. **LF 行尾**: bat 是 Unix LF, cmd.exe 解析 .bat 需 CRLF。LF 时 `REM`/`echo` 行被切碎, `REM 检查后端是否在跑` 被当命令执行。
+2. **if 块括号**: `if errorlevel 1 (...)` 块内 echo 含 `(127.0.0.1:8188)`, 扰乱 cmd 块匹配, 报 `. was unexpected at this time`, bat 中断, cloudflared 行没执行。
+3. **UTF-8 编码**: bat 存 UTF-8, cmd 按 GBK(codepage 936)解析; `chcp 65001` 只改显示不改解析编码, 中文行偶发乱码报错。
+
+**为什么之前"看着能跑"**: `start cmd /k` 启后端那行纯 ASCII 且位置靠前, 侥幸执行 -> 后端活、隧道死 -> 1033。`start_tunnel.bat` 没有子窗口, 主窗口一退就秒开秒关, 才暴露问题。
+
+**解法**: bat 存 GBK + CRLF + `if errorlevel 1 (...)` 块改单行 + echo 行去括号 + 去 `chcp 65001`。实测双击正常起 cloudflared, 4 连接, 站点 200。详见 decisions.md D14。
+
+### 下一步
+
+回到意图识别拓展 (decisions.md 待决策项: 否定/歧义/构图解析)。
