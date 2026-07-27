@@ -38,6 +38,17 @@ Authorization: Bearer <token>
 ]
 ```
 
+### GET /api/loras
+列出可用 LoRA (需鉴权)。只暴露展示字段, 不含 file/trigger 等内部信息。
+
+响应 `200`:
+```json
+[
+  { "key": "ningen_mame", "name": "人间豆 (Ningen Mame)", "description": "Q版/可爱风格", "preview": "/images/lora_previews/ningen_mame.jpg" }
+]
+```
+`preview` 可能为 `null` (前端应容错隐藏)。
+
 ### POST /api/jobs
 提交生图任务 (需鉴权)。翻译在此步同步完成, 故可能耗时数秒。
 
@@ -46,13 +57,17 @@ Authorization: Bearer <token>
 {
   "workflow": "anima",
   "prompt": "白发蓝眼睛的猫耳少女, 微笑, 站在樱花树下",
-  "size": "832x1216"
+  "size": "832x1216",
+  "lora": "ningen_mame",
+  "strength": 0.8
 }
 ```
 - `prompt`: 必填, 1~500 字符, 经内容过滤。
 - `size`: 可选, 必须是该工作流 `sizes` 之一; 不传取第一个。
+- `lora`: 可选, `GET /api/loras` 返回的 `key` 之一; 不传或空表示不用 LoRA。工作流需配了 `lora_node` 才支持。
+- `strength`: 可选, LoRA 强度 0~1 (1=满), 仅 `lora` 有值时生效; 不传用 config 默认 1.0。
 
-校验失败: `400` (未知工作流 / 提示词空或过长 / 非法尺寸 / 命中禁词)。
+校验失败: `400` (未知工作流 / 提示词空或过长 / 非法尺寸 / 命中禁词 / 未知 LoRA / 工作流不支持 LoRA / LoRA 强度非法)。
 翻译失败: `502 {"detail":"翻译失败, 请稍后重试 (...)"}`。
 
 响应 `200`:

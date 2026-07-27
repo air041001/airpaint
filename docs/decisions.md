@@ -108,6 +108,16 @@
 **收益**: LLM 只翻未命中, 省 token + 已知 tag 不被改坏 + 防重复。char-first 顺序更清晰。
 **代价**: translate/siliconflow_translate 重构, siliconflow_translate 不再自检角色(上移到 translate); 调用方只有 translate, 安全。
 
+## D16. LoRA 注入: 走 loras widget `__value__`, 触发词手动拼
+
+**背景**: 要把"前端选 LoRA"接进 AnimaStandardV7 工作流 (节点5 = Lora Loader (LoraManager))。lora_feature_plan.md 猜注入格式为 `workflow["5"]["inputs"]["loras"] = {"__value__": [[file, sm, sc]]}` (数组套数组) + `<lora:file:1>` 文本语法。但这是猜的, 猜错会静默不加载。
+**决定**: 查本机 LoraManager 源码 (`E:\ComfyUI_windows_portable\ComfyUI\custom_nodes\comfyui-lora-manager\py\nodes\lora_loader.py`) 后定:
+- ① **不走 text 字段**: `load_loras` 第151行 `del text` -- text 是 REQUIRED 输入但执行时直接删, 只服务前端 autocomplete; `<lora:...>` 文本语法只在 `LoraTextLoaderLM` (另一个节点) 的 `parse_lora_syntax` 里生效, 节点5 不解析。
+- ② **走 loras widget `__value__`**: `get_loras_list` (utils.py:72) 兼容 `{"__value__":[...]}` 和 `[...]` 两种。元素是**对象** `{name, strength, clipStrength, active}`, 不是数组。`active` 必须为 true (`_collect_widget_entries` 第54行 `if not lora.get("active", False): continue`)。计划猜的 `[[file,sm,sc]]` 其实是 `lora_stack` 输入的格式 (节点5 没此输入)。
+- ③ **触发词手动 prepend**: 节点5 output2 (trigger_words) -> 节点37 TriggerWordToggle -> 46 StringConcatenate -> 48 -> 54 本是自动注入触发词的链路, 但现有 `build_prompt` 的 `set_input("prompt_node","text",full_prompt)` 已把节点54 的 text 覆盖成字面值 (见 config 节点54 注释 "注入会覆盖角色模板"), 这条链早断了。故 LoRA 触发词必须自己拼进 full_prompt (放 quality_prefix 之后, 用户词之前), 不能指望 LoraManager 自动注入。
+**收益**: 注入格式有源码兜底, 不会静默失效; 触发词确定性由 config 控制, 不依赖 LoraManager 元数据 DB。
+**代价**: 触发词在 config.yaml 手维护 (与 LoraManager DB 可能重复, 但冗余无害); config.yaml 仍是 gitignore, loras 配置不进版本库 (与 tokens 同 tradeoff)。
+
 ## 待决策 / 方向
 
 - **Intent Engine**: 当前是平铺的「中文→tag」, 无意图解析。迈向「理解用户意图」核心目标的下一步是

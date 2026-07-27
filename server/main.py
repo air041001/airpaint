@@ -276,7 +276,8 @@ def sanitize_for_api(wf: dict) -> dict:
     return wf
 
 
-def build_prompt(wf_name: str, prompt_en: str, width: int | None, height: int | None) -> dict:
+def build_prompt(wf_name: str, prompt_en: str, width: int | None, height: int | None,
+                 lora_key: str | None = None, strength: float | None = None) -> dict:
     wcfg = WORKFLOWS[wf_name]
     wf = json.loads((BASE / wcfg["file"]).read_text(encoding="utf-8"))
     wf = sanitize_for_api(wf)
@@ -303,7 +304,30 @@ def build_prompt(wf_name: str, prompt_en: str, width: int | None, height: int | 
             raise HTTPException(500, f"workflow {wf_name} 配置错误: 节点 {wcfg[node_key]} 不存在")
         node["inputs"][field] = value
 
-    full_prompt = wcfg.get("quality_prefix", "") + prompt_en
+    # LoRA 注入: 写 LoraManager 节点的 loras widget. __value__ 内是对象数组, 每项 {name, strength,
+    # clipStrength, active}; active 必须为 true, 否则 _collect_widget_entries 跳过 (见 D16).
+    # 触发词手动拼进 prompt: LoraManager 自带的触发词链 (节点5 output2 -> 37 -> 46 -> 48 -> 54)
+    # 已被下面 set_input("prompt_node","text",...) 覆盖节点54 text 而断掉, 故必须自己拼.
+    trigger = ""
+    if lora_key:
+        loras = CFG.get("loras", {})
+        if lora_key not in loras:
+            raise HTTPException(400, f"未知的 LoRA: {lora_key}")
+        if "lora_node" not in wcfg:
+            raise HTTPException(400, f"工作流 {wf_name} 不支持 LoRA")
+        lora = loras[lora_key]
+        # strength: 前端传入则同时覆盖 model/clip (LoraManager 默认 clipStrength=strength); 否则用 config 默认
+        sm = float(strength) if strength is not None else float(lora.get("strength_model", 1.0))
+        sc = float(strength) if strength is not None else float(lora.get("strength_clip", sm))
+        set_input("lora_node", "loras", {"__value__": [{
+            "name": lora["file"],
+            "strength": sm,
+            "clipStrength": sc,
+            "active": True,
+        }]})
+        trigger = (lora.get("trigger") or "").strip()
+
+    full_prompt = wcfg.get("quality_prefix", "") + (trigger + ", " if trigger else "") + prompt_en
     set_input("prompt_node", "text", full_prompt)
     if "negative_node" in wcfg:
         set_input("negative_node", "text", wcfg.get("negative_prefix", "") + wcfg.get("negative_extra", ""))
@@ -315,8 +339,9 @@ def build_prompt(wf_name: str, prompt_en: str, width: int | None, height: int | 
     return {"prompt": wf, "client_id": CLIENT_ID, "_seed": seed}
 
 
-async def submit_and_wait(wf_name: str, prompt_en: str, width, height) -> str:
-    payload = build_prompt(wf_name, prompt_en, width, height)
+async def submit_and_wait(wf_name: str, prompt_en: str, width, height, lora_key: str | None = None,
+                          strength: float | None = None) -> str:
+    payload = build_prompt(wf_name, prompt_en, width, height, lora_key, strength)
     seed = payload.pop("_seed")
     r = await CLIENT.post(f"{COMFY}/prompt", json=payload)
     if r.status_code != 200:
@@ -357,7 +382,7 @@ async def worker():
         job = JOBS[job_id]
         job["status"] = "running"
         try:
-            fname = await submit_and_wait(job["workflow"], job["prompt_en"], job.get("width"), job.get("height"))
+            fname = await submit_and_wait(job["workflow"], job["prompt_en"], job.get("width"), job.get("height"), job.get("lora"), job.get("strength"))
             job.update(status="done", image=f"/images/{fname}")
         except Exception as e:
             job.update(status="failed", error=str(e))
@@ -389,11 +414,26 @@ async def list_workflows(token: str = Depends(auth)):
     ]
 
 
+@app.get("/api/loras")
+async def list_loras(token: str = Depends(auth)):
+    """可用 LoRA 列表 (只暴露展示字段, 不含 file/trigger 等内部字段)."""
+    return [
+        {
+            "key": k,
+            "name": v.get("name", k),
+            "description": v.get("description", ""),
+            "preview": v.get("preview"),
+        }
+        for k, v in CFG.get("loras", {}).items()
+    ]
+
+
 @app.post("/api/jobs")
 async def create_job(req: Request, token: str = Depends(auth)):
     body = await req.json()
     wf_name = body.get("workflow", "")
     prompt_raw = (body.get("prompt") or "").strip()
+    lora = (body.get("lora") or "").strip()
     if wf_name not in WORKFLOWS:
         raise HTTPException(400, "未知工作流")
     if not prompt_raw or len(prompt_raw) > 500:
@@ -411,12 +451,28 @@ async def create_job(req: Request, token: str = Depends(auth)):
             raise HTTPException(400, "非法尺寸")
         width, height = map(int, size.split("x"))
 
+    # LoRA 校验 (失败快速返回 400, 不进队列)
+    strength = None
+    if lora:
+        if lora not in CFG.get("loras", {}):
+            raise HTTPException(400, "未知的 LoRA")
+        if "lora_node" not in wcfg:
+            raise HTTPException(400, "该工作流不支持 LoRA")
+        strength = body.get("strength")
+        if strength is not None:
+            try:
+                strength = float(strength)
+            except (TypeError, ValueError):
+                raise HTTPException(400, "LoRA 强度需为数字")
+            if not (0 <= strength <= 1):
+                raise HTTPException(400, "LoRA 强度需在 0~1 之间")
+
     USAGE[token][1] += 1
     job_id = uuid.uuid4().hex[:10]
     JOBS[job_id] = {
         "id": job_id, "token": token, "workflow": wf_name,
         "prompt_raw": prompt_raw, "prompt_en": prompt_en,
-        "width": width, "height": height,
+        "width": width, "height": height, "lora": lora or None, "strength": strength,
         "status": "queued", "created": time.time(),
     }
     await QUEUE.put(job_id)

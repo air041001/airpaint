@@ -235,3 +235,23 @@ cherry blossoms, tree, outdoors
 
 ### 验证
 match_characters / 快速路径 / none 路径 / LLM 直连 / 端到端 全过。「三月七在樱花树下, 想要治愈的氛围」输出 `march_7th_(honkai:_star_rail), cherry blossoms, ..., peaceful, calm atmosphere` (角色 tag 不重复, 氛围扩写正确)。详见 decisions D15。
+
+
+## 第 13 条 2026-07-26 - LoRA 模式 (前端可选 LoRA, 后端注入)
+
+### 完成内容
+前端下拉选 LoRA, 后端把 LoRA 写进工作流 LoraManager 节点 (节点5) 的 loras widget, 并把触发词拼进正面提示词。新增 `GET /api/loras`, `POST /api/jobs` 加 `lora` 字段, config.yaml 加 `loras` 块 + workflow `lora_node`。
+
+### 关键改动 / 为什么
+- **注入走 loras widget, 不走 text 字段**: 查 LoraManager 源码 (lora_loader.py:151 `del text`) 发现节点5 的 text 字段执行时被直接删掉, 只服务前端 autocomplete; 加载 LoRA 只认 `loras.__value__`。计划里猜的 `<lora:file:1>` 文本语法 / `[[file,sm,sc]]` 数组格式都不对 (后者是 lora_stack 输入的格式, 节点5 没该输入)。
+- **__value__ 元素是对象不是数组**: `{name, strength, clipStrength, active}`, `active` 必须为 true 否则 `_collect_widget_entries` 跳过。
+- **触发词手动拼 prompt**: LoraManager 自带触发词链 (节点5 output2 -> 37 TriggerWordToggle -> 46 StringConcatenate -> 48 -> 54), 但现有 `build_prompt` 的 `set_input("prompt_node","text",...)` 已覆盖节点54 text 断掉此链, 故触发词必须自己 prepend (quality_prefix 之后, 用户词之前)。
+- **API 用本地 `/api/` 前缀 + Request+req.json()**: 不照搬计划里的 `/loras` `/generate` + Pydantic GenerateRequest, 跟现有 /api/jobs 一致。
+
+### 验证
+build_prompt 单测: 无 lora 时 node5.loras 保持 `{"__value__":[]}` 不动; 有 lora 时写入对象数组 (active:true) + node54.text 含触发词; 未知 lora 抛 400。ComfyUI 实际加载权重待用户用真实 lora 文件端到端验。详见 decisions D16。
+
+### 补充 (同日, 端到端测试后)
+- **LoRA 权重可调**: 加 `strength` 字段 (前端强度输入框 0~1, 后端 build_prompt 用它同时覆盖 model/clip strength, 不传用 config 默认 1.0)。原 config 写死 1.0 没法调。
+- **salt 文件修正**: 原配 `salt(finale).safetensors` 是错的 (非 anima 版), 改 `salt(finale)-anima-v1.0.safetensors`。salt_milk_sailor 触发词补 `blue skirt`。前端名字保留 Finale/Milk 英文不翻译。
+- **端到端验证通过**: 用户实测 LoRA 正常加载且有效果。

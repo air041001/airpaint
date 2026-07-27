@@ -17,7 +17,7 @@ cloudflared 命名隧道 "airpaint" (永久固定, 重启不变)
 FastAPI 后端  127.0.0.1:8000  (server/main.py)
    ├─ 鉴权 / 日限流 / 内容过滤
    ├─ Prompt Engine:  中文 → danbooru tag
-   ├─ Workflow Engine: 注入 prompt/seed/size, 清洗前端专属节点
+   ├─ Workflow Engine: 注入 prompt/seed/size/LoRA, 清洗前端专属节点
    ├─ 单并发队列 (asyncio.Queue, GPU 串行)
    └─ 静态托管 / + /images
    ▼
@@ -58,12 +58,13 @@ ComfyUI  127.0.0.1:8188  (不对公网开放, 用 run_nvidia_gpu_fast_fp16_accum
 意图扩写由单条 system prompt (few-shot + 内容规则: 氛围->scene, 具体特征->翻译, 纯氛围不强制人物) 处理, 见 D12/D13/D15。
 
 ### Workflow Engine (工作流注入)
-`build_prompt(wf_name, prompt_en, w, h)`:
+`build_prompt(wf_name, prompt_en, w, h, lora_key=None)`:
 1. 读 `workflows/<file>.json`。
 2. `sanitize_for_api(wf)`: 删 `WidgetToString` / `Image Saver Metadata` (依赖前端 `extra_pnginfo`, API 提交会崩); `Image Saver Simple` → 内置 `SaveImage`。
 3. **统一 seed**: 扫描所有 int 型 `seed`/`noise_seed` 输入, 全写成同一正整数 (跳过列表型的节点连接)。修复 Impact Pack `np.random.default_rng(-1)` 崩溃 → FaceDetailer 人脸修复能正常跑。
-4. 注入: `prompt_node.text = quality_prefix + prompt_en`; `size_node.width/height`; (不配 `negative_node`, 用工作流自带负面模板)。
-5. 返回 `{prompt, client_id, _seed}`。
+4. **LoRA 注入** (若 `lora_key`): 写 `lora_node.loras = {"__value__":[{name,strength,clipStrength,active:true}]}`。LoraManager 的 `text` 字段执行时被 `del` 无效, 必须走 widget; `active` 必须为 true (见 D16)。
+5. 注入: `prompt_node.text = quality_prefix + (trigger+", " 若有 LoRA) + prompt_en`; `size_node.width/height`; (不配 `negative_node`, 用工作流自带负面模板)。触发词取自 config `loras.<key>.trigger` (LoraManager 自带触发词链已被此步覆盖节点54 text 断掉)。
+6. 返回 `{prompt, client_id, _seed}`。
 
 ### ComfyUI 客户端
 `submit_and_wait(...)`:
@@ -92,7 +93,8 @@ ComfyUI  127.0.0.1:8188  (不对公网开放, 用 run_nvidia_gpu_fast_fp16_accum
 
 关键字段: `comfy_url` `host/port` `allow_origins` `tokens` `daily_limit`
 `timeout_seconds` `banned_words` `translate` `siliconflow_api_key` `siliconflow_model`
-`workflows.<name>.{file,prompt_node,seed_node,size_node,sizes,quality_prefix}`。
+`workflows.<name>.{file,prompt_node,seed_node,size_node,lora_node,sizes,quality_prefix}`;
+顶层 `loras.<key>.{name,file,trigger,strength_model,strength_clip,description,preview}` (LoRA 目录, file 是 ComfyUI models/loras/ 下文件名)。
 
 ## 尚未实现 / 已知限制
 
