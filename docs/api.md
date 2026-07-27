@@ -49,26 +49,43 @@ Authorization: Bearer <token>
 ```
 `preview` 可能为 `null` (前端应容错隐藏)。
 
+### POST /api/translate
+只翻译不排队 (需鉴权, 不计入 image 限额): 中文 -> 英文 tag (角色->词典->LLM 三层 + 扩写, LRU 缓存)。前端「预览提示词」和「直接生成」都先调它拿 prompt_en。
+
+请求体:
+```json
+{ "prompt": "白发蓝眼睛的猫耳少女, 微笑, 站在樱花树下" }
+```
+- `prompt`: 必填, 1~500 字符, 经内容过滤。
+
+翻译失败: `502 {"detail":"翻译失败, 请稍后重试 (...)"}`。
+
+响应 `200`:
+```json
+{ "prompt_en": "1girl, white hair, blue eyes, cat ears, smile, ..." }
+```
+
 ### POST /api/jobs
-提交生图任务 (需鉴权)。翻译在此步同步完成, 故可能耗时数秒。
+提交生图任务 (需鉴权)。**接收已翻译的 `prompt_en`** (前端先用 `/api/translate` 翻译, 可在「预览提示词」里编辑后再提交), 后端不再翻译。
 
 请求体:
 ```json
 {
   "workflow": "anima",
+  "prompt_en": "1girl, white hair, blue eyes, cat ears, smile",
   "prompt": "白发蓝眼睛的猫耳少女, 微笑, 站在樱花树下",
   "size": "832x1216",
   "lora": "ningen_mame",
   "strength": 0.8
 }
 ```
-- `prompt`: 必填, 1~500 字符, 经内容过滤。
+- `prompt_en`: 必填, 已翻译英文 tag (可经用户编辑), ≤800 字符, 经内容过滤。
+- `prompt`: 可选, 原始中文 (仅存档展示, ≤500); 不传则 prompt_raw 同 prompt_en。
 - `size`: 可选, 必须是该工作流 `sizes` 之一; 不传取第一个。
 - `lora`: 可选, `GET /api/loras` 返回的 `key` 之一; 不传或空表示不用 LoRA。工作流需配了 `lora_node` 才支持。
 - `strength`: 可选, LoRA 强度 0~1 (1=满), 仅 `lora` 有值时生效; 不传用 config 默认 1.0。
 
-校验失败: `400` (未知工作流 / 提示词空或过长 / 非法尺寸 / 命中禁词 / 未知 LoRA / 工作流不支持 LoRA / LoRA 强度非法)。
-翻译失败: `502 {"detail":"翻译失败, 请稍后重试 (...)"}`。
+校验失败: `400` (未知工作流 / prompt_en 空或过长 / 非法尺寸 / 命中禁词 / 未知 LoRA / 工作流不支持 LoRA / LoRA 强度非法)。
 
 响应 `200`:
 ```json

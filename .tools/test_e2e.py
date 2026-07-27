@@ -9,10 +9,22 @@ if not TOKEN:
     print("未找到 token: 请在 server/config.yaml 配 tokens, 或设环境变量 AIRPAINT_TOKEN"); sys.exit(1)
 H = {"Authorization": f"Bearer {TOKEN}"}
 
+PROMPT = "白发蓝眼睛的猫耳少女, 微笑, 站在樱花树下"
+# 1) 翻译 (两步 API: 先 /api/translate, 不排队)
+t = httpx.post(f"{BASE}/api/translate",
+               headers={**H, "Content-Type": "application/json"},
+               json={"prompt": PROMPT}, timeout=30)
+print("translate:", t.status_code, t.text[:200], flush=True)
+if t.status_code != 200:
+    sys.exit(1)
+prompt_en = t.json()["prompt_en"]
+
+# 2) 提交生成 (传 prompt_en, 后端不再翻译)
 r = httpx.post(f"{BASE}/api/jobs",
                headers={**H, "Content-Type": "application/json"},
                json={"workflow": "anima",
-                     "prompt": "白发蓝眼睛的猫耳少女, 微笑, 站在樱花树下",
+                     "prompt": PROMPT,
+                     "prompt_en": prompt_en,
                      "size": "832x1216"},
                timeout=30)
 print("create:", r.status_code, r.text, flush=True)

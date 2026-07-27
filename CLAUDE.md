@@ -9,7 +9,7 @@
 前后端共用固定域名 `airpaint.xyz`, 经 cloudflared **命名隧道**穿透内网(不暴露本机端口)。
 当前阶段: **MVP 已上线, 单工作流 (AnimaStandard V7)**。
 
-> **最近改动** (压缩后先看这行, 省重读 docs; 每完成一阶段更新此行): 2026-07-26 LoRA 模式上线 (前端可选 LoRA, 后端注入 loras widget `__value__` + 触发词拼 prompt), 见 DEVLOG 第13条 / decisions D16。
+> **最近改动** (压缩后先看这行, 省重读 docs; 每完成一阶段更新此行): 2026-07-27 提示词两步走 (可选预览/编辑: /api/translate + /api/jobs 收 prompt_en, 默认仍一键), 见 DEVLOG 第14条 / decisions D17。
 
 ## 模块地图
 

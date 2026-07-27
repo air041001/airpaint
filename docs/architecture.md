@@ -86,6 +86,7 @@ ComfyUI  127.0.0.1:8188  (不对公网开放, 用 run_nvidia_gpu_fast_fp16_accum
 ## 前端 (web/index.html)
 
 单文件 SPA, 无框架。localStorage 存邀请码; `API` 常量硬编码 `https://api.airpaint.xyz`。
+出图两步走 (翻译与生成解耦, 见 D17): 中文 -> `/api/translate` 拿 prompt_en -> (可选预览/编辑) -> `/api/jobs` 传 prompt_en 提交。两按钮: 「✨ 直接生成」(翻译+提交一气呵成, 默认一键 UX) 与「🔍 预览提示词」(翻译后展示可编辑 textarea, 改完点「确认生成」)。`/api/jobs` 不再翻译。
 轮询 `/api/jobs/{id}` 每 2s, 完成后展示图 + 入历史画廊(localStorage 缩略图, 最近 12 张)。
 
 > `web/` 是独立 git 仓库 → `air041001/air`。但域名迁移后已**不再依赖 GitHub Pages**

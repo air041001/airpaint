@@ -118,6 +118,13 @@
 **收益**: 注入格式有源码兜底, 不会静默失效; 触发词确定性由 config 控制, 不依赖 LoraManager 元数据 DB。
 **代价**: 触发词在 config.yaml 手维护 (与 LoraManager DB 可能重复, 但冗余无害); config.yaml 仍是 gitignore, loras 配置不进版本库 (与 tokens 同 tradeoff)。
 
+## D17. 提示词两步走: 翻译独立端点 + 可选编辑, 默认仍一键
+
+**背景**: 朋友抱怨"出的什么鬼图"时, 多半是 LLM 翻译/扩写跑偏, 但用户看不到中间结果只能猜。一键出图把翻译藏在 `/api/jobs` 里, 既没暴露自动扩写的差异化能力, 也没给翻坏兜底。
+**决定**: 翻译与生成解耦。新增 `POST /api/translate` (只翻译不排队, 用 `verify_token` 不查 image 日限 -- translate 只花 LLM token 不占 GPU); `POST /api/jobs` 破坏性改收 `prompt_en` (不再翻译)。前端两按钮: 「直接生成」(翻译+提交一气呵成, 默认一键 UX 不变) + 「预览提示词」(翻译后可编辑 textarea 再确认)。translate 复用 LRU 缓存, 预览过再直接生成不二次花 token。
+**收益**: 暴露扩写能力 (用户看见"春天"->啥) + 翻坏可手改 + 默认 UX 不变 (不强制两步, 朋友懒得写英文 tag 的门槛不抬高)。
+**代价**: `/api/jobs` 破坏性改动 (前端 no-cache + e2e 同步改, 无包袱); translate 不限流, 理论可被刷 LLM token (friends-only + 邀请码, 可接受, 滥用再加独立限流)。
+
 ## 待决策 / 方向
 
 - **Intent Engine**: 当前是平铺的「中文→tag」, 无意图解析。迈向「理解用户意图」核心目标的下一步是

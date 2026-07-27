@@ -76,6 +76,14 @@ def auth(req: Request) -> str:
     return token
 
 
+def verify_token(req: Request) -> str:
+    """仅校验 token (不查日限), 给非出图接口用 (如 /api/translate) -- 翻译不占 GPU, 不该被 image 限额挡."""
+    token = req.headers.get("authorization", "").removeprefix("Bearer ").strip()
+    if not TOKENS or token not in TOKENS:
+        raise HTTPException(401, "无效 token")
+    return token
+
+
 # ---------- 内容过滤 ----------
 def check_banned(text: str):
     low = text.lower()
@@ -428,20 +436,35 @@ async def list_loras(token: str = Depends(auth)):
     ]
 
 
+@app.post("/api/translate")
+async def translate_prompt(req: Request, token: str = Depends(verify_token)):
+    """只翻译不排队: 中文 -> 英文 tag (角色->词典->LLM 三层 + 扩写, LRU 缓存). 不计入 image 限额."""
+    body = await req.json()
+    prompt = (body.get("prompt") or "").strip()
+    if not prompt or len(prompt) > 500:
+        raise HTTPException(400, "提示词为空或过长(>500)")
+    check_banned(prompt)
+    prompt_en = await translate(prompt)
+    check_banned(prompt_en)
+    return {"prompt_en": prompt_en}
+
+
 @app.post("/api/jobs")
 async def create_job(req: Request, token: str = Depends(auth)):
     body = await req.json()
     wf_name = body.get("workflow", "")
-    prompt_raw = (body.get("prompt") or "").strip()
+    prompt_en = (body.get("prompt_en") or "").strip()
+    prompt_raw = (body.get("prompt") or "").strip() or prompt_en   # 原始中文, 仅存档展示; 不传则同 prompt_en
     lora = (body.get("lora") or "").strip()
     if wf_name not in WORKFLOWS:
         raise HTTPException(400, "未知工作流")
-    if not prompt_raw or len(prompt_raw) > 500:
-        raise HTTPException(400, "提示词为空或过长(>500)")
-    check_banned(prompt_raw)
-
-    prompt_en = await translate(prompt_raw)
+    if not prompt_en or len(prompt_en) > 800:
+        raise HTTPException(400, "提示词为空或过长(>800)")
+    if prompt_raw != prompt_en and len(prompt_raw) > 500:
+        raise HTTPException(400, "原始提示词过长(>500)")
     check_banned(prompt_en)
+    if prompt_raw != prompt_en:
+        check_banned(prompt_raw)
 
     wcfg = WORKFLOWS[wf_name]
     width = height = None

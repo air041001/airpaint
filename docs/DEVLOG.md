@@ -255,3 +255,18 @@ build_prompt 单测: 无 lora 时 node5.loras 保持 `{"__value__":[]}` 不动; 
 - **LoRA 权重可调**: 加 `strength` 字段 (前端强度输入框 0~1, 后端 build_prompt 用它同时覆盖 model/clip strength, 不传用 config 默认 1.0)。原 config 写死 1.0 没法调。
 - **salt 文件修正**: 原配 `salt(finale).safetensors` 是错的 (非 anima 版), 改 `salt(finale)-anima-v1.0.safetensors`。salt_milk_sailor 触发词补 `blue skirt`。前端名字保留 Finale/Milk 英文不翻译。
 - **端到端验证通过**: 用户实测 LoRA 正常加载且有效果。
+
+
+## 第 14 条 2026-07-27 - 提示词两步走 (可选预览/编辑)
+
+### 完成内容
+把「一键出图」拆成翻译与生成解耦: 新增 `POST /api/translate` (只翻译不排队, 不计入 image 限额); `POST /api/jobs` 改收 `prompt_en` (破坏性, 不再后端翻译)。前端两按钮: 「✨ 直接生成」(翻译+提交一气呵成, 默认 UX 不变) 与「🔍 预览提示词」(翻译后可编辑 textarea, 改完再「确认生成」)。
+
+### 关键改动 / 为什么
+- **翻译独立成 /api/translate**: 暴露自动扩写能力 (用户能看到"春天"扩成了啥), 且给 LLM 偶尔翻坏兜底 (可手改)。translate 有 LRU 缓存, 预览过再直接生成是缓存命中, 不二次花 token。
+- **/api/jobs 破坏性改 prompt_en**: 唯一消费方前端 (no-cache 必刷新) + e2e 测试 (同步改), 无遗留兼容负担。
+- **translate 不计 image 限额, 用 verify_token**: image 限额守 GPU; translate 只花 LLM token 不占 GPU, 不该被 30 张限额挡。新增 `verify_token` (仅校验 token 不查日限) 给非出图接口用。
+- **默认仍一键**: 「直接生成」对用户是一步 (翻译后台透明完成), 现状 UX 不变; 「预览」是可选精细入口。
+
+### 验证
+main.py 语法 + 路由注册 (/api/translate, /api/jobs) + 前端 JS `node --check` 通过。端到端待用户实测。详见 decisions D17。
