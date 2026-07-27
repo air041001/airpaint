@@ -66,6 +66,8 @@ ComfyUI  127.0.0.1:8188  (不对公网开放, 用 run_nvidia_gpu_fast_fp16_accum
 5. 注入: `prompt_node.text = quality_prefix + (trigger+", " 若有 LoRA) + prompt_en`; `size_node.width/height`; (不配 `negative_node`, 用工作流自带负面模板)。触发词取自 config `loras.<key>.trigger` (LoraManager 自带触发词链已被此步覆盖节点54 text 断掉)。
 6. 返回 `{prompt, client_id, _seed}`。
 
+> 扩展其他节点注入 (ControlNet / 图生图 / inpaint 等) 前, 先看 `CLAUDE.md` 的「ComfyUI 节点注入准则」-- 必须查本机节点源码定 input 格式, 不靠猜; 实例见 D16 (LoRA)。
+
 ### ComfyUI 客户端
 `submit_and_wait(...)`:
 - POST `/prompt` 提交 → 拿 `prompt_id`。

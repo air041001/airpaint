@@ -36,6 +36,18 @@
 6. 若需求偏离「理解用户意图」核心目标, **主动提更贴合的方案**, 不机械执行。
 7. **收工前自查**: 哪些文档该同步却没动? 主动提醒开发者是否遗漏。
 
+## ComfyUI 节点注入准则 (扩展工作流时遵守)
+
+往工作流节点注入值 (LoRA / ControlNet / 图生图 / inpaint 等) 前, 必须查**本机节点源码**定格式, 不靠工作流 JSON 或前端 widget 猜 (这次 LoRA 的 `del text` / `__value__` 对象格式 / `active:true` / 连接覆盖断链, 全是源码查出来的, 见 D16):
+
+1. **定位节点**: `grep` 工作流 JSON 找 `class_type` -> 读该节点 `inputs`, 看目标 input 现在是字面值 / 连接 `["id",n]` / `{"__value__":...}`。
+2. **查源码 (权威)**: 本机 `<comfy>/custom_nodes/<包>/` 里匹配该 class 的类, 读 `INPUT_TYPES` + `execute()`。确认: 实际读哪个 input (有的 required 却被 `del` 忽略)、值的确切 schema (对象 vs 数组、字段名、必填 flag 如 `active`)、是否依赖前端 `extra_pnginfo` (依赖则不能走后端 /prompt, 见 sanitize_for_api)。
+3. **config 驱动注入**: workflow config 加 `<名>_node: "<id>"`, 用 `build_prompt` 的 `set_input(key, field, value)`, 不硬编码 id (与 prompt_node/seed_node/lora_node 同套)。
+4. **连接覆盖警告**: 目标 input 若是连接 `["id",n]`, set 字面值会**替换连接**, 上游输出作废。检查下游是否依赖该链 (如触发词/wildcard), 依赖则手动补进 prompt。
+5. **本地验再跑**: 调 `build_prompt(...)` 打印注入后的节点 inputs + 最终 prompt 确认格式, 再端到端跑 ComfyUI。
+
+> ComfyUI API input 三种形态: 字面值 (str/int/float/bool/dict/list) | 连接 `["源节点id", output_index]` | 复杂 widget 序列化 `{"__value__": <实际值>}` (照抄工作流 JSON 里该 input 现有形态最稳)。实例见 architecture.md「Workflow Engine」+ D16。
+
 ## 上下文节俭(省 token)
 
 每次压缩后上下文清空, 重读 docs 是最大浪费。守则:
