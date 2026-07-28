@@ -27,8 +27,8 @@
   },
   "4": {
     "inputs": {
-      "wildcard_text": "worst quality, low quality, lowres, score_1, score_2, score_3, blurry, jpeg artifacts, bad anatomy, watermark, artist name, ",
-      "populated_text": "worst quality, low quality, lowres, score_1, score_2, score_3, blurry, jpeg artifacts, bad anatomy, watermark, artist name, ",
+      "wildcard_text": "worst quality, low quality, lowres, score_1, score_2, score_3, blurry, jpeg artifacts, bad anatomy, watermark, artist name, multiple views, split view, grid view, cropped, out of frame, ",
+      "populated_text": "worst quality, low quality, lowres, score_1, score_2, score_3, blurry, jpeg artifacts, bad anatomy, watermark, artist name, multiple views, split view, grid view, cropped, out of frame, ",
       "mode": "populate",
       "seed": [
         "34",

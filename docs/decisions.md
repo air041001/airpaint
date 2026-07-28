@@ -125,8 +125,16 @@
 **收益**: 暴露扩写能力 (用户看见"春天"->啥) + 翻坏可手改 + 默认 UX 不变 (不强制两步, 朋友懒得写英文 tag 的门槛不抬高)。
 **代价**: `/api/jobs` 破坏性改动 (前端 no-cache + e2e 同步改, 无包袱); translate 不限流, 理论可被刷 LLM token (friends-only + 邀请码, 可接受, 滥用再加独立限流)。
 
-## 待决策 / 方向
+## D18. Anima 提示词规范 + LLM 结构化意图分解; 负面=常量, 否定语义解析弃用
 
-- **Intent Engine**: 当前是平铺的「中文→tag」, 无意图解析。迈向「理解用户意图」核心目标的下一步是
-  解析用户输入的结构 (角色 / 动作 / 场景 / 风格 / 构图、否定语义、歧义消解), 而非仅追加更多工作流。
-  符合 CLAUDE.md 规则 6。**部分已实现** (D13: 氛围扩写 + D12: 角色词典); 完整意图解析 (否定/歧义/构图) 仍待做。
+**背景**: 实测 Qwen3-8B 平铺翻译丢三样东西: ①场景误读(书桌房间->教室) ②隐喻字面化(未来的方向->`future`) ③构图丢失(看向窗外->出图没看窗)。根因有二: (a) 提示词把模型拷成「150字符扁平 tag 袋 + 关思考」, 扁平 tag 天生表达不了空间关系/隐喻; (b) 8B 理解力弱。同时联网查证 Anima 模型(CircleStone Labs + Comfy Org, 2B, Cosmos 架构)提示词规范: 正向前缀 `masterpiece, best quality, score_7, safe`, 小写+空格(score tag 例外); 负面极简且固定(WAI-Anima 式: `worst quality, low quality, lowres, score_1/2/3, blurry, jpeg artifacts, bad anatomy, watermark, artist name`), 不像 Illustrious 要一长串 bad-hands。来源: civarchive.com/models/2458426/anima-official, lilting.ch/en/articles/anima-negative-prompt-shorten-illustrious。
+**决定**:
+1. LLM 层从「直接吐扁平 tag」改为「先结构化分解(scene/composition/mood/lighting/style) 再吐 TAGS 行」。隐喻落 mood(禁字面名词), 空间关系落 composition(带 facing/from behind/looking out 锚点), scene 强制表态具体地点。解析无 TAGS 行则整体当 tag 降级(不崩)。`translate()`/`siliconflow_translate()` 返回 `(prompt_en, breakdown)`, `/api/translate` 回传 breakdown 供前端预览展示「🤖 AI 理解」。
+2. 参数: max_tokens 180->400, temp 0.2->0.4; `enable_thinking` 保留关闭但加 config 开关 `translate_enable_thinking`(默认 False), 隐喻仍弱就翻 True 重测(不动代码)。结构化字段本身是强制表态机制, 不依赖 CoT, 故默认关思考保住 D2 的延迟/复读安全。
+3. Anima 规范化: `quality_prefix` 从 Illustrious 风格(`very aesthetic, ultra detailed`)改 Anima 官方(`masterpiece, best quality, score_7, safe, very aesthetic, absurdres`); LLM 被禁输出 quality/score tag(前缀已处理)与 realistic/3d(Anima 不擅写实); 工作流固化负面补构图否定词(`multiple views, split view, grid view, cropped, out of frame`, 对症 Anima 短提示词构图散开)。
+4. **否定语义解析弃用**: Anima 负面是常量(不随用户输入变), config 特意不配 negative_node(工作流自带, 覆盖更差)。故原 Intent Engine 规划里的「否定语义解析」无必要, 砍掉。
+**收益**: 三病同治(实测 3 句未见过的输入: 天台/公交站/神社, 场景/构图/隐喻全对, `realistic` 被禁); breakdown 让用户看见 AI 理解, 翻坏可手改(承 D17 两步走); Anima 提示词写法有据可依。
+**代价**: 翻译慢一点(结构化+400 token, thinking 关仍 ~3-5s, 两步走已有延迟预算); 8B 偶发格式不稳靠 TAGS 行降级兜底; few-shot 含用户原测试句(泛化已另测 3 句未见过的验证, 非只抄例子)。
+
+## 待决策 / 方向
+- **Intent Engine**: 迈向「理解用户意图」核心目标。**构图/场景/情绪的结构化分解已实现** (D18: LLM 输出 scene/composition/mood/lighting/style + TAGS); **否定语义解析弃用** (D18: Anima 负面是常量, 不随输入变); 仍待做: 歧义消解、LoRA/工作流自动推荐。符合 CLAUDE.md 规则 6。

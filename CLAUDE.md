@@ -9,7 +9,7 @@
 前后端共用固定域名 `airpaint.xyz`, 经 cloudflared **命名隧道**穿透内网(不暴露本机端口)。
 当前阶段: **MVP 已上线, 单工作流 (AnimaStandard V7)**。
 
-> **最近改动** (压缩后先看这行, 省重读 docs; 每完成一阶段更新此行): 2026-07-27 提示词两步走 (可选预览/编辑: /api/translate + /api/jobs 收 prompt_en, 默认仍一键), 见 DEVLOG 第14条 / decisions D17。
+> **最近改动** (压缩后先看这行, 省重读 docs; 每完成一阶段更新此行): 2026-07-28 Anima 提示词规范 + LLM 结构化意图分解 (scene/composition/mood/lighting/style + TAGS; /api/translate 回传 breakdown; 负面=常量, 否定解析弃用), 见 DEVLOG 第15条 / decisions D18。
 
 ## 模块地图
 
@@ -19,12 +19,12 @@
 |---|---|---|
 | 鉴权/限流 | `auth()` `USAGE` | Bearer token + 日限, **内存计数(重启清零)** |
 | 内容过滤 | `check_banned()` | banned_words 子串匹配 |
-| **Prompt Engine** | `translate()` `match_characters()` `siliconflow_translate()` `dict.yaml` `char_dict.yaml` | 三层: 角色->词典->LLM(只翻未命中) / LRU 缓存 500 |
+| **Prompt Engine** | `translate()` `match_characters()` `siliconflow_translate()` `_parse_structured_output()` `dict.yaml` `char_dict.yaml` | 三层: 角色->词典->LLM(结构化分解 scene/composition/mood/lighting/style + TAGS, 回传 breakdown) / LRU 缓存 500 |
 | **Workflow Engine** | `sanitize_for_api()` `build_prompt()` | 清洗前端专属节点 + 注入 prompt/seed/size/**LoRA**, **统一所有 seed** |
 | ComfyUI 客户端 | `submit_and_wait()` | `/prompt` 提交 + `/history` 轮询 + `/view` 取图 |
 | 队列 | `worker()` `QUEUE` | 单并发 asyncio.Queue (GPU 串行) |
 | 静态托管 | `/` `/images` | `/` 返回 `web/index.html`, `/images` 出图 |
-| **Intent Engine** | `detect_characters()` `char_dict.yaml` | **部分实现**: 氛围扩写+角色词典; 完整意图解析(否定/歧义/构图)待做, 见 decisions.md D12/D13 |
+| **Intent Engine** | `detect_characters()` `char_dict.yaml` | 构图/场景/情绪分解已做 (D18 LLM 结构化); 否定解析弃用 (Anima 负面=常量); 待做: 歧义消解/LoRA 自动推荐, 见 decisions.md D12/D13/D18 |
 
 ## 运作规则(开发时遵守)
 

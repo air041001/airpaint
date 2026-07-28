@@ -51,11 +51,11 @@ ComfyUI  127.0.0.1:8188  (不对公网开放, 用 run_nvidia_gpu_fast_fp16_accum
 2. **词典匹配** (`dict.yaml`, 851 条): 剩余文本按逗号切分逐段精确匹配, 分 hits / misses。
 3. 全命中 (无 misses): 裸角色名 (只有角色无描述) -> `tag, 1girl, solo` 跳过 LLM; 否则 `角色tag + 词典tag` 拼接。
 4. 有未命中 -> 按后端:
-   - `siliconflow`: 构造上下文 (Known character tags / Known attribute tags / Remaining misses) 送 Qwen3-8B。LLM **只输出新增 tag** (不重复已知), 后端 prepend 已知 tag。`/no_think` + 顶层 `enable_thinking:False` 关思考 (见 D2), 失败抛 502。LRU 缓存 500 (key=上下文)。
+   - `siliconflow`: 构造上下文 (Known character tags / Known attribute tags / Remaining misses) 送 Qwen3-8B。LLM **结构化分解** (scene/composition/mood/lighting/style + TAGS 行), `_parse_structured_output` 解析; 隐喻落 mood(禁字面名词), 空间关系落 composition(带 facing/from behind/looking out 锚点), scene 强制具体; 无 TAGS 行降级为整体当 tag(不崩)。返回 `(new_tags, breakdown)`, 后端 prepend 已知 tag, breakdown 回传前端预览。`/no_think` + 顶层 `enable_thinking:False`(config `translate_enable_thinking` 可翻, 见 D18) 关思考 (见 D2), max_tokens 400 / temp 0.4, 失败抛 502。LRU 缓存 500 (key=上下文, 值为 (prompt_en, breakdown))。
    - `google`: gtx 逐词翻 misses (本机需翻墙, 已弃用)。
    - `none`: misses 原样保留。
 
-意图扩写由单条 system prompt (few-shot + 内容规则: 氛围->scene, 具体特征->翻译, 纯氛围不强制人物) 处理, 见 D12/D13/D15。
+结构化扩写由单条 system prompt (few-shot + Anima 规范: 小写+空格、主体计数在前、禁 quality/score tag、禁 realistic/3d) 处理; 正向 `quality_prefix` 走 Anima 官方 (`masterpiece, best quality, score_7, safe, very aesthetic, absurdres`), 负面为工作流固化常量 (WAI-Anima 式 + 构图否定词 multiple views/split view/grid view/cropped/out of frame), 不随输入变。见 D12/D13/D15/D18。
 
 ### Workflow Engine (工作流注入)
 `build_prompt(wf_name, prompt_en, w, h, lora_key=None)`:
@@ -86,7 +86,7 @@ ComfyUI  127.0.0.1:8188  (不对公网开放, 用 run_nvidia_gpu_fast_fp16_accum
 ## 前端 (web/index.html)
 
 单文件 SPA, 无框架。localStorage 存邀请码; `API` 常量硬编码 `https://api.airpaint.xyz`。
-出图两步走 (翻译与生成解耦, 见 D17): 中文 -> `/api/translate` 拿 prompt_en -> (可选预览/编辑) -> `/api/jobs` 传 prompt_en 提交。两按钮: 「✨ 直接生成」(翻译+提交一气呵成, 默认一键 UX) 与「🔍 预览提示词」(翻译后展示可编辑 textarea, 改完点「确认生成」)。`/api/jobs` 不再翻译。
+出图两步走 (翻译与生成解耦, 见 D17): 中文 -> `/api/translate` 拿 prompt_en + breakdown -> (可选预览/编辑) -> `/api/jobs` 传 prompt_en 提交。两按钮: 「✨ 直接生成」(翻译+提交一气呵成, 默认一键 UX) 与「🔍 预览提示词」(翻译后展示 breakdown「🤖 AI 理解」+ 可编辑 textarea, 改完点「确认生成」)。`/api/jobs` 不再翻译。
 轮询 `/api/jobs/{id}` 每 2s, 完成后展示图 + 入历史画廊(localStorage 缩略图, 最近 12 张)。
 
 > `web/` 是独立 git 仓库 → `air041001/air`。但域名迁移后已**不再依赖 GitHub Pages**

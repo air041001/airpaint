@@ -98,27 +98,78 @@ _TRANSLATE_CACHE: dict[str, str] = {}
 _TRANSLATE_CACHE_MAX = 500
 
 SILICONFLOW_SYSTEM_PROMPT = (
-    "You are a prompt engineer for anime image generation. "
+    "You are a prompt engineer for the Anima anime image model. "
     "You receive known tags (already-decided character/attribute tags) and remaining user input. "
-    "Translate/expand ONLY the remaining input into english danbooru-style tags. "
-    "Do NOT repeat or rephrase the known tags. "
-    "Output ONLY new lowercase tags separated by commas. "
-    "No explanations, no periods, no quotes, no markdown.\n\n"
+    "Decompose the intent of ONLY the remaining input, then emit tags. Do NOT repeat or rephrase known tags.\n\n"
+    "Output EXACTLY these lines, nothing else (no markdown, no quotes, no extra text):\n"
+    "scene: <concrete place + setting tags>\n"
+    "composition: <framing / camera angle / orientation tags>\n"
+    "mood: <emotion -> atmosphere tags>\n"
+    "lighting: <light tags>\n"
+    "style: <art style tags>\n"
+    "TAGS: <final danbooru tags, lowercase, comma-separated>\n\n"
     "Rules:\n"
-    "1. If the remaining input is a feeling/mood (e.g. 治愈, 忧郁, 春天的感觉), expand into scene+lighting+style tags.\n"
-    "2. If the remaining input has specific details (hair/eyes/clothing/action), translate them.\n"
-    "3. Subject: if a person/character is implied by the remaining input, include a count tag (1girl/1boy). "
-    "If the remaining is PURELY a mood/scene with no person, focus on scenery and do NOT force a character.\n"
-    "4. Keep total under 150 characters.\n\n"
+    "1. METAPHORS / FEELINGS (未来的方向, 青春结束, 治愈, 春天的感觉) go in mood -> atmosphere+scene tags. "
+    "NEVER translate them as literal nouns (not 'future', not 'youth').\n"
+    "2. SPATIAL RELATIONS (看向窗外, 背对, 望向, 仰视) go in composition with concrete framing tags "
+    "(e.g. facing window, looking out window, from behind, back to viewer, from below).\n"
+    "3. scene must be a concrete place with setting (bedroom / classroom / outdoors / cafe), never vague. Pick one and commit.\n"
+    "4. Subject: if a person is implied, put a count tag (1girl/1boy) FIRST in TAGS. "
+    "If the remaining is PURELY scenery with no person, focus on scenery, do NOT force a character.\n"
+    "5. Do NOT output quality/score tags (masterpiece, best quality, score_*, safe, absurdres) - handled separately.\n"
+    "6. Use lowercase danbooru tags; spaces preferred over underscores. Do NOT combine mutually exclusive styles. "
+    "Do NOT add realistic/photorealistic/3d/render tags - the target model is anime-only.\n"
+    "7. TAGS collects every concrete tag implied by the 5 fields above. Keep under ~200 chars.\n\n"
     "Examples:\n"
     "Known character tags: march_7th_(honkai:_star_rail)\n"
     "Remaining: 在樱花树下\n"
-    "Output: 1girl, solo, cherry blossoms, tree, petals, spring, smile, standing, outdoors, soft lighting, anime style\n\n"
+    "scene: outdoors, under cherry blossom tree\n"
+    "composition: standing, full body, looking at viewer\n"
+    "mood: cheerful, serene\n"
+    "lighting: soft daylight, petals falling\n"
+    "style: anime style\n"
+    "TAGS: 1girl, solo, cherry blossoms, tree, petals, spring, smile, standing, full body, looking at viewer, outdoors, soft daylight, anime style\n\n"
+    "Remaining: 穿着学生服的少女坐在房间书桌上 看向窗外 那是未来的方向\n"
+    "scene: bedroom, desk by window, afternoon\n"
+    "composition: sitting at desk, facing window, looking out window, from behind, side view\n"
+    "mood: wistful, longing, hopeful for the future\n"
+    "lighting: soft daylight from window\n"
+    "style: anime style, clean lines\n"
+    "TAGS: 1girl, school uniform, sitting, desk, bedroom, window, looking out window, facing window, from behind, side view, soft daylight, anime style, clean lines\n\n"
     "Remaining: 想要春天的感觉\n"
-    "Output: spring, cherry blossoms, petals falling, gentle breeze, warm sunlight, pastel colors, peaceful, garden, anime style\n\n"
-    "Remaining: 白发蓝眼睛猫耳少女\n"
-    "Output: 1girl, white hair, blue eyes, cat ears, smile, school uniform, standing, indoors, soft lighting, anime style"
+    "scene: garden, spring, outdoors\n"
+    "composition: scenic, wide shot\n"
+    "mood: peaceful, gentle, renewal\n"
+    "lighting: warm sunlight\n"
+    "style: anime style, pastel colors\n"
+    "TAGS: spring, cherry blossoms, petals falling, gentle breeze, warm sunlight, pastel colors, peaceful, garden, outdoors, anime style"
 )
+
+
+# LLM 结构化输出的字段 (顺序即展示顺序). TAGS 行单独解析为最终 tag.
+_STRUCTURED_FIELDS = ("scene", "composition", "mood", "lighting", "style")
+
+
+def _parse_structured_output(out: str) -> tuple[str, dict | None]:
+    """解析 LLM 结构化输出 (scene/composition/mood/lighting/style 各一行 + TAGS 行).
+    返回 (tags, breakdown). 无 TAGS 行 -> 整体当 tags, breakdown=None (降级到旧扁平行为, 见 D18)."""
+    breakdown: dict = {}
+    tags = ""
+    for line in out.splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        low = line.lower()
+        if low.startswith("tags:"):
+            tags = line.split(":", 1)[1].strip()
+            continue
+        for f in _STRUCTURED_FIELDS:
+            if low.startswith(f + ":"):
+                breakdown[f] = line.split(":", 1)[1].strip()
+                break
+    if not tags:
+        return out, None
+    return tags, breakdown or None
 
 
 def match_characters(text: str) -> tuple[list[str], str]:
@@ -132,13 +183,18 @@ def match_characters(text: str) -> tuple[list[str], str]:
     return found_tags, remaining
 
 
-async def siliconflow_translate(context: str) -> str:
+async def siliconflow_translate(context: str) -> tuple[str, dict | None]:
     """走硅基流动 Qwen 翻译/扩写. context 是结构化上下文 (Known tags + Remaining).
-    返回 LLM 新增的 tag (不含已知 tag, 由 translate 拼接). 失败抛异常 (上层转 HTTPException)."""
+    返回 (LLM 新增 tag, 结构化拆解 dict). tag 不含已知 tag (由 translate 拼接).
+    breakdown 供前端预览展示 AI 理解 (scene/composition/mood/lighting/style). 失败抛异常 (上层转 HTTPException)."""
     api_key = CFG.get("siliconflow_api_key", "").strip()
     model = CFG.get("siliconflow_model", "Qwen/Qwen3-8B")
     if not api_key:
         raise RuntimeError("siliconflow_api_key 未在 config.yaml 中配置")
+
+    # thinking 默认关 (D2: 思考慢 30s+ 且易复读); 结构化字段已是强制表态机制, 不依赖 CoT.
+    # 隐喻/场景仍弱时 config 翻 translate_enable_thinking: true 重测, 不动代码 (见 D18).
+    thinking = bool(CFG.get("translate_enable_thinking", False))
 
     r = await CLIENT.post(
         "https://api.siliconflow.cn/v1/chat/completions",
@@ -147,16 +203,15 @@ async def siliconflow_translate(context: str) -> str:
             "model": model,
             "messages": [
                 {"role": "system", "content": SILICONFLOW_SYSTEM_PROMPT},
-                # /no_think: Qwen3 软开关, 强制不进思考模式 (思考会慢到 30s+ 且易复读)
-                {"role": "user", "content": "/no_think " + context},
+                # /no_think: Qwen3 软开关, 强制不进思考模式 (思考会慢到 30s+ 且易复读). thinking 开则不前置.
+                {"role": "user", "content": ("/no_think " if not thinking else "") + context},
             ],
-            "temperature": 0.2,
-            "max_tokens": 180,
-            # ★ 关键: enable_thinking 必须放顶层, 放 extra_body 里硅基流动不认 -> 思考没关掉.
-            #   实测放顶层后 3s 出结果, 放 extra_body 里要 27s+ 并出现 tag 复读退化. (见 D2)
-            "enable_thinking": False,
+            "temperature": 0.4,
+            "max_tokens": 400,
+            # ★ 关键: enable_thinking 必须放顶层, 放 extra_body 里硅基流动不认 -> 思考没关掉. (见 D2)
+            "enable_thinking": thinking,
         },
-        timeout=30,
+        timeout=40,
     )
     if r.status_code != 200:
         raise RuntimeError(f"翻译服务返回 {r.status_code}: {r.text[:200]}")
@@ -168,18 +223,22 @@ async def siliconflow_translate(context: str) -> str:
     if not out:
         raise RuntimeError("翻译服务返回空内容")
 
+    # 解析结构化输出: 5 字段 + TAGS 行. 无 TAGS 行则整体当 tag (降级, 见 D18).
+    tags, breakdown = _parse_structured_output(out)
+
     # 兜底: 检测重复 tag (模型复读), 出现3次以上相同 tag 说明输出异常
-    tags = [t.strip() for t in out.split(",")]
+    tag_list = [t.strip() for t in tags.split(",")]
     from collections import Counter
-    dupes = [t for t, c in Counter(tags).most_common(3) if c >= 3 and t]
+    dupes = [t for t, c in Counter(tag_list).most_common(3) if c >= 3 and t]
     if dupes:
         raise RuntimeError(f"翻译输出异常(重复tag: {dupes[0]}), 请重试")
 
-    return out
+    return tags, breakdown
 
 
-async def translate(text: str) -> str:
-    """中文 -> danbooru tag. 三层: 角色匹配 -> 词典匹配 -> LLM 扩写(只处理未命中)."""
+async def translate(text: str) -> tuple[str, dict | None]:
+    """中文 -> danbooru tag. 三层: 角色匹配 -> 词典匹配 -> LLM 扩写(只处理未命中).
+    返回 (prompt_en, breakdown): breakdown 是 LLM 结构化拆解, 快速路径(全命中词典/角色)时为 None."""
     backend = CFG.get("translate", "none")
 
     # Layer 0: 角色子串匹配 (移除角色名, 得到剩余文本)
@@ -200,16 +259,16 @@ async def translate(text: str) -> str:
         # 裸角色名快速路径: 只有角色没别的描述 -> 补 1girl, solo
         # (LLM 对裸角色名会疯狂编场景/武器, 实测 7.9s + 噪声 tag, 见 D13)
         if char_tags and not hits and not parts:
-            return ", ".join(char_tags) + ", 1girl, solo"
+            return ", ".join(char_tags) + ", 1girl, solo", None
         all_tags = char_tags + hits
         if all_tags:
-            return ", ".join(all_tags)
+            return ", ".join(all_tags), None
         raise HTTPException(400, "提示词为空")
 
     # Layer 2: 有未命中 -> 后端处理
     if backend == "none":
         # 未翻译部分原样保留 (混输英文 tag 时合适)
-        return ", ".join(char_tags + hits + misses)
+        return ", ".join(char_tags + hits + misses), None
 
     if backend == "siliconflow":
         # 构造上下文: 已知 tag 喂给 LLM, 只让它翻/扩 misses (不重复已知 tag)
@@ -225,22 +284,22 @@ async def translate(text: str) -> str:
         if cache_key in _TRANSLATE_CACHE:
             return _TRANSLATE_CACHE[cache_key]
         try:
-            new_tags = await siliconflow_translate(context)
+            new_tags, breakdown = await siliconflow_translate(context)
         except Exception as e:
             raise HTTPException(502, f"翻译失败, 请稍后重试 ({e})")
         # 拼接: 已知 tag + LLM 新增 tag
         result = ", ".join(t for t in char_tags + hits + [new_tags] if t)
         if len(_TRANSLATE_CACHE) >= _TRANSLATE_CACHE_MAX:
             _TRANSLATE_CACHE.pop(next(iter(_TRANSLATE_CACHE)))
-        _TRANSLATE_CACHE[cache_key] = result
-        return result
+        _TRANSLATE_CACHE[cache_key] = (result, breakdown)
+        return result, breakdown
 
     if backend == "google":
         try:
             translated_missing = await google_translate_batch(misses)
         except Exception as e:
             raise HTTPException(502, f"翻译失败, 请稍后重试 ({e})")
-        return ", ".join(char_tags + hits + translated_missing)
+        return ", ".join(char_tags + hits + translated_missing), None
 
     raise HTTPException(500, f"未知的 translate 后端: {backend}")
 
@@ -438,15 +497,17 @@ async def list_loras(token: str = Depends(auth)):
 
 @app.post("/api/translate")
 async def translate_prompt(req: Request, token: str = Depends(verify_token)):
-    """只翻译不排队: 中文 -> 英文 tag (角色->词典->LLM 三层 + 扩写, LRU 缓存). 不计入 image 限额."""
+    """只翻译不排队: 中文 -> 英文 tag (角色->词典->LLM 三层 + 结构化扩写, LRU 缓存). 不计入 image 限额.
+    返回 {prompt_en, breakdown}: breakdown 是 LLM 结构化拆解 (scene/composition/mood/lighting/style),
+    供前端预览展示 AI 理解; 快速路径(全命中词典/角色)时为 null."""
     body = await req.json()
     prompt = (body.get("prompt") or "").strip()
     if not prompt or len(prompt) > 500:
         raise HTTPException(400, "提示词为空或过长(>500)")
     check_banned(prompt)
-    prompt_en = await translate(prompt)
+    prompt_en, breakdown = await translate(prompt)
     check_banned(prompt_en)
-    return {"prompt_en": prompt_en}
+    return {"prompt_en": prompt_en, "breakdown": breakdown}
 
 
 @app.post("/api/jobs")

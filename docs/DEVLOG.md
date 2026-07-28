@@ -270,3 +270,18 @@ build_prompt 单测: 无 lora 时 node5.loras 保持 `{"__value__":[]}` 不动; 
 
 ### 验证
 main.py 语法 + 路由注册 (/api/translate, /api/jobs) + 前端 JS `node --check` 通过。端到端待用户实测。详见 decisions D17。
+
+## 第 15 条 2026-07-28 - Anima 提示词规范 + LLM 结构化意图分解
+
+### 完成内容
+治翻译三病(场景误读/隐喻字面化/构图丢失)。LLM 层从「直接吐扁平 tag」改为「先结构化分解(scene/composition/mood/lighting/style)再吐 TAGS 行」; `translate()`/`siliconflow_translate()` 返回 `(prompt_en, breakdown)`, `/api/translate` 回传 breakdown, 前端预览展示「🤖 AI 理解」。同时规范化 Anima 提示词: `quality_prefix` 改 Anima 官方(`score_7, safe` 等); 工作流固化负面补构图否定词; LLM 禁输出 quality/score/realistic tag。
+
+### 关键改动 / 为什么
+- **结构化分解治扁平 tag 表达力不足**: 扁平 tag 袋天生表达不了空间关系(看向窗外)和隐喻(未来的方向)。强制模型对 scene/composition/mood 分别表态, 隐喻落 mood 不再字面, 空间关系落 composition 带锚点(facing/from behind/looking out)。
+- **不换模型先重构**: 用户选项。先隔离变量(提示词 vs 模型), 实测 3 句未见过的输入泛化正确, 证明 8B + 结构化够用, 暂不升模型。
+- **thinking 仍关 + config 开关**: 结构化字段本身是强制表态, 不依赖 CoT, 保住 D2 延迟/复读安全; `translate_enable_thinking` 留作隐喻仍弱时的 A/B 开关。
+- **否定解析弃用**: 联网查证 Anima 负面是极简常量(WAI-Anima 式), 不随输入变; config 本就不配 negative_node。原 Intent Engine 的否定语义解析无必要, 砍掉。
+- **TAGS 行降级**: 8B 偶发格式不稳, 无 TAGS 行则整体当 tag(等同旧行为), 不崩。
+
+### 验证
+main.py `py_compile` 通过; 前端内联 JS `node --check` 通过; 实测 `translate()` 3 句未见过的输入(天台夜景/雨天公交站/神社樱花): 场景正确、构图锚点齐全、隐喻非字面、`realistic` 被禁。详见 decisions D18。
