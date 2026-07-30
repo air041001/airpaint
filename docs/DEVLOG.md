@@ -285,3 +285,59 @@ main.py 语法 + 路由注册 (/api/translate, /api/jobs) + 前端 JS `node --ch
 
 ### 验证
 main.py `py_compile` 通过; 前端内联 JS `node --check` 通过; 实测 `translate()` 3 句未见过的输入(天台夜景/雨天公交站/神社樱花): 场景正确、构图锚点齐全、隐喻非字面、`realistic` 被禁。详见 decisions D18。
+
+## 第 16 条 2026-07-29 - 抽卡 re-roll + Anima tag 顺序规范化
+
+### 完成内容
+两个轻量灵感(inspiration ①⑥)。① 抽卡 re-roll: 同一句中文, LLM 高温重出一版不同结构化分解, 朋友在预览区点「🎲 再来一版」探索不同风格, 不用重打字。⑥ tag 顺序规范化: 按 Anima 期望序 `count -> character -> general` 重排 prompt_en。
+
+### 关键改动 / 为什么
+- **re-roll 跳过缓存读写**: reroll 是探索性, 写回缓存会顶掉正常翻译的首版。跳过读写 = 每次重抽新鲜, 正常预览仍命中首版, 互不污染 (D19)。
+- **re-roll = 高温 + 发散指令**: temp 0.4 -> 0.9 (config `reroll_temperature`), user content 前置"给一版不同创意解读"指令; `/no_think` 仍是首 token, 不破坏 D2 思考关闭。
+- **re-roll 仅 LLM 路径**: 快速路径(全命中词典, breakdown=null)无 LLM 可变, 前端隐藏按钮不报错。
+- **normalize_tag_order 零风险重排**: 只把 count(1girl/solo)从末尾提到 character 前, 不增删不去重; quality 仍由 build_prompt 外层 prepend (D20)。`translate()` 四条返回路径统一走它。
+- **NL 追加本次不做**: Anima 编码器支持末尾自然语言, 但改出图大需单独验证, ⑥ 只做排序收尾, NL 留待 ③/⑤。
+
+### 验证
+main.py `py_compile` 通过; 前端内联 JS `node --check` 通过; 本地实测 `normalize_tag_order` + `translate()` 各路径(快速全命中 / siliconflow / none): prompt_en 顺序为 `count -> character -> general` (裸角色从 `raiden_shogun, 1girl, solo` 修正为 `1girl, solo, raiden_shogun`); `reroll=True` 在快速路径不报错(无 LLM 可变, 返回同结果)。airpaint.xyz 实跑确认: 「天宫心坐在桌前望着窗外 看起来心事重重」reroll 两版分别落到 classroom/golden hour/minimalistic 与 bedroom/soft daylight/contemplative, melancholic (scene/lighting/mood 全变), 均为 `1girl, amamiya_kokoro_(hololive), ...` = count->char->general 序; 天宫心走 char_dict 命中、心事重重落 mood 非字面。详见 decisions D19/D20。
+
+## 第 17 条 2026-07-29 - 修: 手机访问 /api/jobs 400 未知工作流
+
+### 完成内容
+朋友手机访问, `POST /api/translate 200` 但 `POST /api/jobs 400 未知工作流`。根因: `loadWorkflows()` 只在页面加载 / 点「保存」时跑(用当时的令牌), 而 `doTranslate()` 是**调用时实时读令牌**。朋友页面加载时无令牌(或过期) -> 工作流下拉框空, 事后填了令牌直接点生成 -> 翻译过(实时令牌)、但 `$('workflow').value===""` -> jobs 400。手机上不点保存直接生成必踩。
+
+### 关键改动 / 为什么
+- `submitJob()` 提交前 `if (!workflows.length) await loadWorkflows()` 补拉一次(用当前令牌), 仍空才报错提示。保证不管令牌何时填, 提交时下拉框一定有值。未改后端(400 检查本身正确), 纯前端补拉。
+- 非 ①⑥ 改动引入, 是既有的令牌/工作流加载时序耦合坑。
+
+### 验证
+前端 `node --check` 通过; 后端 `FileResponse` 现读 + `/` no-cache, 无需重启, 朋友刷新即生效。
+
+## 第 18 条 2026-07-29 - 词典热更新 (char_dict / dict.yaml 存盘即生效)
+
+### 完成内容
+char_dict.yaml / dict.yaml 原先启动时一次性载入, 加角色/词条要重启后端(中断朋友远程会话)。封装 `HotDict` 类: `.get()` / `.items()` 时按 mtime 判断, 变了才重载, 存盘后下一句翻译即生效。config.yaml 不动。
+
+### 关键改动 / 为什么
+- **mtime 轮询而非 watchdog**: 每次访问一个 stat(微秒级), 无依赖, 契合"翻译时才用词典"的访问模式; 后台线程+依赖对单文件过重 (D21)。
+- **整体重建再赋值**: `self._d = {...}` 先建后绑, 读端不会见半成品。
+- **坏 YAML 兜底**: 解析失败保留旧词典 + 打印 `[HotDict] 重载 ... 失败` 警告, 不崩翻译(旧代码启动时坏文件直接崩)。
+- **调用处零改动**: HotDict 暴露 .get/.items, `DICT.get` / `CHAR_DICT.items` 不用动; DICT key 小写, CHAR_DICT key 不小写。
+
+### 验证
+`py_compile` 通过; 临时文件测试: 加词条后 `.get` 立即命中, 坏 YAML 保留旧值+打印警告不崩; 真实词典加载正常 (char 157 / dict 929 条)。详见 D21。
+
+## 第 19 条 2026-07-30 - Face+Hand detailer 精修工作流 + 双工作流选择
+
+### 完成内容
+启用工作流里 MUTE 的 FaceDetailer+HandDetailer 作出图后精修(修脸+手细节)。拆成两个工作流: `anima`(快速默认, 原版) + `anima-detailer`(精修, ~90s), 前端下拉选。detailer 调参把 186s 降到 90s。剥掉 Image Comparer 展示节点(会干扰后端取图)。
+
+### 关键改动 / 为什么
+- **子 agent 查源码+磁盘确认零代码改动**: detailer 的 seed 是连 rgthree `Seed` 节点34(widget=-1), 运行时随机成正整数, 不触发 Impact Pack `default_rng(-1)` 崩; sanitize 不碰 detailer 组; 输出链 `6->43->27(Hand)->29(Face)->13` 自通; 检测器 swap 到磁盘有的 face_yolov8m.pt / hand_yolov8s.pt。
+- **Image Comparer 必剥**: 67/69 是展示节点, 继承 PreviewImage(OUTPUT_NODE), 中间预览图进 /history; `submit_and_wait` 取"第一个有图的节点"会误取中间图而非最终 SaveImage。本身不崩(extra_pnginfo=None 只 save_images), 但干扰取图 -> `sanitize_for_api` 加 `Image Comparer (rgthree)` 到剔除集。
+- **detailer 调参**: max_size 1536->1024、steps 16->12。病根是裁剪区被放大到 1536px(比主图还大)再采样, 每步 2.87s; 降到 1024+12步, 186s->90s(手14/手12/脸15s)。12步是下限, 再降不起作用(denoise 已低 0.26-0.4)。
+- **拆两工作流而非动态拨组**: 后端 /prompt 用 API 导出 JSON(只含活跃节点), 不能动态切 MUTE 组; 换功能=换 JSON 文件。两工作流=两份 JSON, 复用前端既有下拉(/api/workflows), 默认快速。以后 ControlNet/inpaint 同套路。注入节点两版相同(54/6/56/5)。
+- **EditDetailerPipe 提示词作者已填**: Hand=`[CONCAT] hand, perfect hands`, Face=`[CONCAT] {face|face,detailed face}`, concat 叠加在主提示词上, 不用自己填。
+
+### 验证
+实测: 快速版出图正常, 精修版 ~90s(脸/手细节明显改善), 前端下拉默认快速、两个工作流都能出图。详见 decisions D22 / workflow-anatomy 启用查证。

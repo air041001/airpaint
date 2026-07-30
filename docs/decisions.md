@@ -136,5 +136,42 @@
 **收益**: 三病同治(实测 3 句未见过的输入: 天台/公交站/神社, 场景/构图/隐喻全对, `realistic` 被禁); breakdown 让用户看见 AI 理解, 翻坏可手改(承 D17 两步走); Anima 提示词写法有据可依。
 **代价**: 翻译慢一点(结构化+400 token, thinking 关仍 ~3-5s, 两步走已有延迟预算); 8B 偶发格式不稳靠 TAGS 行降级兜底; few-shot 含用户原测试句(泛化已另测 3 句未见过的验证, 非只抄例子)。
 
+## D19. 抽卡 re-roll: 高温 + 发散指令 + 跳过缓存
+
+**背景**: 同一句中文, LLM 结构化分解(D18)本身有随机性, 但 `translate()` 的 LRU 缓存(按 context 键)让相同输入永远返回首版, 朋友想"换个风格看看"只能改字重打。inspiration 调研 ① 把这列为轻量高价值(ComfyUI-StructPrompt 的 seed 控制扩写方向)。
+**决定**: `siliconflow_translate(context, reroll=True)` 时 temperature 0.4 -> `reroll_temperature`(config, 默认 0.9), user content 前置发散指令("给一版与常规不同的创意解读, 变换 scene/mood/lighting")。`translate(text, reroll=True)` 透传, 且 reroll 时**跳过缓存读和写**。`/api/translate` 请求体加可选 `reroll: bool`。前端预览区加「🎲 再来一版」, 仅 breakdown 非空(LLM 路径)时显示。
+**为什么跳过缓存写**: reroll 是探索性动作, 若写回同一 context 键, 之后正常翻译会返回 reroll 版(顶掉原版)污染缓存。跳过读写 = 每次重抽都新鲜, 正常预览仍命中首版缓存, 互不干扰。
+**收益**: 朋友点一下就探索不同解读/风格, 不用重打字; 复用现有端点(只加一个 bool), 零新端点; 默认 UX 不变(reroll 是预览模式下的可选按钮)。
+**代价**: reroll 每次实打实花一次 LLM token(不缓存); 快速路径(全命中词典, breakdown=null)无 LLM 可变, 前端直接隐藏按钮(不报错); 高温 0.9 偶发质量波动, 由现有重复-tag 兜底 + 可调 config 兜住。
+
+## D20. Anima tag 顺序规范化: count -> character -> general
+
+**背景**: inspiration 调研 ⑥(anima-prompt-helper)指出 Anima 期望固定序 `quality -> year -> rating -> count -> character -> series -> artist -> general -> 自然语言`。先前 `translate()` 拼接是 `char_tags + hits + new_tags`, 而 LLM 的 new_tags 按 D18 系统提示规则把 count(1girl/solo)放在 TAGS 首位 -- 即 count 被埋在 prompt_en 末尾、character 之后, 与规范相反。
+**决定**: 新增 `normalize_tag_order(char_tags, other_tags)`: 用 `_COUNT_TAG_RE`(匹配 1girl/1boy/2girls/solo/6+girls/multiple girls 等)把 other_tags 拆 count vs general, 输出 `count + char_tags + general`。`translate()` 四条返回路径(快速全命中 / siliconflow / google / none)统一走它(原字符串拼接改 list 再 normalize)。quality 仍由 `build_prompt` 的 `quality_prefix` 在更外层 prepend, 不在此处理。
+**为什么只排不做 NL**: Anima 的 Qwen3-0.6B 编码器原生支持末尾追加自然语言, 但 NL 会显著改变出图、需单独验证, 本次 ⑥(inspiration 定性为"白捡收尾")只做零风险的重排。NL 追加留待 ③/⑤ 大跨步时一并试。
+**收益**: 对齐 Anima 官方期望序(count 在前利于编码器 recency bias), 零增删 tag 零风险; 预览即展示规范序, 所见即所出。
+**代价**: year/rating/series/artist 桶未单独处理(我们不产 year/artist tag; rating 在 quality_prefix 的 score_7; character 与 series 在 char_dict 里常融合如 `march_7th_(honkai:_star_rail)`, 不强拆); 重排对出图的实际影响待端到端观察。
+
+## D21. 词典热更新: char_dict.yaml / dict.yaml 按 mtime 重载, 不重启
+
+**背景**: 角色词典(char_dict)和属性词典(dict)原先在模块级 `yaml.safe_load` 一次性载入全局变量, 加角色/加词条后必须重启后端才生效。朋友远程用时重启后端=中断服务(队列/在跑的图)。希望"存盘即生效"。
+**决定**: 封装 `HotDict` 类(path + key_fn + mtime)。`.get()` / `.items()` 调用时先 `stat()` 取 mtime, 与上次不同才 `yaml.safe_load` 重载。`DICT`(key 小写)、`CHAR_DICT`(key 不小写, 中文无大小写)各实例化一个, 调用处(.get / .items)零改动。config.yaml 不做热更新(token/限额之类重启更稳妥)。
+**为什么 mtime 而非 watchdog**: mtime 轮询每次访问就一个 stat(微秒级), 无第三方依赖, 与"翻译时才用词典"的访问模式天然契合; watchdog 要起后台线程+依赖, 对单文件热更新过重。
+**为什么整体重建再赋值**: `self._d = {...}` 先建好新 dict 再绑名, 读端要么见旧要么见新, 不会读到半成品(async 单线程下更无并发问题)。
+**兜底**: 解析失败(存盘写到一半 / YAML 笔误)`except` 保留旧 _d 不更新、打印 `[HotDict] 重载 ... 失败` 警告, 不阻断翻译; 下次访问再试。
+**收益**: 存盘 char_dict/dict 后下一句翻译即生效, 不重启不中断服务。
+**代价**: 每次 .get/.items 多一次 stat(可忽略); 坏 YAML 不报错只警告, 需看后端控制台才知(可接受, 比崩翻译强)。
+
+## D22. detailer 精修工作流 + Image Comparer 剥离 + 调参 (186s->90s)
+
+**背景**: 工作流里 FaceDetailer/HandDetailer 已建好但 MUTE, 启用可白捡脸/手细节质量。但实测启用后 186s(朋友不会等 3 分钟)。需既拿质量又不拖垮默认体验。
+**决定**:
+1. **拆两工作流**: `anima`(快速默认, 原版 ~40-50s) + `anima-detailer`(精修, ~90s), 前端下拉选。复用 `/api/workflows` 既有机制, 不加新端点; 注入节点两版相同(54/6/56/5), config 只多一条 file+label。
+2. **Image Comparer (rgthree) 加入 sanitize_for_api 剔除集**: 它继承 PreviewImage(OUTPUT_NODE), 中间预览图进 `/history`; `submit_and_wait` 取"第一个有图的节点"会误取 comparer 中间图(手修版/原图)而非最终 SaveImage。本身不崩(extra_pnginfo=None 时只 save_images 存盘), 但干扰取图, 必剥。
+3. **detailer 调参**: `max_size` 1536->1024、`steps` 16->12。渲染像素是时长主因(裁剪区被放大到 1536px, 比主图还大, 每步 2.87s); 12步是下限(再降不起作用, denoise 已低 0.26-0.4)。186s->90s。
+**为什么拆工作流而非动态拨 MUTE 组**: 后端走 /prompt 用 API 导出 JSON(只含活跃节点), 拨 rgthree 组开关是 ComfyUI UI 动作, 后端无法运行时切; 切功能=换 JSON 文件。两工作流=两份 JSON + 下拉选最直接, 且落地 ROADMAP Phase 2.1 多工作流架子, 以后 ControlNet/inpaint/图生图 同套路加一条即可。
+**收益**: 朋友默认快速出图, 要质量选精修; 脸/手细节白捡; 多工作流架子搭好。
+**代价**: 两份 JSON 要分别维护(改注入节点/quality_prefix 要同步); 精修 90s 仍偏长(主图 KSampler 30步=37s 是大头, 不动怕掉整体质量); config 改动要重启(不热更新, 故意保 token/限额稳定); Eyes/hires detailer 因模型缺失未开(见 workflow-anatomy)。
+
 ## 待决策 / 方向
 - **Intent Engine**: 迈向「理解用户意图」核心目标。**构图/场景/情绪的结构化分解已实现** (D18: LLM 输出 scene/composition/mood/lighting/style + TAGS); **否定语义解析弃用** (D18: Anima 负面是常量, 不随输入变); 仍待做: 歧义消解、LoRA/工作流自动推荐。符合 CLAUDE.md 规则 6。

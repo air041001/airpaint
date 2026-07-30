@@ -19,14 +19,49 @@ from fastapi.staticfiles import StaticFiles
 
 BASE = Path(__file__).parent
 CFG = yaml.safe_load((BASE / "config.yaml").read_text(encoding="utf-8"))
-DICT = yaml.safe_load((BASE / "dict.yaml").read_text(encoding="utf-8")) or {}
-DICT = {str(k).strip().lower(): str(v).strip() for k, v in DICT.items() if v is not None}
+DICT_PATH = BASE / "dict.yaml"
+CHAR_DICT_PATH = BASE / "char_dict.yaml"
 
+
+class HotDict:
+    """YAML 词典 + mtime 热更新: 文件存盘后下次访问自动重载, 不用重启后端 (见 D21).
+    用法等同 dict (.get / .items). 每次访问 stat 一下 mtime, 没变就跳过 (微秒级).
+    解析失败 (如存盘写到一半 / YAML 笔误) 保留旧词典并打印警告, 不阻断翻译."""
+    def __init__(self, path: Path, key_fn=str.lower):
+        self.path = path
+        self.key_fn = key_fn
+        self._mtime = 0.0
+        self._d: dict[str, str] = {}
+        self.reload()
+
+    def reload(self) -> None:
+        if not self.path.exists():
+            return
+        try:
+            m = self.path.stat().st_mtime
+            if m == self._mtime:
+                return
+            raw = yaml.safe_load(self.path.read_text(encoding="utf-8")) or {}
+            # 整体重建再整体赋值: 读端要么见旧要么见新, 不会读到半成品
+            self._d = {self.key_fn(str(k).strip()): str(v).strip() for k, v in raw.items() if v is not None}
+            self._mtime = m
+        except Exception as e:
+            print(f"[HotDict] 重载 {self.path.name} 失败, 保留旧词典: {e}", flush=True)
+
+    def get(self, key):
+        self.reload()
+        return self._d.get(key)
+
+    def items(self):
+        self.reload()
+        return self._d.items()
+
+
+# 属性/感觉词典: 中文 -> danbooru tag. key 小写匹配.
+DICT = HotDict(DICT_PATH, key_fn=str.lower)
 # 角色词典: 中文名 -> danbooru 精确 tag. Qwen3-8B 认不准角色 tag (字面翻译/编造/漏认),
-# 故角色走词典可靠命中, 命中后把 tag 作为上下文喂给 LLM (见 decisions.md D12).
-_CHAR_DICT_PATH = BASE / "char_dict.yaml"
-CHAR_DICT = yaml.safe_load(_CHAR_DICT_PATH.read_text(encoding="utf-8")) if _CHAR_DICT_PATH.exists() else {}
-CHAR_DICT = {str(k).strip(): str(v).strip() for k, v in CHAR_DICT.items() if v is not None}
+# 故角色走词典可靠命中, 命中后把 tag 作为上下文喂给 LLM (见 decisions.md D12). key 不小写 (中文无大小写).
+CHAR_DICT = HotDict(CHAR_DICT_PATH, key_fn=lambda s: s)
 
 COMFY = CFG["comfy_url"].rstrip("/")
 TOKENS = set(CFG.get("tokens", []))
@@ -183,10 +218,11 @@ def match_characters(text: str) -> tuple[list[str], str]:
     return found_tags, remaining
 
 
-async def siliconflow_translate(context: str) -> tuple[str, dict | None]:
+async def siliconflow_translate(context: str, reroll: bool = False) -> tuple[str, dict | None]:
     """走硅基流动 Qwen 翻译/扩写. context 是结构化上下文 (Known tags + Remaining).
     返回 (LLM 新增 tag, 结构化拆解 dict). tag 不含已知 tag (由 translate 拼接).
-    breakdown 供前端预览展示 AI 理解 (scene/composition/mood/lighting/style). 失败抛异常 (上层转 HTTPException)."""
+    breakdown 供前端预览展示 AI 理解 (scene/composition/mood/lighting/style). 失败抛异常 (上层转 HTTPException).
+    reroll=True: 提高温度 + 前置发散指令, 让模型给一版不同创意解读 (抽卡再抽, 见 D19)."""
     api_key = CFG.get("siliconflow_api_key", "").strip()
     model = CFG.get("siliconflow_model", "Qwen/Qwen3-8B")
     if not api_key:
@@ -196,6 +232,13 @@ async def siliconflow_translate(context: str) -> tuple[str, dict | None]:
     # 隐喻/场景仍弱时 config 翻 translate_enable_thinking: true 重测, 不动代码 (见 D18).
     thinking = bool(CFG.get("translate_enable_thinking", False))
 
+    # reroll: 高温 + 发散指令. /no_think 仍是 user 首token (thinking 开则不前置), nudge 跟在后面.
+    temperature = float(CFG.get("reroll_temperature", 0.9)) if reroll else 0.4
+    nudge = ("Give a DIFFERENT, more creative interpretation than the obvious one. "
+             "Vary the scene, mood and lighting; pick an unexpected but coherent setting. "
+             "Still follow the output format and the known-tags rule.\n\n") if reroll else ""
+    user_content = ("/no_think " if not thinking else "") + nudge + context
+
     r = await CLIENT.post(
         "https://api.siliconflow.cn/v1/chat/completions",
         headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
@@ -204,9 +247,9 @@ async def siliconflow_translate(context: str) -> tuple[str, dict | None]:
             "messages": [
                 {"role": "system", "content": SILICONFLOW_SYSTEM_PROMPT},
                 # /no_think: Qwen3 软开关, 强制不进思考模式 (思考会慢到 30s+ 且易复读). thinking 开则不前置.
-                {"role": "user", "content": ("/no_think " if not thinking else "") + context},
+                {"role": "user", "content": user_content},
             ],
-            "temperature": 0.4,
+            "temperature": temperature,
             "max_tokens": 400,
             # ★ 关键: enable_thinking 必须放顶层, 放 extra_body 里硅基流动不认 -> 思考没关掉. (见 D2)
             "enable_thinking": thinking,
@@ -236,9 +279,29 @@ async def siliconflow_translate(context: str) -> tuple[str, dict | None]:
     return tags, breakdown
 
 
-async def translate(text: str) -> tuple[str, dict | None]:
+# Anima 期望的 tag 顺序: quality -> count -> character -> general (见 D20).
+# quality 由 build_prompt 的 quality_prefix 在更外层 prepend, 这里只规范 prompt_en 内部:
+# 把 count (1girl/1boy/solo/...) 从 LLM 输出里提到最前, character 次之, general 垫后. 只重排不增删不去重.
+_COUNT_TAG_RE = re.compile(
+    r"^(solo|solo focus|"
+    r"\d+(girl|boy|other)s?|"      # 1girl, 2girls, 1boy, 1other
+    r"\d+\+(girls|boys|others)|"   # 6+girls
+    r"multiple (girls|boys|others))$"
+)
+
+
+def normalize_tag_order(char_tags: list[str], other_tags: list[str]) -> str:
+    """按 Anima 规范序拼接: count -> character -> general. 只重排, 不增删/不去重."""
+    count, general = [], []
+    for t in other_tags:
+        (count if _COUNT_TAG_RE.match(t.strip()) else general).append(t)
+    return ", ".join(t for t in count + char_tags + general if t)
+
+
+async def translate(text: str, reroll: bool = False) -> tuple[str, dict | None]:
     """中文 -> danbooru tag. 三层: 角色匹配 -> 词典匹配 -> LLM 扩写(只处理未命中).
-    返回 (prompt_en, breakdown): breakdown 是 LLM 结构化拆解, 快速路径(全命中词典/角色)时为 None."""
+    返回 (prompt_en, breakdown): breakdown 是 LLM 结构化拆解, 快速路径(全命中词典/角色)时为 None.
+    reroll=True: 只对 LLM 路径生效, 高温重出一版不同分解, 跳过缓存(探索性, 不污染正常缓存)."""
     backend = CFG.get("translate", "none")
 
     # Layer 0: 角色子串匹配 (移除角色名, 得到剩余文本)
@@ -259,16 +322,16 @@ async def translate(text: str) -> tuple[str, dict | None]:
         # 裸角色名快速路径: 只有角色没别的描述 -> 补 1girl, solo
         # (LLM 对裸角色名会疯狂编场景/武器, 实测 7.9s + 噪声 tag, 见 D13)
         if char_tags and not hits and not parts:
-            return ", ".join(char_tags) + ", 1girl, solo", None
+            return normalize_tag_order(char_tags, ["1girl", "solo"]), None
         all_tags = char_tags + hits
         if all_tags:
-            return ", ".join(all_tags), None
+            return normalize_tag_order(char_tags, hits), None
         raise HTTPException(400, "提示词为空")
 
     # Layer 2: 有未命中 -> 后端处理
     if backend == "none":
         # 未翻译部分原样保留 (混输英文 tag 时合适)
-        return ", ".join(char_tags + hits + misses), None
+        return normalize_tag_order(char_tags, hits + misses), None
 
     if backend == "siliconflow":
         # 构造上下文: 已知 tag 喂给 LLM, 只让它翻/扩 misses (不重复已知 tag)
@@ -281,17 +344,20 @@ async def translate(text: str) -> tuple[str, dict | None]:
         context = "\n".join(ctx_lines)
 
         cache_key = context
-        if cache_key in _TRANSLATE_CACHE:
+        if not reroll and cache_key in _TRANSLATE_CACHE:
             return _TRANSLATE_CACHE[cache_key]
         try:
-            new_tags, breakdown = await siliconflow_translate(context)
+            new_tags, breakdown = await siliconflow_translate(context, reroll=reroll)
         except Exception as e:
             raise HTTPException(502, f"翻译失败, 请稍后重试 ({e})")
-        # 拼接: 已知 tag + LLM 新增 tag
-        result = ", ".join(t for t in char_tags + hits + [new_tags] if t)
-        if len(_TRANSLATE_CACHE) >= _TRANSLATE_CACHE_MAX:
-            _TRANSLATE_CACHE.pop(next(iter(_TRANSLATE_CACHE)))
-        _TRANSLATE_CACHE[cache_key] = (result, breakdown)
+        # 拼接: 已知 tag + LLM 新增 tag, 再按 Anima 规范序排 (count -> char -> general, 见 D20)
+        new_list = [t.strip() for t in new_tags.split(",") if t.strip()]
+        result = normalize_tag_order(char_tags, hits + new_list)
+        # reroll 不写缓存: 探索性结果不应顶掉正常翻译的缓存原版 (见 D19)
+        if not reroll:
+            if len(_TRANSLATE_CACHE) >= _TRANSLATE_CACHE_MAX:
+                _TRANSLATE_CACHE.pop(next(iter(_TRANSLATE_CACHE)))
+            _TRANSLATE_CACHE[cache_key] = (result, breakdown)
         return result, breakdown
 
     if backend == "google":
@@ -299,7 +365,7 @@ async def translate(text: str) -> tuple[str, dict | None]:
             translated_missing = await google_translate_batch(misses)
         except Exception as e:
             raise HTTPException(502, f"翻译失败, 请稍后重试 ({e})")
-        return ", ".join(char_tags + hits + translated_missing), None
+        return normalize_tag_order(char_tags, hits + translated_missing), None
 
     raise HTTPException(500, f"未知的 translate 后端: {backend}")
 
@@ -320,13 +386,16 @@ async def google_translate_batch(texts: list[str]) -> list[str]:
 
 # ---------- Workflow 注入 ----------
 def sanitize_for_api(wf: dict) -> dict:
-    """剔除/替换"只能从 ComfyUI 前端排队时才能跑"的节点。
-    这些节点依赖 extra_pnginfo['workflow'] (前端 UI 图), 而后端走 /prompt API 不带它, 会崩:
+    """剔除/替换"只能从 ComfyUI 前端排队时才能跑"或"会干扰后端取图"的节点。
+    依赖 extra_pnginfo['workflow'] (前端 UI 图), 后端 /prompt 不带, 会崩:
       - WidgetToString (KJNodes): 读 extra_pnginfo['workflow'] -> TypeError
       - Image Saver Metadata:     依赖 WidgetToString
       - Image Saver Simple:       依赖上面的 metadata, 且 embed_workflow 也要 extra_pnginfo
-    把 Image Saver Simple 换成内置 SaveImage (API 可靠出图, outputs.images 标准格式, 后端能读)。"""
-    INCOMPAT = {"WidgetToString", "Image Saver Metadata"}
+    把 Image Saver Simple 换成内置 SaveImage (API 可靠出图, outputs.images 标准格式, 后端能读)。
+    另剔 Image Comparer (rgthree): 本身不崩(extra_pnginfo=None 时它只调 save_images 存盘), 但它是
+      OUTPUT_NODE(继承 PreviewImage), 中间预览图会进 /history; submit_and_wait 取"第一个有图的节点",
+      会误取 comparer 的中间图(手修版/原图)而非最终 SaveImage -> 必须剥。"""
+    INCOMPAT = {"WidgetToString", "Image Saver Metadata", "Image Comparer (rgthree)"}
     new_id = 100
     for nid in list(wf.keys()):
         ct = wf[nid].get("class_type", "")
@@ -499,13 +568,15 @@ async def list_loras(token: str = Depends(auth)):
 async def translate_prompt(req: Request, token: str = Depends(verify_token)):
     """只翻译不排队: 中文 -> 英文 tag (角色->词典->LLM 三层 + 结构化扩写, LRU 缓存). 不计入 image 限额.
     返回 {prompt_en, breakdown}: breakdown 是 LLM 结构化拆解 (scene/composition/mood/lighting/style),
-    供前端预览展示 AI 理解; 快速路径(全命中词典/角色)时为 null."""
+    供前端预览展示 AI 理解; 快速路径(全命中词典/角色)时为 null.
+    body.reroll=true: LLM 高温重出一版不同分解 (抽卡再抽, 跳过缓存, 见 D19)."""
     body = await req.json()
     prompt = (body.get("prompt") or "").strip()
     if not prompt or len(prompt) > 500:
         raise HTTPException(400, "提示词为空或过长(>500)")
     check_banned(prompt)
-    prompt_en, breakdown = await translate(prompt)
+    reroll = bool(body.get("reroll"))
+    prompt_en, breakdown = await translate(prompt, reroll=reroll)
     check_banned(prompt_en)
     return {"prompt_en": prompt_en, "breakdown": breakdown}
 

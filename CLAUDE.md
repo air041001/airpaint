@@ -7,9 +7,9 @@
 
 把本机 ComfyUI 包成「中文描述 → 出图」的在线小屋, 发给朋友用。
 前后端共用固定域名 `airpaint.xyz`, 经 cloudflared **命名隧道**穿透内网(不暴露本机端口)。
-当前阶段: **MVP 已上线, 单工作流 (AnimaStandard V7)**。
+当前阶段: **MVP 已上线, 双工作流 (Anima 快速 / anima-detailer 精修)**。
 
-> **最近改动** (压缩后先看这行, 省重读 docs; 每完成一阶段更新此行): 2026-07-28 Anima 提示词规范 + LLM 结构化意图分解 (scene/composition/mood/lighting/style + TAGS; /api/translate 回传 breakdown; 负面=常量, 否定解析弃用), 见 DEVLOG 第15条 / decisions D18。
+> **最近改动** (压缩后先看这行, 省重读 docs; 每完成一阶段更新此行): 2026-07-30 Face+Hand detailer 精修工作流 (`anima-detailer`, ~90s) + 双工作流下拉选择 (Phase 2.1) + sanitize 剥 Image Comparer + detailer 调参 (max_size 1024/steps 12, 186s->90s), 见 DEVLOG 第19条 / D22。前档: 词典热更新(D21)/re-roll+tag 规范化(D19/D20)。
 
 ## 模块地图
 
@@ -19,8 +19,8 @@
 |---|---|---|
 | 鉴权/限流 | `auth()` `USAGE` | Bearer token + 日限, **内存计数(重启清零)** |
 | 内容过滤 | `check_banned()` | banned_words 子串匹配 |
-| **Prompt Engine** | `translate()` `match_characters()` `siliconflow_translate()` `_parse_structured_output()` `dict.yaml` `char_dict.yaml` | 三层: 角色->词典->LLM(结构化分解 scene/composition/mood/lighting/style + TAGS, 回传 breakdown) / LRU 缓存 500 |
-| **Workflow Engine** | `sanitize_for_api()` `build_prompt()` | 清洗前端专属节点 + 注入 prompt/seed/size/**LoRA**, **统一所有 seed** |
+| **Prompt Engine** | `translate()` `match_characters()` `siliconflow_translate()` `_parse_structured_output()` `normalize_tag_order()` `HotDict` `dict.yaml` `char_dict.yaml` | 三层: 角色->词典->LLM(结构化分解 scene/composition/mood/lighting/style + TAGS, 回传 breakdown) / LRU 缓存 500 / **reroll 跳过缓存高温重抽** / **tag 规范序 count->char->general** / **词典 mtime 热更新不重启** |
+| **Workflow Engine** | `sanitize_for_api()` `build_prompt()` | 清洗前端专属节点(含 Image Comparer)+ 注入 prompt/seed/size/**LoRA**, **统一所有 seed**; **双工作流**(anima 快速 / anima-detailer 精修) |
 | ComfyUI 客户端 | `submit_and_wait()` | `/prompt` 提交 + `/history` 轮询 + `/view` 取图 |
 | 队列 | `worker()` `QUEUE` | 单并发 asyncio.Queue (GPU 串行) |
 | 静态托管 | `/` `/images` | `/` 返回 `web/index.html`, `/images` 出图 |
@@ -47,6 +47,17 @@
 5. **本地验再跑**: 调 `build_prompt(...)` 打印注入后的节点 inputs + 最终 prompt 确认格式, 再端到端跑 ComfyUI。
 
 > ComfyUI API input 三种形态: 字面值 (str/int/float/bool/dict/list) | 连接 `["源节点id", output_index]` | 复杂 widget 序列化 `{"__value__": <实际值>}` (照抄工作流 JSON 里该 input 现有形态最稳)。实例见 architecture.md「Workflow Engine」+ D16。
+
+## 工作流功能切换 (加 ControlNet / inpaint / 图生图 / 新 detailer 等时)
+
+1. **套路**: ComfyUI UI 里拨 rgthree 组开关(MUTE->活跃)或加节点 -> 重导出 API JSON -> 放 `server/workflows/` -> config `workflows` 加一条(file+label; 注入节点 54/6/56/5 通用)-> 前端下拉自动出现。**换功能=换 JSON 文件**(后端 /prompt 用 API 导出, 只含活跃节点, 不能运行时拨 MUTE 组)。
+2. **重启边界**: 工作流 JSON `build_prompt` 每次现读, **改文件不用重启**; config 改要重启(config 不热更新, 故意, 见 D21)。`anima-detailer` 就是这么加的(见 D22)。
+3. **/prompt 三个坑**(扩展前必查, 见 workflow-anatomy「API 耦合」):
+   - 前端专用节点(WidgetToString / Image Saver Metadata / Image Saver Simple)依赖 `extra_pnginfo`, 后端不带会崩 -> `sanitize_for_api` 剥/换 SaveImage。
+   - **展示型 OUTPUT_NODE(Image Comparer / PreviewImage 等)** 的图进 `/history`, `submit_and_wait` 取"第一个有图的节点"会误取中间图 -> 也要 sanitize 剥。
+   - seed 连接(如 rgthree Seed widget=-1)运行时自己随机成正整数, 不崩 Impact Pack; build_prompt 的 seed 统一只覆写 int 字面值, 跳过连接。
+4. **detailer/二次采样提速**: 时长主因是渲染分辨率(`max_size`), 不是步数; 先降 max_size, steps 次之(12 步左右是下限)。见 D22(186s->90s)。
+5. **大工作流 JSON 用子 agent 读**(见 memory): 76 节点的完整 UI 工作流大, 起子 agent 解析+查源码+核磁盘, 只收结论回主上下文。
 
 ## 上下文节俭(省 token)
 

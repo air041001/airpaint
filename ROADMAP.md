@@ -19,10 +19,10 @@
 ## Phase 2: 多工作流 + 体验升级
 
 ### 2.1 多工作流热插拔
-- [ ] config.yaml 支持多工作流定义 (anima / noobai / 未来更多)
-- [ ] 前端工作流下拉选择器
-- [ ] 每个工作流独立的 sizes/quality_prefix/negative_prefix
-- [ ] 后端按选择动态加载对应 workflow JSON
+- [x] config.yaml 支持多工作流定义 (anima 快速 / anima-detailer 精修) - 2026-07-30
+- [x] 前端工作流下拉选择器 (既有, 现两个选项)
+- [ ] 每个工作流独立的 sizes/quality_prefix/negative_prefix (目前共享同值, 未做独立)
+- [x] 后端按选择动态加载对应 workflow JSON (build_prompt 按 wf_name 读 file)
 
 ### 2.2 前端体验升级
 - [ ] Tailwind CSS 重写界面
@@ -66,3 +66,17 @@
 - [ ] README.md (架构图 + 截图 + 快速开始)
 - [ ] 30 秒 demo 视频
 - [ ] 项目描述文案 (STAR 法则)
+
+---
+
+## Phase 5: 理解用户意图 (inspiration 调研方向)
+
+> 2026-07-29 联网调研 Anima 生态同类项目后梳理的新方向 (见 `docs/inspiration.md`), 比"工程化晚期镀金"(多工作流/Docker/WebSocket) 更贴核心目标。按 价值/功夫 排序。
+
+- [x] ① 抽卡 re-roll (同一句中文高温重出不同分解, 「🎲 再来一版」) - 2026-07-29, 见 DEVLOG 第16条 / D19
+- [x] ⑥ 规范化 Anima tag 顺序 (count -> character -> general) - 2026-07-29, 见 DEVLOG 第16条 / D20
+- [x] 质量提升: 启用 Face+Hand detailer 精修工作流 (anima-detailer, ~90s) - 2026-07-30, 见 DEVLOG 第19条 / D22
+- [ ] ② 标签选择器 UI (发型/瞳色/表情/姿势 chip, 降门槛)
+- [ ] ③ 参考图理解 (Qwen3-VL 提氛围/配色/姿势转 tag, 不用改工作流)
+- [ ] ④ 多角色 + 防属性串色 (LLM 改写有主语英文 NL)
+- [ ] ⑤ 多轮对话精修 (「再亮一点」对话式迭代, 北极星; img2img 链已 MUTE 存在, 见 workflow-anatomy)
