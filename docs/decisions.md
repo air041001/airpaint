@@ -173,5 +173,30 @@
 **收益**: 朋友默认快速出图, 要质量选精修; 脸/手细节白捡; 多工作流架子搭好。
 **代价**: 两份 JSON 要分别维护(改注入节点/quality_prefix 要同步); 精修 90s 仍偏长(主图 KSampler 30步=37s 是大头, 不动怕掉整体质量); config 改动要重启(不热更新, 故意保 token/限额稳定); Eyes/hires detailer 因模型缺失未开(见 workflow-anatomy)。
 
+## D23. ③ 参考图理解: 视觉 LLM 提氛围 (Qwen3-VL-8B-Instruct), 走 txt2img 非图生图
+
+**背景**: inspiration ③--朋友上传参考图, "画一张跟这张同氛围的"。朋友常说不出想要啥但能给参考图, 直击"理解用户意图"。
+**VL 模型选型**: 硅基流动 Qwen3.5-4B(免费)做不了视觉(两次超时 40s/70s, 疑似纯文本); Qwen3-VL-8B-Instruct 能用(1.1s, 64x64 红图正确识别"Red")但收费 $0.18/M 输入 + $0.68/M 输出 ≈ $0.0007/次, 朋友用量下月几毛封顶, 可忽略。曾考虑别的平台免费 VL(50万 token), 但仅够 ~230 次(3周用完)+要切换平台/格式, 不值。`siliconflow_vision_model` config 可调。
+**决定**:
+1. **图是氛围参考, 非图生图**: `siliconflow_vision_translate` 用 Qwen3-VL 从图提 mood/color/lighting/composition/scene -> 结构化 breakdown+TAGS(复用 _parse_structured_output)。图**不进 ComfyUI**, 走现有 txt2img。与 ⑤ img2img(LoadImage->VAEEncode->二采, Workflow Engine 层)正交, 不冲突; ③ 在 Prompt Engine 层。
+2. **merge**: `translate(text, reroll, image_b64)` 有图时, char_dict+dict 仍从文本预匹配, 视觉 LLM 拿图+上下文(Known tags+Remaining)一次处理图+文, `normalize_tag_order` 拼接。视觉 LLM 替代文本 LLM(有图就不调文本 LLM)。图不缓存(探索性, key 含图复杂)。
+3. **Qwen3-VL 不接受 enable_thinking**(400), 视觉调用不带; 文本 LLM(Qwen3-8B)仍带。
+4. **normalize 加保序去重 + dict 多 tag 拆分**: 重复根因二: ①VL 偶发复读 -> normalize_tag_order 加 `seen` 去重(保留首次); ②**dict 多 tag 值("少女"->"girl,young,cute,innocent")原 `hits.append` 当 blob 不拆, 跟 VL/LLM 同名 tag 撞伪重复**(normalize 按整元素去重逮不到) -> dict 命中按逗号拆开(`hits.extend`)。②是老 bug(文本路径也有), ③ 撞上才暴露。
+5. 前端参考图上传 canvas 缩到 768px/JPEG 0.85 base64(省 token); prompt+image 至少一项; /api/translate 加 image 字段(≤5MB); reroll 对视觉也生效。
+**收益**: 朋友给张图就能"画同氛围的", 不用文字描述; 不改工作流、不冲突 img2img; 复用现有结构化输出/normalize/前端。
+**代价**: 视觉 LLM 收费(可忽略); 视觉调用不缓存(每次花 token, 探索性可接受); VL 偶发复读靠 normalize 去重兜底。
+
+## D24. 前端改版: 登录门禁 + 公告/教程下拉面板 + 移动端
+
+**背景**: 原前端简陋--邀请码是主卡片里一个明文输入框 + 保存按钮, 无门禁; 无公告/教程, 朋友不知道新功能和用法; 移动端没专门考虑。
+**决定**:
+1. **登录门禁**: 全屏 #login 遮罩, 邀请码输入 -> 「进入」调 `/api/auth/check` 验证 -> 进主面板。token 存 localStorage, 页面加载自动验证。主面板移除 token 输入框(改隐藏 input), header 加「退出」。
+2. **新增 /api/auth/check**(verify_token, 不查日限不耗配额): 不复用 /api/workflows(auth 查日限)验登录--否则达日限的朋友登不进(429)。
+3. **下拉面板(非侧拉抽屉)**: 标题下方居中按钮行, 点开向下展开全宽面板(居中, max-680)。选下拉而非侧拉: 侧拉桌面只占右侧一小条要凑过去看, 下拉全宽居中、桌面/移动同款不用适配。两 tab: 更新公告(带日期, latest first)/ 教程(简述翻译/LoRA/参考图/工作流/re-roll, 不手把手)。
+4. **标题居中**: 按钮挪到标题下方居中(toolbar), 不抢标题居中位置; 下拉面板全宽居中, 桌面/移动都不挤。
+5. **loadWorkflows 改抛异常**(原来 try/catch 写 #status): 登录流程需它抛才能 catch 401; 调用方(submitJob 等)自己 catch。
+**收益**: 门禁隔离(邀请码才能进); 朋友自助看公告/教程降门槛; 移动端不挤压。
+**代价**: 邀请码登录是"暂时"方案(无独立账号系统); 下拉面板按需展开不常驻(可接受); loadWorkflows 失败现在走调用方 catch(登录流程会把网络错当 auth 失败显登录, 罕见)。
+
 ## 待决策 / 方向
 - **Intent Engine**: 迈向「理解用户意图」核心目标。**构图/场景/情绪的结构化分解已实现** (D18: LLM 输出 scene/composition/mood/lighting/style + TAGS); **否定语义解析弃用** (D18: Anima 负面是常量, 不随输入变); 仍待做: 歧义消解、LoRA/工作流自动推荐。符合 CLAUDE.md 规则 6。

@@ -28,6 +28,11 @@ Authorization: Bearer <token>
 ```
 `comfy` = 本机 ComfyUI (127.0.0.1:8188) 是否可达。
 
+### GET /api/auth/check
+只验证邀请码有效性 (需鉴权, 用 `verify_token`: **不查日限、不耗 GPU 配额**)。给前端登录门禁用, 避免用 `/api/workflows`(`auth`, 查日限)验证导致达日限的朋友登不进来。
+
+响应 `200`: `{ "ok": true }`; 邀请码无效: `401 {"detail":"无效 token"}`。
+
 ### GET /api/workflows
 列出可用工作流 (需鉴权)。
 
@@ -56,8 +61,9 @@ Authorization: Bearer <token>
 ```json
 { "prompt": "白发蓝眼睛的猫耳少女, 微笑, 站在樱花树下", "reroll": false }
 ```
-- `prompt`: 必填, 1~500 字符, 经内容过滤。
-- `reroll`: 可选, 默认 `false`。`true` 时 LLM 高温重出一版**不同**结构化分解 (抽卡再抽, 跳过 LRU 缓存); 只对 LLM 路径有效, 快速路径(全命中词典)仍返回同一结果。
+- `prompt`: 选填, ≤500 字符, 经内容过滤 (与 `image` 至少一项)。
+- `image`: 可选, 参考图 base64 (data URI, ≤5MB)。有图走视觉 LLM 提氛围, 不走文本 LLM (③, 见 D23); 图不进 ComfyUI, 仍走 txt2img。
+- `reroll`: 可选, 默认 `false`。`true` 时 LLM 高温重出一版**不同**结构化分解 (抽卡再抽, 跳过 LRU 缓存); 对文本/视觉 LLM 路径都生效, 快速路径(全命中词典)仍返回同一结果。
 
 翻译失败: `502 {"detail":"翻译失败, 请稍后重试 (...)"}`。
 

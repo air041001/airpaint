@@ -184,6 +184,36 @@ SILICONFLOW_SYSTEM_PROMPT = (
 # LLM 结构化输出的字段 (顺序即展示顺序). TAGS 行单独解析为最终 tag.
 _STRUCTURED_FIELDS = ("scene", "composition", "mood", "lighting", "style")
 
+# ③ 参考图理解: 视觉 LLM 从参考图提取氛围/配色/构图/场景 -> 同样的结构化输出格式 (复用 _parse_structured_output).
+# 图是"氛围参考"(非图生图): 提取 mood/color/lighting/composition, 不照搬图的主体 (除非文本指定). 见 D23.
+VISION_SYSTEM_PROMPT = (
+    "You are a prompt engineer for the Anima anime image model. You receive a REFERENCE IMAGE (a VIBE reference: "
+    "mood/color/lighting/composition/setting), plus known tags and remaining user text. Extract ONLY the image's VIBE, "
+    "combine with the text's subject, then emit danbooru tags. Do NOT repeat or rephrase known tags.\n\n"
+    "Output EXACTLY these lines, nothing else (no markdown, no quotes, no extra text):\n"
+    "scene: <the PLACE/setting tags from the image, e.g. beach, bedroom, outdoors, cafe>\n"
+    "composition: <framing / camera angle / orientation tags, from the image>\n"
+    "mood: <emotion -> atmosphere tags, from the image>\n"
+    "lighting: <light tags, from the image>\n"
+    "style: <art style tags>\n"
+    "TAGS: <final danbooru tags, lowercase, comma-separated>\n\n"
+    "Rules:\n"
+    "1. VIBE ONLY from the image: mood, color palette, lighting, composition, and the PLACE/setting (beach, bedroom, etc.).\n"
+    "2. Do NOT copy the image's SUBJECT APPEARANCE -- no clothing, hair color, eye color, accessories, body type, pose, "
+    "or character identity from the image. The subject comes from the remaining TEXT, not the image. "
+    "Example: if the image shows a girl in a red swimsuit with cat ears at a beach, and the text only says '少女', "
+    "output '1girl' + the beach/lighting/mood vibe -- NOT 'cat ears', 'swimsuit', or 'red hair'.\n"
+    "3. If remaining text gives a subject (a character, 1girl/1boy, an action), use THAT subject; let the image fill ONLY the vibe.\n"
+    "4. If remaining is empty, output only the vibe + a generic count tag (1girl/1boy) if a person fits; "
+    "do NOT replicate the image's specific character design.\n"
+    "5. Do NOT include any character/series tags already listed in Known character tags.\n"
+    "6. Put a count tag (1girl/1boy/solo) FIRST in TAGS if a person is implied.\n"
+    "7. Do NOT output quality/score tags (masterpiece, best quality, score_*, safe, absurdres) - handled separately.\n"
+    "8. Use lowercase danbooru tags; spaces preferred over underscores. Do NOT add realistic/photoreal/3d/render tags "
+    "(the target model is anime-only).\n"
+    "9. TAGS collects every concrete tag from the 5 fields above. Keep under ~200 chars.\n"
+)
+
 
 def _parse_structured_output(out: str) -> tuple[str, dict | None]:
     """解析 LLM 结构化输出 (scene/composition/mood/lighting/style 各一行 + TAGS 行).
@@ -279,6 +309,59 @@ async def siliconflow_translate(context: str, reroll: bool = False) -> tuple[str
     return tags, breakdown
 
 
+async def siliconflow_vision_translate(image_b64: str, context: str, reroll: bool = False) -> tuple[str, dict | None]:
+    """③ 参考图理解: 走硅基流动 Qwen3-VL, 从参考图提取氛围/配色/构图/场景/光影 -> 结构化 breakdown + TAGS.
+    image_b64: data URI (data:image/...;base64,...) 或纯 base64. context 同文本 LLM (Known tags + Remaining).
+    返回 (tags, breakdown), 复用 _parse_structured_output. 失败抛异常 (上层转 HTTPException). 见 D23.
+    注意: Qwen3-VL-Instruct 不接受 enable_thinking 参数 (会 400), 故不带; 它是非 thinking 模型, 默认不思考."""
+    api_key = CFG.get("siliconflow_api_key", "").strip()
+    model = CFG.get("siliconflow_vision_model", "Qwen/Qwen3-VL-8B-Instruct")
+    if not api_key:
+        raise RuntimeError("siliconflow_api_key 未在 config.yaml 中配置")
+    if not image_b64.startswith("data:"):
+        image_b64 = "data:image/jpeg;base64," + image_b64
+
+    temperature = float(CFG.get("reroll_temperature", 0.9)) if reroll else 0.4
+    nudge = ("Give a DIFFERENT, more creative read of the image's mood and scene. "
+             "Still follow the output format and the known-tags rule.\n\n") if reroll else ""
+
+    r = await CLIENT.post(
+        "https://api.siliconflow.cn/v1/chat/completions",
+        headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
+        json={
+            "model": model,
+            "messages": [
+                {"role": "system", "content": VISION_SYSTEM_PROMPT},
+                # VL 模型 user content 是数组: 文本 + image_url (OpenAI 视觉格式, 硅基流动兼容, 见 D23)
+                {"role": "user", "content": [
+                    {"type": "text", "text": nudge + context},
+                    {"type": "image_url", "image_url": {"url": image_b64, "detail": "high"}},
+                ]},
+            ],
+            "temperature": temperature,
+            "max_tokens": 400,
+        },
+        timeout=60,
+    )
+    if r.status_code != 200:
+        raise RuntimeError(f"视觉服务返回 {r.status_code}: {r.text[:200]}")
+    data = r.json()
+    out = data["choices"][0]["message"]["content"].strip()
+    if "</think>" in out:
+        out = out.split("</think>", 1)[1].strip()
+    if not out:
+        raise RuntimeError("视觉服务返回空内容")
+
+    tags, breakdown = _parse_structured_output(out)
+    # 重复 tag 兜底 (同文本 LLM)
+    tag_list = [t.strip() for t in tags.split(",")]
+    from collections import Counter
+    dupes = [t for t, c in Counter(tag_list).most_common(3) if c >= 3 and t]
+    if dupes:
+        raise RuntimeError(f"视觉输出异常(重复tag: {dupes[0]}), 请重试")
+    return tags, breakdown
+
+
 # Anima 期望的 tag 顺序: quality -> count -> character -> general (见 D20).
 # quality 由 build_prompt 的 quality_prefix 在更外层 prepend, 这里只规范 prompt_en 内部:
 # 把 count (1girl/1boy/solo/...) 从 LLM 输出里提到最前, character 次之, general 垫后. 只重排不增删不去重.
@@ -291,17 +374,23 @@ _COUNT_TAG_RE = re.compile(
 
 
 def normalize_tag_order(char_tags: list[str], other_tags: list[str]) -> str:
-    """按 Anima 规范序拼接: count -> character -> general. 只重排, 不增删/不去重."""
+    """按 Anima 规范序拼接: count -> character -> general. 只重排不增删; 去重(保留首次出现, 见 D23)."""
     count, general = [], []
     for t in other_tags:
         (count if _COUNT_TAG_RE.match(t.strip()) else general).append(t)
-    return ", ".join(t for t in count + char_tags + general if t)
+    seen, out = set(), []
+    for t in count + char_tags + general:
+        if t and t not in seen:
+            seen.add(t)
+            out.append(t)
+    return ", ".join(out)
 
 
-async def translate(text: str, reroll: bool = False) -> tuple[str, dict | None]:
+async def translate(text: str, reroll: bool = False, image_b64: str | None = None) -> tuple[str, dict | None]:
     """中文 -> danbooru tag. 三层: 角色匹配 -> 词典匹配 -> LLM 扩写(只处理未命中).
     返回 (prompt_en, breakdown): breakdown 是 LLM 结构化拆解, 快速路径(全命中词典/角色)时为 None.
-    reroll=True: 只对 LLM 路径生效, 高温重出一版不同分解, 跳过缓存(探索性, 不污染正常缓存)."""
+    reroll=True: 只对 LLM 路径生效, 高温重出一版不同分解, 跳过缓存(探索性, 不污染正常缓存).
+    image_b64: ③ 参考图 (data URI 或 base64). 有图走视觉 LLM 提氛围, 不走文本 LLM/快速路径. 见 D23."""
     backend = CFG.get("translate", "none")
 
     # Layer 0: 角色子串匹配 (移除角色名, 得到剩余文本)
@@ -315,7 +404,26 @@ async def translate(text: str, reroll: bool = False) -> tuple[str, dict | None]:
         if h is None:
             misses.append(p)
         else:
-            hits.append(h)
+            # dict 值可能是多 tag ("少女" -> "girl, young, cute, innocent"), 按逗号拆开
+            # 否则整个 blob 当一个 tag, 跟 LLM/VL 输出的同名 tag 撞出"伪重复"(normalize 按整元素去重逮不到, 见 D23)
+            hits.extend(t.strip() for t in str(h).split(",") if t.strip())
+
+    # ③ 参考图: 有图走视觉 LLM 提取氛围 (图 + 文本上下文), 不走下面的文本 LLM/快速路径.
+    # 图是氛围参考, 文本(若有)给主体; 角色词典仍预匹配(可靠). 不缓存(图探索性, key 含图复杂). 见 D23.
+    if image_b64:
+        ctx_lines = []
+        if char_tags:
+            ctx_lines.append(f"Known character tags: {', '.join(char_tags)}")
+        if hits:
+            ctx_lines.append(f"Known attribute tags: {', '.join(hits)}")
+        ctx_lines.append(f"Remaining: {', '.join(misses) if misses else '(none - extract everything from the image)'}")
+        context = "\n".join(ctx_lines)
+        try:
+            new_tags, breakdown = await siliconflow_vision_translate(image_b64, context, reroll=reroll)
+        except Exception as e:
+            raise HTTPException(502, f"参考图理解失败, 请稍后重试 ({e})")
+        new_list = [t.strip() for t in new_tags.split(",") if t.strip()]
+        return normalize_tag_order(char_tags, hits + new_list), breakdown
 
     # 全命中 (无 misses): 不调 LLM
     if not misses:
@@ -542,6 +650,13 @@ async def health():
     return {"ok": True, "comfy": comfy_ok}
 
 
+@app.get("/api/auth/check")
+async def auth_check(token: str = Depends(verify_token)):
+    """只验证邀请码有效性 (verify_token: 不查日限, 不耗 GPU 配额). 给前端登录门禁用, 避免用 /api/workflows
+    (auth, 查日限) 验证导致达日限的朋友登不进来。"""
+    return {"ok": True}
+
+
 @app.get("/api/workflows")
 async def list_workflows(token: str = Depends(auth)):
     return [
@@ -569,14 +684,21 @@ async def translate_prompt(req: Request, token: str = Depends(verify_token)):
     """只翻译不排队: 中文 -> 英文 tag (角色->词典->LLM 三层 + 结构化扩写, LRU 缓存). 不计入 image 限额.
     返回 {prompt_en, breakdown}: breakdown 是 LLM 结构化拆解 (scene/composition/mood/lighting/style),
     供前端预览展示 AI 理解; 快速路径(全命中词典/角色)时为 null.
-    body.reroll=true: LLM 高温重出一版不同分解 (抽卡再抽, 跳过缓存, 见 D19)."""
+    body.reroll=true: LLM 高温重出一版不同分解 (抽卡再抽, 跳过缓存, 见 D19).
+    body.image: 可选, 参考图 base64 (data URI). 有图走视觉 LLM 提氛围, 不走文本 LLM (③, 见 D23)."""
     body = await req.json()
     prompt = (body.get("prompt") or "").strip()
-    if not prompt or len(prompt) > 500:
-        raise HTTPException(400, "提示词为空或过长(>500)")
-    check_banned(prompt)
+    image = (body.get("image") or "").strip()
+    if not prompt and not image:
+        raise HTTPException(400, "提示词和参考图不能同时为空")
+    if len(prompt) > 500:
+        raise HTTPException(400, "提示词过长(>500)")
+    if len(image) > 5_000_000:
+        raise HTTPException(400, "参考图过大(>5MB)")
+    if prompt:
+        check_banned(prompt)
     reroll = bool(body.get("reroll"))
-    prompt_en, breakdown = await translate(prompt, reroll=reroll)
+    prompt_en, breakdown = await translate(prompt, reroll=reroll, image_b64=(image or None))
     check_banned(prompt_en)
     return {"prompt_en": prompt_en, "breakdown": breakdown}
 

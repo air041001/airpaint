@@ -77,6 +77,6 @@
 - [x] ⑥ 规范化 Anima tag 顺序 (count -> character -> general) - 2026-07-29, 见 DEVLOG 第16条 / D20
 - [x] 质量提升: 启用 Face+Hand detailer 精修工作流 (anima-detailer, ~90s) - 2026-07-30, 见 DEVLOG 第19条 / D22
 - [ ] ② 标签选择器 UI (发型/瞳色/表情/姿势 chip, 降门槛)
-- [ ] ③ 参考图理解 (Qwen3-VL 提氛围/配色/姿势转 tag, 不用改工作流)
+- [x] ③ 参考图理解 (Qwen3-VL 提氛围/配色/构图转 tag, 走 txt2img 非图生图) - 2026-07-31, 见 DEVLOG 第20条 / D23
 - [ ] ④ 多角色 + 防属性串色 (LLM 改写有主语英文 NL)
 - [ ] ⑤ 多轮对话精修 (「再亮一点」对话式迭代, 北极星; img2img 链已 MUTE 存在, 见 workflow-anatomy)

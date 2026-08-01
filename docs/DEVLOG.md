@@ -341,3 +341,34 @@ char_dict.yaml / dict.yaml 原先启动时一次性载入, 加角色/词条要�
 
 ### 验证
 实测: 快速版出图正常, 精修版 ~90s(脸/手细节明显改善), 前端下拉默认快速、两个工作流都能出图。详见 decisions D22 / workflow-anatomy 启用查证。
+
+## 第 20 条 2026-07-31 - ③ 参考图理解 (视觉 LLM 提氛围, 走 txt2img)
+
+### 完成内容
+朋友上传参考图, Qwen3-VL-8B-Instruct 提取氛围/配色/构图/场景/光影转 tag, 与文本主体合并后走正常 txt2img (图不进 ComfyUI, 与未来 img2img 不冲突)。前端加参考图上传(缩到768px), 后端加视觉 LLM 路径。
+
+### 关键改动 / 为什么
+- **VL 模型选型**: Qwen3.5-4B(免费)做不了视觉(超时, 疑似纯文本); Qwen3-VL-8B-Instruct 能用(1.1s, 已确认识图)但收费 $0.18/M输入 + $0.68/M输出 ≈ $0.0007/次, 月几毛封顶, 可忽略。50万免费额度仅够 ~230 次(3周用完)+ 要切换平台, 不值。config `siliconflow_vision_model` 可调。
+- **图是氛围参考, 非图生图**: 视觉 LLM 提取 mood/color/lighting/composition, 不照搬图主体(除非文本指定); 图只用于提 tag, **不进 ComfyUI**, 走现有 txt2img。与 ⑤ img2img(LoadImage->VAEEncode->二采)正交, 不冲突。
+- **merge**: 有图时 char_dict+dict 仍从文本预匹配(可靠), 视觉 LLM 拿图+上下文(Known tags+Remaining)出结构化 breakdown+TAGS, `normalize_tag_order` 拼接。视觉 LLM 替代文本 LLM(一次调用处理图+文)。
+- **Qwen3-VL 不接受 enable_thinking**(会 400), 视觉调用不带该参数(文本 LLM 的 Qwen3-8B 仍带)。
+- **normalize 加保序去重 + dict 多 tag 拆分**: 重复根因有二: ① VL 偶发复读, normalize_tag_order 加 `seen` 去重(保留首次); ② **dict 值可能是多 tag("少女"->"girl, young, cute, innocent"), 原 `hits.append` 当成一个 blob, 跟 VL/LLM 同名 tag 撞出伪重复**(normalize 按整元素去重逮不到)。修法: dict 命中按逗号拆开 `hits.extend`。②是老 bug, 文本路径也有, ③ 撞上才暴露。
+- **前端**: 参考图上传 canvas 缩到 768px/JPEG 0.85 再 base64(省 token+加速); prompt+image 至少一项; reroll 对视觉也生效。
+
+### 验证
+py_compile + node --check 通过; 实测 translate("少女, 樱花树下", image=红图) -> `1girl, under cherry blossom tree, serene, peaceful, gentle, soft lighting, warm lighting, flat shading` + breakdown 五字段齐全; 文本主体(少女/樱花)+图氛围正确合并; 去重生效。详见 D23。
+
+## 第 21 条 2026-07-31 - 前端改版: 登录门禁 + 公告/教程下拉面板 + 移动端
+
+### 完成内容
+邀请码作登录唯一手段(暂时), 全屏登录页验证后才进主面板; 标题下方加「☰ 公告/教程」按钮, 点开下拉面板(全宽居中, 桌面/移动同布局; 更新公告带日期 latest-first + 简版教程: 翻译/LoRA/参考图/工作流/re-roll)。
+
+### 关键改动 / 为什么
+- **登录门禁**: 全屏 #login 遮罩, 「进入」调新增 `/api/auth/check`(verify_token, 不查日限不耗配额)验证 -> 200 进主面板, 401 提示无效。页面加载有存 token 自动验证, 无则显登录。主卡片移除原 token 输入框(token 改隐藏 input, api() 不用改); header 加「退出」。
+- **为何新加 /api/auth/check 而非用 /api/workflows**: /api/workflows 用 auth(查日限), 朋友达日限时用它验登录会 429 登不进; /api/auth/check 用 verify_token 只验 token (D24)。
+- **下拉面板(非侧拉抽屉)**: 标题下方居中按钮行, 点开向下展开全宽面板(max-680, 居中)。选下拉而非侧拉: 侧拉在桌面只占右侧一小条要凑过去看, 下拉全宽居中桌面/移动同款不用适配。两 tab: 更新公告(带日期, latest first)/ 教程(简述, 不手把手)。
+- **标题居中**: 按钮挪到标题下方居中(toolbar), 不抢标题居中位置; 下拉面板全宽居中, 桌面/移动都不挤。
+- **loadWorkflows 改抛异常**: 原来内部 try/catch 写 #status, 登录流程需它抛(enterApp 才能 catch 401); 改抛后 submitJob 等调用方自己 catch。
+
+### 验证
+py_compile + node --check 通过; /api/auth/check 逻辑简单(verify_token 复用)。详见 D24。

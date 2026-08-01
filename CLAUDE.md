@@ -9,7 +9,7 @@
 前后端共用固定域名 `airpaint.xyz`, 经 cloudflared **命名隧道**穿透内网(不暴露本机端口)。
 当前阶段: **MVP 已上线, 双工作流 (Anima 快速 / anima-detailer 精修)**。
 
-> **最近改动** (压缩后先看这行, 省重读 docs; 每完成一阶段更新此行): 2026-07-30 Face+Hand detailer 精修工作流 (`anima-detailer`, ~90s) + 双工作流下拉选择 (Phase 2.1) + sanitize 剥 Image Comparer + detailer 调参 (max_size 1024/steps 12, 186s->90s), 见 DEVLOG 第19条 / D22。前档: 词典热更新(D21)/re-roll+tag 规范化(D19/D20)。
+> **最近改动** (压缩后先看这行, 省重读 docs; 每完成一阶段更新此行): 2026-07-31 前端改版(登录门禁 + 公告/教程下拉面板 + 移动端, `/api/auth/check`, D24); 见 DEVLOG 第21条。前档: ③参考图(D23)/detailer精修双工作流(D22)/词典热更新(D21)。
 
 ## 模块地图
 
@@ -24,7 +24,7 @@
 | ComfyUI 客户端 | `submit_and_wait()` | `/prompt` 提交 + `/history` 轮询 + `/view` 取图 |
 | 队列 | `worker()` `QUEUE` | 单并发 asyncio.Queue (GPU 串行) |
 | 静态托管 | `/` `/images` | `/` 返回 `web/index.html`, `/images` 出图 |
-| **Intent Engine** | `detect_characters()` `char_dict.yaml` | 构图/场景/情绪分解已做 (D18 LLM 结构化); 否定解析弃用 (Anima 负面=常量); 待做: 歧义消解/LoRA 自动推荐, 见 decisions.md D12/D13/D18 |
+| **Intent Engine** | `detect_characters()` `char_dict.yaml` `siliconflow_vision_translate()` | 构图/场景/情绪分解 (D18 LLM 结构化); **参考图理解 (③ Qwen3-VL 提氛围, D23)**; 否定解析弃用 (Anima 负面=常量); 待做: 歧义消解/LoRA 自动推荐/多轮对话, 见 decisions.md D12/D13/D18 |
 
 ## 运作规则(开发时遵守)
 
