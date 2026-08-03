@@ -275,6 +275,21 @@ def match_characters(text: str) -> tuple[list[str], str]:
     return found_tags, remaining
 
 
+def match_dict_words(text: str) -> tuple[list[str], str]:
+    """子串匹配属性/感觉词典(最长优先, len>=2 防"白"匹配"白天"误伤). 返回 (tag 列表, 移除命中后的剩余).
+    修: 原精确匹配逗号段, NSFW 词嵌在短语里("裸足少女")不命中 -> 走 LLM -> Qwen3 安全过滤丢词 (见 D26).
+    最长优先: 先匹配长 key("白天"->daytime) 再短 key("白"->white), 避免短 key 先吃掉长 key 的一部分."""
+    hits: list[str] = []
+    remaining = text
+    for key, val in sorted(DICT.items(), key=lambda x: len(x[0]), reverse=True):
+        if len(key) < 2:
+            continue  # 跳过单字键, 防子串误伤
+        if key in remaining:
+            hits.extend(t.strip() for t in str(val).split(",") if t.strip())
+            remaining = remaining.replace(key, "")
+    return hits, remaining
+
+
 async def siliconflow_translate(context: str, reroll: bool = False) -> tuple[str, dict | None]:
     """走硅基流动 Qwen 翻译/扩写. context 是结构化上下文 (Known tags + Remaining).
     返回 (LLM 新增 tag, 结构化拆解 dict). tag 不含已知 tag (由 translate 拼接).
@@ -424,17 +439,10 @@ async def translate(text: str, reroll: bool = False, image_b64: str | None = Non
     # Layer 0: 角色子串匹配 (移除角色名, 得到剩余文本)
     char_tags, remaining = match_characters(text)
 
-    # Layer 1: 剩余文本按逗号切, 逐段查属性/感觉词典
-    parts = [p.strip() for p in re.split(r"[,，、;；\n]+", remaining) if p.strip()]
-    hits, misses = [], []
-    for p in parts:
-        h = DICT.get(p.lower())
-        if h is None:
-            misses.append(p)
-        else:
-            # dict 值可能是多 tag ("少女" -> "girl, young, cute, innocent"), 按逗号拆开
-            # 否则整个 blob 当一个 tag, 跟 LLM/VL 输出的同名 tag 撞出"伪重复"(normalize 按整元素去重逮不到, 见 D23)
-            hits.extend(t.strip() for t in str(h).split(",") if t.strip())
+    # Layer 1: 词典子串匹配 (最长优先, 像 char_dict 一样在文本里找, 不靠逗号精确匹配)
+    # 修: 原精确匹配逗号段, NSFW 词嵌在短语里("裸足少女")不命中 -> 走 LLM -> Qwen3 安全过滤丢词 (见 D26)
+    hits, remaining = match_dict_words(remaining)
+    misses = [p.strip() for p in re.split(r"[,，、;；\n]+", remaining) if p.strip()]
 
     # ③ 参考图: 有图走视觉 LLM 提取氛围 (图 + 文本上下文), 不走下面的文本 LLM/快速路径.
     # 图是氛围参考, 文本(若有)给主体; 角色词典仍预匹配(可靠). 不缓存(图探索性, key 含图复杂). 见 D23.

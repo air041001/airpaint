@@ -403,3 +403,4 @@ py_compile + node --check 通过; 本地模拟: start translate+入队 ✓, redo
 
 ### 验证
 py_compile + node --check 通过; build_prompt 注入验证: img2img 模式 select=2/image/denoise 全覆盖 ✓, txt2img 模式保持原样 ✓。详见 D26。
+**dict 子串匹配修复**: 原 dict 精确匹配逗号段, NSFW 词嵌在短语("裸足少女")不命中 -> 走 LLM -> Qwen3 双层安全过滤(搜到 CSDN: 拦成人色情)丢词。改为 `match_dict_words` 子串匹配(最长优先, len>=2 防误伤), dict 词嵌在任何位置都命中 -> 直接拼进 prompt_en -> 绕过 LLM。实测 `match_dict_words("猫耳少女白发蓝眼睛")` 全命中。
