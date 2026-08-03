@@ -85,7 +85,9 @@ Authorization: Bearer <token>
   "prompt": "白发蓝眼睛的猫耳少女, 微笑, 站在樱花树下",
   "size": "832x1216",
   "lora": "ningen_mame",
-  "strength": 0.8
+  "strength": 0.8,
+  "image": "(可选, base64 data URI, 图生图模式)",
+  "denoise": 0.35
 }
 ```
 - `prompt_en`: 必填, 已翻译英文 tag (可经用户编辑), ≤800 字符, 经内容过滤。
@@ -93,6 +95,8 @@ Authorization: Bearer <token>
 - `size`: 可选, 必须是该工作流 `sizes` 之一; 不传取第一个。
 - `lora`: 可选, `GET /api/loras` 返回的 `key` 之一; 不传或空表示不用 LoRA。工作流需配了 `lora_node` 才支持。
 - `strength`: 可选, LoRA 强度 0~1 (1=满), 仅 `lora` 有值时生效; 不传用 config 默认 1.0。
+- `image`: 可选, base64 (data URI 或纯 base64)。图生图模式: 后端上传到 ComfyUI input -> 注入 LoadImage + ImpactSwitch select=2 + denoise。工作流需配 `image_node`/`switch_node`/`denoise_node` (见 D26)。
+- `denoise`: 可选, 0.1~0.9。图生图重采样强度: 低=接近原图(微调), 高=大改。默认 0.35。
 
 校验失败: `400` (未知工作流 / prompt_en 空或过长 / 非法尺寸 / 命中禁词 / 未知 LoRA / 工作流不支持 LoRA / LoRA 强度非法)。
 
@@ -126,6 +130,32 @@ failed (失败):
 ```
 
 `image` 是相对路径, 拼接 Base URL 取图。
+
+### POST /api/dialog/turn
+⑤ 对话迭代: 每轮一次出图 (需鉴权, 计入日限)。显式路由不猜意图: `action` 由前端按钮决定 (见 D25)。
+
+请求体:
+```json
+{ "session_id": "可选, 首轮省略", "action": "start|redo|tweak", "prompt": "首轮中文描述(start 必填)", "delta": "可选改动 (redo/tweak)", "denoise": 0.35, "workflow": "anima", "size": "832x1216", "lora": "", "strength": 1 }
+```
+- `start`: 建会话 + 首图。
+- `redo` (换一版): `delta` 有则累积重翻译, 无则复用当前 prompt_en 换 seed。
+- `tweak` (微调/img2img): 上一张图上传 ComfyUI -> `anima-img2img` 工作流 + 低 denoise。`delta` 有则累积重翻译, 无则复用 current_en。`denoise` 控制偏离度 (默认 0.35)。
+
+响应 `200`:
+```json
+{ "session_id": "...", "job_id": "..." }
+```
+
+### GET /api/dialog/{session_id}
+返回会话线程 (需鉴权, 校验 token 归属)。
+
+响应 `200`:
+```json
+{ "session_id": "...", "raw": "累积中文描述", "current_en": "最新 prompt_en",
+  "turns": [ { "action": "start", "delta": "", "prompt_en": "...", "status": "done", "image": "/images/x.png", "error": null } ] }
+```
+`image` 在对应 job 完成后才有值 (worker 写回)。
 
 ### 静态资源 (无需鉴权)
 - `GET /` → 前端网页 `index.html`

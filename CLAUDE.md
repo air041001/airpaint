@@ -9,7 +9,7 @@
 前后端共用固定域名 `airpaint.xyz`, 经 cloudflared **命名隧道**穿透内网(不暴露本机端口)。
 当前阶段: **MVP 已上线, 双工作流 (Anima 快速 / anima-detailer 精修)**。
 
-> **最近改动** (压缩后先看这行, 省重读 docs; 每完成一阶段更新此行): 2026-07-31 前端改版(登录门禁 + 公告/教程下拉面板 + 移动端, `/api/auth/check`, D24); 见 DEVLOG 第21条。前档: ③参考图(D23)/detailer精修双工作流(D22)/词典热更新(D21)。
+> **最近改动** (压缩后先看这行, 省重读 docs; 每完成一阶段更新此行): 2026-08-02 img2img(B) + 对话微调(tweak) + 保氛围删 (单张/对话双入口, config 驱动 image/switch/denoise 注入, D26); 见 DEVLOG 第23条。前档: ⑤对话迭代骨架(D25)/前端改版(D24)/③参考图(D23)。
 
 ## 模块地图
 
@@ -20,11 +20,11 @@
 | 鉴权/限流 | `auth()` `USAGE` | Bearer token + 日限, **内存计数(重启清零)** |
 | 内容过滤 | `check_banned()` | banned_words 子串匹配 |
 | **Prompt Engine** | `translate()` `match_characters()` `siliconflow_translate()` `_parse_structured_output()` `normalize_tag_order()` `HotDict` `dict.yaml` `char_dict.yaml` | 三层: 角色->词典->LLM(结构化分解 scene/composition/mood/lighting/style + TAGS, 回传 breakdown) / LRU 缓存 500 / **reroll 跳过缓存高温重抽** / **tag 规范序 count->char->general** / **词典 mtime 热更新不重启** |
-| **Workflow Engine** | `sanitize_for_api()` `build_prompt()` | 清洗前端专属节点(含 Image Comparer)+ 注入 prompt/seed/size/**LoRA**, **统一所有 seed**; **双工作流**(anima 快速 / anima-detailer 精修) |
+| **Workflow Engine** | `sanitize_for_api()` `build_prompt()` `upload_image_to_comfy()` | 清洗前端专属节点(含 Image Comparer)+ 注入 prompt/seed/size/**LoRA**/**img2img**(image/switch/denoise), **统一所有 seed**; **三工作流**(anima 快速 / anima-detailer 精修 / anima-img2img 图生图) |
 | ComfyUI 客户端 | `submit_and_wait()` | `/prompt` 提交 + `/history` 轮询 + `/view` 取图 |
 | 队列 | `worker()` `QUEUE` | 单并发 asyncio.Queue (GPU 串行) |
 | 静态托管 | `/` `/images` | `/` 返回 `web/index.html`, `/images` 出图 |
-| **Intent Engine** | `detect_characters()` `char_dict.yaml` `siliconflow_vision_translate()` | 构图/场景/情绪分解 (D18 LLM 结构化); **参考图理解 (③ Qwen3-VL 提氛围, D23)**; 否定解析弃用 (Anima 负面=常量); 待做: 歧义消解/LoRA 自动推荐/多轮对话, 见 decisions.md D12/D13/D18 |
+| **Intent Engine** | `detect_characters()` `char_dict.yaml` `siliconflow_vision_translate()` | 构图/场景/情绪分解 (D18 LLM 结构化); **参考图理解 (③ Qwen3-VL 提氛围, D23)**; **⑤ 对话迭代 (显式路由: 换一版/保氛围, D25)**; 否定解析弃用 (Anima 负面=常量); 待做: 歧义消解/LoRA 自动推荐, 见 decisions.md D12/D13/D18 |
 
 ## 运作规则(开发时遵守)
 

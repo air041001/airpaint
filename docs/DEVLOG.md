@@ -372,3 +372,34 @@ py_compile + node --check 通过; 实测 translate("少女, 樱花树下", image
 
 ### 验证
 py_compile + node --check 通过; /api/auth/check 逻辑简单(verify_token 复用)。详见 D24。
+
+## 第 22 条 2026-08-01 - ⑤ 对话迭代 MVP (骨架 + 换一版/保氛围)
+
+### 完成内容
+新增「对话迭代」模式(与单张生成切换)。会话线程: 首图 start -> 每轮 [换一版] / [保氛围] + 可选 delta 改动。后端 SESSIONS 内存会话 + /api/dialog/turn + /api/dialog/{sid}, 复用 _enqueue 入队(worker 不动)。
+
+### 关键改动 / 为什么
+- **显式路由不猜意图**: 每张图挂操作按钮, 用户点按钮决定路由(A 换一版 / D 保氛围), delta 只作提示词增量。Qwen3-8B 猜意图又慢又不准, 别让它干 (D25)。
+- **A 换一版**: delta 有则 `session.raw += delta` 重翻译; 无则复用 `current_en` 换 seed(免 LLM 调用)。
+- **D 保氛围**: 上一张图 -> iterate 视觉全量提取(锁主体+氛围)再变体。与 ③ 的 vibe-only 不同: ③ 是用户参考图禁抄主体, D 要锁住实际出图。新增 VISION_ITERATE_SYSTEM_PROMPT + mode 参数。
+- **_enqueue 抽取**: create_job 的入队段(USAGE+1/JOBS/QUEUE)抽成共享 helper, create_job 与 dialog 共用, worker 零改动。
+- **前端**: 模式切换分段控件 + 对话视图(线程/操作按钮/delta 输入/轮询)。workflow/size/lora 复用主卡片选择。
+
+### 验证
+py_compile + node --check 通过; 本地模拟: start translate+入队 ✓, redo 无delta复用current_en ✓, redo带delta("换成白天"->daytime,bright)✓, vibe iterate 全量提取图主体+氛围(blue hair, red horns, white blouse, kitchen...)✓。B(img2img)下阶段。
+**实跑发现并修**: 保氛围报"还没有已生成的图" -- turn 记录里 image 字段恒 None(worker 把图写进 JOBS), 原查 `turn["image"]` 找不到; 改为从 JOBS 按 job_id 找最新出图。
+
+## 第 23 条 2026-08-02 - img2img (B) + 对话微调 + 保氛围删除
+
+### 完成内容
+⑤ 的 B 路由(img2img 微调)落地。子 agent 查 img2img 链路(ImpactSwitch 路由/LoadImage 格式/denoise), 确认无硬阻塞。第三份工作流 `anima-img2img`(拨 Load Image 组导出), 后端 config 驱动注入(image/switch/denoise)。单张模式选 img2img 工作流即可上传图改; 对话迭代加「微调」按钮(上一张图 -> img2img + denoise)。保氛围(vibe)删了(跟换一版重叠 + 内在矛盾)。
+
+### 关键改动 / 为什么
+- **子 agent 查源码确认**: ImpactSwitch 42 select(1/2)可 set_input 覆盖(替换连接, lazy evaluation 确保未选链路不执行); LoadImage 0 要文件名字符串(非 base64, 放 ComfyUI input 目录); KSampler 6 denoise 是连接(1.0), 可 set_input 覆盖为低值。
+- **upload_image_to_comfy**: POST /upload/image 上传 -> 拿 filename -> set_input。单张模式图走 /api/jobs(不走 /api/translate); 对话微调从 JOBS 读上一张图。
+- **build_prompt 扩展**: image_filename+denoise 参数; config 有 image_node 时 set select=2+image+denoise。_enqueue 共用(create_job + dialog), worker 全链路传递。
+- **保氛围(vibe)删了**: 实测发现跟换一版高度重叠(都是文字驱动), 且 reference(保氛围换主体) vs iterate(锁主体)内在矛盾, 一个 mode 搞不定两种。后端 vibe action 休眠保留, 前端按钮删。
+- **UX 修正(实跑发现)**: img2img prompt 要**完整画面描述**非指令("穿蓝色连衣裙的少女在海边" 不是 "改变穿搭"); denoise 越高越偏离(默认降到 0.35); img2img 模式 placeholder 改"描述完整画面"。
+
+### 验证
+py_compile + node --check 通过; build_prompt 注入验证: img2img 模式 select=2/image/denoise 全覆盖 ✓, txt2img 模式保持原样 ✓。详见 D26。

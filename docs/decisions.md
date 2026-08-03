@@ -198,5 +198,32 @@
 **收益**: 门禁隔离(邀请码才能进); 朋友自助看公告/教程降门槛; 移动端不挤压。
 **代价**: 邀请码登录是"暂时"方案(无独立账号系统); 下拉面板按需展开不常驻(可接受); loadWorkflows 失败现在走调用方 catch(登录流程会把网络错当 auth 失败显登录, 罕见)。
 
+## D25. ⑤ 对话迭代 MVP: 显式路由不猜意图 + D 用 iterate 视觉变体
+
+**背景**: ⑤ 多轮对话精修是北极星("再亮一点"式迭代)。用户调研发现同一对话里不同意图对应不同能力: 换一版=txt2img 重抽, 微调=img2img, 保姿势=ControlNet, 保氛围=③ 参考图。若靠 LLM 猜意图(Qwen3-8B 弱)既慢又不准。
+**决定** (MVP 骨架 + A/D):
+1. **显式路由**: 每张生成图挂操作按钮 [换一版 / 保氛围](B img2img 下阶段), 用户点按钮决定路由, 不猜意图。delta 文本只作提示词增量, 不作意图判断。
+2. **A 换一版**: delta 有则 `session.raw += delta` 重翻译; 无则复用 `current_en`(免 LLM)换 seed。
+3. **D 保氛围**: 上一张图读文件 base64 -> `siliconflow_vision_translate(mode="iterate")` 全量提取(锁主体+氛围)再变体。**与 ③ 不同**: ③ 用户参考图是 vibe-only 禁抄主体; D 要锁住实际出图的主体+氛围, 故独立 VISION_ITERATE_SYSTEM_PROMPT。
+4. **会话存储**: SESSIONS 内存 dict(sid -> raw/current_en/turns), 与 JOBS/USAGE 同套, 重启清零(迭代线程本就临时)。每轮入队复用抽出的 `_enqueue`(create_job 与 dialog 共用, worker 不动)。
+5. **每轮计日限**(USAGE+1): 对话迭代也是出图, MVP 用同一 30/天限额(刷多了到顶, 后续再议单独计数)。
+**收益**: 骨架可玩(换一版/保氛围立即可用); 不猜意图模型短板无关; _enqueue 复用零 worker 改动; B(img2img)下阶段独立加, 不动骨架。
+**代价**: 会话内存存储重启清零; delta 累积(raw 无限增长, MVP 可接受, 长对话可截断); vibe 每次读全尺寸图送 VL(token 稍多, 可后续前端缩图); ControlNet(保姿势)未做。
+
+## D26. img2img (B): 拨 Load Image 组 + 后端注入 + 单张/对话双入口
+
+**背景**: ⑤ 对话迭代的 B 路由(微调)。子 agent 查源码确认: ImpactSwitch 42 select(1=txt2img/2=img2img)可 set_input 覆盖; LoadImage 0 要文件名(非 base64); KSampler 6 denoise 连接(1.0)可覆盖为低值。无硬阻塞。
+**决定**:
+1. **第三份工作流** `AnimaStandardV7-Img2Img.json`(拨"Load Image"组导出, 38 节点)。config 加 `anima-img2img` 条目, 配 `image_node`(0)/`switch_node`(42)/`denoise_node`(6)。
+2. **build_prompt 扩展**: 传 `image_filename`+`denoise` 时, set select=2(替换连接)+ image=filename + denoise=低值(替换连接)。不传则 select/image/denoise 保持原样(txt2img)。
+3. **upload_image_to_comfy**: POST /upload/image 上传图到 ComfyUI input 目录 -> 返回文件名 -> set_input。LoadImage 要文件名字符串, 不是 base64。
+4. **_enqueue 共用**: create_job(单张)和 dialog_turn(对话)都调 _enqueue, 传 image_filename+denoise。worker/submit_and_wait 全链路传递。JOBS 加 image_filename/denoise 字段。
+5. **单张模式**: workflow 选 anima-img2img -> 上传标签变"图生图" + denoise 滑杆出现 + 图走 /api/jobs(不走 /api/translate)。
+6. **对话微调(tweak)**: 上一张图 -> upload -> translate(delta, 纯文本) -> anima-img2img 入队 + denoise。
+7. **UX 要点**: img2img prompt = **完整画面描述**(非指令"改XX"); denoise 越高越偏离原图(0.25-0.35=微调, 0.5+=大改)。默认 0.35。
+8. **保氛围(vibe)删了**: 跟换一版高度重叠(都是文字驱动改描述), 且 reference(保氛围换主体) vs iterate(锁主体)内在矛盾。后端 vibe action 休眠保留, 前端按钮已删。
+**收益**: img2img 落地, 单张+对话双入口; _enqueue 复用零 worker 改动; 工作流 config 驱动注入(与 lora/prompt 同套)。
+**代价**: img2img prompt 要完整描述(用户需学习, 非"改XX"指令); denoise 调参有学习曲线; 单张 img2img 没有累积描述(对话微调更好用); LoadImage 占位文件(example.png)需存在于 ComfyUI input(txt2img 验证用)。
+
 ## 待决策 / 方向
 - **Intent Engine**: 迈向「理解用户意图」核心目标。**构图/场景/情绪的结构化分解已实现** (D18: LLM 输出 scene/composition/mood/lighting/style + TAGS); **否定语义解析弃用** (D18: Anima 负面是常量, 不随输入变); 仍待做: 歧义消解、LoRA/工作流自动推荐。符合 CLAUDE.md 规则 6。

@@ -3,6 +3,7 @@
 职责: 鉴权 / 限流 / 排队(并发=1) / 中文->tag 翻译 / 内容过滤 / 调用 ComfyUI API / 返回图片
 """
 import asyncio
+import base64
 import json
 import random
 import re
@@ -91,6 +92,8 @@ async def index():
     return FileResponse(WEB_DIR / "index.html", headers={"Cache-Control": "no-cache"})
 
 JOBS: dict[str, dict] = {}          # job_id -> job
+# ⑤ 对话迭代会话 (内存, 重启清零; 迭代线程本就临时). sid -> {id, token, raw(累积中文), current_en, created, turns:[...]}
+SESSIONS: dict[str, dict] = {}
 QUEUE: asyncio.Queue[str] = asyncio.Queue()
 USAGE: dict[str, list] = {}         # token -> [date, count]
 CLIENT = httpx.AsyncClient(timeout=60)
@@ -214,6 +217,30 @@ VISION_SYSTEM_PROMPT = (
     "9. TAGS collects every concrete tag from the 5 fields above. Keep under ~200 chars.\n"
 )
 
+# ⑤ D 保氛围迭代: 与 ③ 不同--③ 是用户上传参考图"只提氛围禁抄主体"(vibe-only), D 是"保氛围再画一版"
+# 要锁住实际出图的主体+氛围(全量提取)再变体. 故用独立 iterate 提示词 (见 D25).
+VISION_ITERATE_SYSTEM_PROMPT = (
+    "You are a prompt engineer for the Anima anime image model. You receive a GENERATED IMAGE the user likes and wants to "
+    "re-draw as a VARIATION (same subject + same vibe), plus optional adjustment text. Describe the image fully as danbooru "
+    "tags (subject + scene + mood + lighting + composition + style) so it can be re-drawn, KEEPING the same subject and vibe. "
+    "Apply any adjustment from the text on top.\n\n"
+    "Output EXACTLY these lines, nothing else (no markdown, no quotes, no extra text):\n"
+    "scene: <concrete place + setting tags from the image>\n"
+    "composition: <framing / camera angle / pose tags from the image>\n"
+    "mood: <emotion -> atmosphere tags from the image>\n"
+    "lighting: <light tags from the image>\n"
+    "style: <art style tags>\n"
+    "TAGS: <final danbooru tags, lowercase, comma-separated>\n\n"
+    "Rules:\n"
+    "1. Keep the image's SUBJECT (count, hair, clothing, accessories) and VIBE (mood/lighting/color/scene) - this is a "
+    "variation of the same image, not a new concept.\n"
+    "2. If the text gives an adjustment (e.g. 白天, 更亮, 换姿势), apply it on top of the image's base.\n"
+    "3. Put a count tag (1girl/1boy/solo) FIRST in TAGS.\n"
+    "4. Do NOT output quality/score tags (masterpiece, best quality, score_*, safe, absurdres) - handled separately.\n"
+    "5. Use lowercase danbooru tags; spaces over underscores. Do NOT add realistic/photoreal/3d/render tags (anime-only).\n"
+    "6. TAGS collects every concrete tag from the 5 fields above. Keep under ~200 chars.\n"
+)
+
 
 def _parse_structured_output(out: str) -> tuple[str, dict | None]:
     """解析 LLM 结构化输出 (scene/composition/mood/lighting/style 各一行 + TAGS 行).
@@ -309,10 +336,11 @@ async def siliconflow_translate(context: str, reroll: bool = False) -> tuple[str
     return tags, breakdown
 
 
-async def siliconflow_vision_translate(image_b64: str, context: str, reroll: bool = False) -> tuple[str, dict | None]:
+async def siliconflow_vision_translate(image_b64: str, context: str, reroll: bool = False, mode: str = "reference") -> tuple[str, dict | None]:
     """③ 参考图理解: 走硅基流动 Qwen3-VL, 从参考图提取氛围/配色/构图/场景/光影 -> 结构化 breakdown + TAGS.
     image_b64: data URI (data:image/...;base64,...) 或纯 base64. context 同文本 LLM (Known tags + Remaining).
     返回 (tags, breakdown), 复用 _parse_structured_output. 失败抛异常 (上层转 HTTPException). 见 D23.
+    mode: "reference"=③ vibe-only (用户参考图); "iterate"=⑤ 保氛围再画一版 (锁住主体+氛围全量提取, D25).
     注意: Qwen3-VL-Instruct 不接受 enable_thinking 参数 (会 400), 故不带; 它是非 thinking 模型, 默认不思考."""
     api_key = CFG.get("siliconflow_api_key", "").strip()
     model = CFG.get("siliconflow_vision_model", "Qwen/Qwen3-VL-8B-Instruct")
@@ -331,7 +359,7 @@ async def siliconflow_vision_translate(image_b64: str, context: str, reroll: boo
         json={
             "model": model,
             "messages": [
-                {"role": "system", "content": VISION_SYSTEM_PROMPT},
+                {"role": "system", "content": VISION_ITERATE_SYSTEM_PROMPT if mode == "iterate" else VISION_SYSTEM_PROMPT},
                 # VL 模型 user content 是数组: 文本 + image_url (OpenAI 视觉格式, 硅基流动兼容, 见 D23)
                 {"role": "user", "content": [
                     {"type": "text", "text": nudge + context},
@@ -521,7 +549,8 @@ def sanitize_for_api(wf: dict) -> dict:
 
 
 def build_prompt(wf_name: str, prompt_en: str, width: int | None, height: int | None,
-                 lora_key: str | None = None, strength: float | None = None) -> dict:
+                 lora_key: str | None = None, strength: float | None = None,
+                 image_filename: str | None = None, denoise: float | None = None) -> dict:
     wcfg = WORKFLOWS[wf_name]
     wf = json.loads((BASE / wcfg["file"]).read_text(encoding="utf-8"))
     wf = sanitize_for_api(wf)
@@ -580,12 +609,32 @@ def build_prompt(wf_name: str, prompt_en: str, width: int | None, height: int | 
     if width and height and "size_node" in wcfg:
         set_input("size_node", "width", width)
         set_input("size_node", "height", height)
+    # img2img 注入 (D26): config 有 image_node + 传了 image_filename 时:
+    # 切 ImpactSwitch select=2 (VAEEncode 路径, 替换连接) + 注入 LoadImage 文件名 + 覆盖 denoise (原 1.0 -> 低值)
+    if image_filename and "image_node" in wcfg:
+        if "switch_node" in wcfg:
+            set_input("switch_node", "select", 2)
+        set_input("image_node", "image", image_filename)
+        if denoise is not None and "denoise_node" in wcfg:
+            set_input("denoise_node", "denoise", float(denoise))
     return {"prompt": wf, "client_id": CLIENT_ID, "_seed": seed}
 
 
+async def upload_image_to_comfy(image_bytes: bytes) -> str:
+    """上传图到 ComfyUI input 目录 (POST /upload/image), 返回文件名 (给 LoadImage set_input 用, 见 D26)."""
+    fname = f"{uuid.uuid4().hex[:12]}.png"
+    r = await CLIENT.post(f"{COMFY}/upload/image",
+                          files={"image": (fname, image_bytes, "image/png")},
+                          data={"type": "input", "overwrite": "true"}, timeout=30)
+    if r.status_code != 200:
+        raise RuntimeError(f"ComfyUI 上传图片失败: {r.status_code} {r.text[:200]}")
+    return r.json()["name"]
+
+
 async def submit_and_wait(wf_name: str, prompt_en: str, width, height, lora_key: str | None = None,
-                          strength: float | None = None) -> str:
-    payload = build_prompt(wf_name, prompt_en, width, height, lora_key, strength)
+                          strength: float | None = None,
+                          image_filename: str | None = None, denoise: float | None = None) -> str:
+    payload = build_prompt(wf_name, prompt_en, width, height, lora_key, strength, image_filename, denoise)
     seed = payload.pop("_seed")
     r = await CLIENT.post(f"{COMFY}/prompt", json=payload)
     if r.status_code != 200:
@@ -626,7 +675,9 @@ async def worker():
         job = JOBS[job_id]
         job["status"] = "running"
         try:
-            fname = await submit_and_wait(job["workflow"], job["prompt_en"], job.get("width"), job.get("height"), job.get("lora"), job.get("strength"))
+            fname = await submit_and_wait(job["workflow"], job["prompt_en"], job.get("width"), job.get("height"),
+                                         job.get("lora"), job.get("strength"),
+                                         job.get("image_filename"), job.get("denoise"))
             job.update(status="done", image=f"/images/{fname}")
         except Exception as e:
             job.update(status="failed", error=str(e))
@@ -703,39 +754,26 @@ async def translate_prompt(req: Request, token: str = Depends(verify_token)):
     return {"prompt_en": prompt_en, "breakdown": breakdown}
 
 
-@app.post("/api/jobs")
-async def create_job(req: Request, token: str = Depends(auth)):
-    body = await req.json()
-    wf_name = body.get("workflow", "")
-    prompt_en = (body.get("prompt_en") or "").strip()
-    prompt_raw = (body.get("prompt") or "").strip() or prompt_en   # 原始中文, 仅存档展示; 不传则同 prompt_en
-    lora = (body.get("lora") or "").strip()
+async def _enqueue(token: str, wf_name: str, prompt_en: str, prompt_raw: str,
+                   size, lora: str, strength,
+                   image_filename: str | None = None, denoise: float | None = None) -> str:
+    """校验并入队一次出图 (USAGE+1 / JOBS / QUEUE.put). create_job 与 /api/dialog/turn 共用. 返回 job_id.
+    prompt_en/prompt_raw 的 banned 检查由调用方负责 (两处逻辑不同)."""
     if wf_name not in WORKFLOWS:
         raise HTTPException(400, "未知工作流")
-    if not prompt_en or len(prompt_en) > 800:
-        raise HTTPException(400, "提示词为空或过长(>800)")
-    if prompt_raw != prompt_en and len(prompt_raw) > 500:
-        raise HTTPException(400, "原始提示词过长(>500)")
-    check_banned(prompt_en)
-    if prompt_raw != prompt_en:
-        check_banned(prompt_raw)
-
     wcfg = WORKFLOWS[wf_name]
     width = height = None
     if wcfg.get("sizes"):
-        size = body.get("size") or wcfg["sizes"][0]
+        size = size or wcfg["sizes"][0]
         if size not in wcfg["sizes"]:
             raise HTTPException(400, "非法尺寸")
         width, height = map(int, size.split("x"))
-
     # LoRA 校验 (失败快速返回 400, 不进队列)
-    strength = None
     if lora:
         if lora not in CFG.get("loras", {}):
             raise HTTPException(400, "未知的 LoRA")
         if "lora_node" not in wcfg:
             raise HTTPException(400, "该工作流不支持 LoRA")
-        strength = body.get("strength")
         if strength is not None:
             try:
                 strength = float(strength)
@@ -743,16 +781,48 @@ async def create_job(req: Request, token: str = Depends(auth)):
                 raise HTTPException(400, "LoRA 强度需为数字")
             if not (0 <= strength <= 1):
                 raise HTTPException(400, "LoRA 强度需在 0~1 之间")
-
+    else:
+        strength = None
     USAGE[token][1] += 1
     job_id = uuid.uuid4().hex[:10]
     JOBS[job_id] = {
         "id": job_id, "token": token, "workflow": wf_name,
         "prompt_raw": prompt_raw, "prompt_en": prompt_en,
         "width": width, "height": height, "lora": lora or None, "strength": strength,
+        "image_filename": image_filename, "denoise": denoise,
         "status": "queued", "created": time.time(),
     }
     await QUEUE.put(job_id)
+    return job_id
+
+
+@app.post("/api/jobs")
+async def create_job(req: Request, token: str = Depends(auth)):
+    body = await req.json()
+    wf_name = body.get("workflow", "")
+    prompt_en = (body.get("prompt_en") or "").strip()
+    prompt_raw = (body.get("prompt") or "").strip() or prompt_en   # 原始中文, 仅存档展示; 不传则同 prompt_en
+    lora = (body.get("lora") or "").strip()
+    if not prompt_en or len(prompt_en) > 800:
+        raise HTTPException(400, "提示词为空或过长(>800)")
+    if prompt_raw != prompt_en and len(prompt_raw) > 500:
+        raise HTTPException(400, "原始提示词过长(>500)")
+    check_banned(prompt_en)
+    if prompt_raw != prompt_en:
+        check_banned(prompt_raw)
+    # img2img: 图 base64 -> 上传 ComfyUI -> 拿文件名 (见 D26)
+    image_b64 = (body.get("image") or "").strip()
+    denoise = body.get("denoise")
+    image_filename = None
+    if image_b64:
+        if "," in image_b64:
+            image_b64 = image_b64.split(",", 1)[1]
+        try:
+            image_filename = await upload_image_to_comfy(base64.b64decode(image_b64))
+        except Exception as e:
+            raise HTTPException(502, f"图片上传失败 ({e})")
+    job_id = await _enqueue(token, wf_name, prompt_en, prompt_raw,
+                            body.get("size"), lora, body.get("strength"), image_filename, denoise)
     return {"id": job_id, "prompt_en": prompt_en}
 
 
@@ -770,6 +840,137 @@ async def job_status(job_id: str, token: str = Depends(auth)):
     if job["status"] == "failed":
         resp["error"] = job.get("error", "未知错误")
     return resp
+
+
+# ---------- ⑤ 对话迭代 (骨架 + A/D) ----------
+@app.post("/api/dialog/turn")
+async def dialog_turn(req: Request, token: str = Depends(auth)):
+    """⑤ 对话迭代: 每轮一次出图 (走 _enqueue/worker, 计入日限). action:
+    start=建会话+首图; redo(换一版)=delta 有则 raw+=delta 重翻译, 无则复用 current_en 换 seed;
+    vibe(保氛围)=上一张图走 iterate 视觉全量提取(锁主体+氛围)再变体. 显式路由不猜意图, 见 D25."""
+    body = await req.json()
+    action = (body.get("action") or "").strip()
+    session_id = (body.get("session_id") or "").strip()
+    delta = (body.get("delta") or "").strip()
+    if len(delta) > 300:
+        raise HTTPException(400, "改动描述过长(>300)")
+    wf_name = body.get("workflow", "")
+    image_filename = None
+    denoise = None
+
+    if action == "start":
+        prompt = (body.get("prompt") or "").strip()
+        if not prompt or len(prompt) > 500:
+            raise HTTPException(400, "提示词为空或过长(>500)")
+        check_banned(prompt)
+        try:
+            prompt_en, _ = await translate(prompt)
+        except HTTPException:
+            raise
+        except Exception as e:
+            raise HTTPException(502, f"翻译失败, 请稍后重试 ({e})")
+        check_banned(prompt_en)
+        session_id = uuid.uuid4().hex[:10]
+        SESSIONS[session_id] = {"id": session_id, "token": token, "raw": prompt,
+                                "current_en": prompt_en, "created": time.time(), "turns": []}
+        raw = prompt
+    else:
+        session = SESSIONS.get(session_id)
+        if not session or session["token"] != token:
+            raise HTTPException(404, "会话不存在")
+        if action == "redo":
+            if delta:
+                check_banned(delta)
+                session["raw"] = (session["raw"] + "，" + delta) if session["raw"] else delta
+                try:
+                    prompt_en, _ = await translate(session["raw"])
+                except HTTPException:
+                    raise
+                except Exception as e:
+                    raise HTTPException(502, f"翻译失败, 请稍后重试 ({e})")
+            else:
+                prompt_en = session["current_en"]
+            session["current_en"] = prompt_en
+            raw = session["raw"]
+        elif action == "vibe":
+            if delta:
+                check_banned(delta)
+            # 图在 JOBS 里 (worker 完成后写 image), turn 记录里没有 -> 从 JOBS 按 job_id 找最新出图
+            last_img = next((JOBS.get(t["job_id"], {}).get("image")
+                             for t in reversed(session["turns"]) if JOBS.get(t["job_id"], {}).get("image")), None)
+            if not last_img:
+                raise HTTPException(400, "还没有已生成的图, 无法保氛围")
+            try:
+                image_b64 = "data:image/png;base64," + base64.b64encode(
+                    (IMAGES / last_img.rsplit("/", 1)[-1]).read_bytes()).decode()
+            except FileNotFoundError:
+                raise HTTPException(400, "上一张图文件不在了, 请重新生成")
+            try:
+                # ③ reference 路径: char_dict+dict 从 delta 预匹配(认角色名), VL 从图提氛围(vibe-only),
+                # 主体由 delta 文字给。不用 iterate(锁主体) -- 用户要"保氛围换主体"=reference, iterate 反而冲突(见 D25 修正)
+                prompt_en, _ = await translate(delta, image_b64=image_b64)
+            except HTTPException:
+                raise
+            except Exception as e:
+                raise HTTPException(502, f"视觉理解失败, 请稍后重试 ({e})")
+            check_banned(prompt_en)
+            session["current_en"] = prompt_en
+            raw = f"[保氛围]{(' ' + delta) if delta else ''}"
+        elif action == "tweak":
+            # img2img 微调 (D26): 上一张图上传 ComfyUI -> anima-img2img 工作流 + 低 denoise
+            if delta:
+                check_banned(delta)
+            last_img = next((JOBS.get(t["job_id"], {}).get("image")
+                             for t in reversed(session["turns"]) if JOBS.get(t["job_id"], {}).get("image")), None)
+            if not last_img:
+                raise HTTPException(400, "还没有已生成的图, 无法微调")
+            try:
+                image_bytes = (IMAGES / last_img.rsplit("/", 1)[-1]).read_bytes()
+                image_filename = await upload_image_to_comfy(image_bytes)
+            except FileNotFoundError:
+                raise HTTPException(400, "上一张图文件不在了")
+            except Exception as e:
+                raise HTTPException(502, f"图片上传失败 ({e})")
+            # delta -> 翻译 (纯文本, 不走 VL); 无 delta 复用 current_en
+            if delta:
+                session["raw"] = (session["raw"] + "，" + delta) if session["raw"] else delta
+                try:
+                    prompt_en, _ = await translate(session["raw"])
+                except HTTPException:
+                    raise
+                except Exception as e:
+                    raise HTTPException(502, f"翻译失败 ({e})")
+            else:
+                prompt_en = session["current_en"]
+            session["current_en"] = prompt_en
+            wf_name = "anima-img2img"
+            denoise = body.get("denoise", 0.4)
+            raw = f"[微调]{(' ' + delta) if delta else ''}"
+        else:
+            raise HTTPException(400, f"未知 action: {action}")
+
+    check_banned(prompt_en)
+    job_id = await _enqueue(token, wf_name, prompt_en, raw,
+                            body.get("size"), (body.get("lora") or "").strip(), body.get("strength"),
+                            image_filename, denoise)
+    SESSIONS[session_id]["turns"].append({"job_id": job_id, "action": action, "delta": delta, "prompt_en": prompt_en})
+    return {"session_id": session_id, "job_id": job_id}
+
+
+@app.get("/api/dialog/{session_id}")
+async def dialog_get(session_id: str, token: str = Depends(auth)):
+    """返回会话线程: turns 里每轮 join JOBS 拿 status/image (worker 完成后 image 才有值)."""
+    session = SESSIONS.get(session_id)
+    if not session or session["token"] != token:
+        raise HTTPException(404, "会话不存在")
+    turns = []
+    for t in session["turns"]:
+        job = JOBS.get(t["job_id"], {})
+        turns.append({
+            "action": t["action"], "delta": t["delta"], "prompt_en": t["prompt_en"],
+            "status": job.get("status", "?"), "image": job.get("image"), "error": job.get("error"),
+        })
+    return {"session_id": session_id, "raw": session["raw"], "current_en": session["current_en"], "turns": turns}
 
 
 if __name__ == "__main__":
