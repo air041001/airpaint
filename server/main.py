@@ -882,6 +882,24 @@ async def dialog_turn(req: Request, token: str = Depends(auth)):
         SESSIONS[session_id] = {"id": session_id, "token": token, "raw": prompt,
                                 "current_en": prompt_en, "created": time.time(), "turns": []}
         raw = prompt
+    elif action == "start-image":
+        # 从已完成的 job 起步, 不重新生成 -- 原图当第一轮 (前端「继续迭代」直接进暗房)
+        src_job_id = (body.get("job_id") or "").strip()
+        src_job = JOBS.get(src_job_id)
+        if not src_job or src_job["token"] != token:
+            raise HTTPException(404, "原图任务不存在")
+        if src_job.get("status") != "done" or not src_job.get("image"):
+            raise HTTPException(400, "原图还没生成完")
+        session_id = uuid.uuid4().hex[:10]
+        SESSIONS[session_id] = {
+            "id": session_id, "token": token,
+            "raw": src_job.get("prompt_raw", ""),
+            "current_en": src_job.get("prompt_en", ""),
+            "created": time.time(),
+            "turns": [{"job_id": src_job_id, "action": "start-image", "delta": "",
+                       "prompt_en": src_job.get("prompt_en", "")}],
+        }
+        return {"session_id": session_id, "job_id": src_job_id}
     else:
         session = SESSIONS.get(session_id)
         if not session or session["token"] != token:
