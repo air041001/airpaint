@@ -25,11 +25,11 @@
 - [x] 后端按选择动态加载对应 workflow JSON (build_prompt 按 wf_name 读 file)
 
 ### 2.2 前端体验升级
-- [ ] Tailwind CSS 重写界面
-- [ ] 实时队列状态 (排队第N位 / 生成中 / 完成)
-- [ ] 历史画廊 (localStorage 缓存最近12张缩略图)
-- [ ] 移动端适配
-- [ ] 一键复制提示词 / 下载原图
+- [x] Tailwind CSS 重写界面 (工坊/暗房三屏, 2026-08-03, 见 DEVLOG 第24条 / D27)
+- [x] 实时队列状态 (排队第N位 / 生成中 / 完成)
+- [x] 历史画廊 (localStorage 缓存最近12张缩略图)
+- [x] 移动端适配
+- [x] 下载原图 (一键复制提示词: 英文 prompt 可编辑, 手动框选复制; 未做专门按钮)
 
 ### 2.3 一键启动
 - [x] start_airpaint.bat: 一键拉起 FastAPI + cloudflared (ComfyUI 仍由用户 bat 单独启)
