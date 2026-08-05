@@ -47,10 +47,14 @@
 - [ ] 邀请码管理 (创建/禁用/用量查看)
 
 ### 3.2 高级工作流
-- [ ] 局部重绘 (inpainting) 工作流
-- [ ] ControlNet 姿态/线稿控制
-- [x] LoRA 选择器 (前端可选风格 LoRA) — 2026-07-26, 见 DEVLOG 第13条 / D16
-- [x] 图片上传 → 图生图 - 2026-08-02, 见 DEVLOG 第23条 / D26
+- [ ] 局部重绘 inpainting -- AnimaDetailerV7 已有 In/Outpaint 组 (ImagePadForOutpaint, bypass)
+- [ ] ControlNet LLLite (参考图控制) -- AnimaAdvancedV7/DetailerV7 已有 (bypass)
+- [ ] 区域提示词 Regional Prompting (多角色防串色 ComfyUI 侧) -- AnimaAdvancedV7 已有 (bypass, 3区蒙版+AttentionCouple)
+- [ ] Ultimate SD Upscale (分块高清放大) -- Advanced/DetailerV7 已有 (bypass), 需下放大模型
+- [ ] SAM 3.1 万物 Detailer (任意物体检测精修) -- Advanced/DetailerV7 已有 (bypass)
+- [ ] ControlNet OpenPose (姿态控制) -- ⑤ 对话迭代剩余
+- [x] LoRA 选择器 - 2026-07-26, D16
+- [x] 图片上传 图生图 - 2026-08-02, D26
 
 ### 3.3 基础设施
 - [ ] WebSocket 替代轮询

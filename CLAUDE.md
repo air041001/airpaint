@@ -7,7 +7,7 @@
 
 把本机 ComfyUI 包成「中文描述 → 出图」的在线小屋, 发给朋友用。
 前后端共用固定域名 `airpaint.xyz`, 经 cloudflared **命名隧道**穿透内网(不暴露本机端口)。
-当前阶段: **MVP 已上线, 双工作流 (Anima 快速 / anima-detailer 精修)**。
+当前阶段: **Release v1.0 -- 三工作流 + 对话迭代 + 参考图 + NSFW detailer + 前端三屏**。
 
 > **最近改动** (压缩后先看这行, 省重读 docs; 每完成一阶段更新此行): 2026-08-03 前端大改(工坊/暗房三屏 Tailwind CDN 重写, D27) + start-image(继续迭代从原图直接进暗房) + NSFW detailer(精修自门控); 见 DEVLOG 第24条。前档: img2img+对话微调(D26)/⑤对话迭代骨架(D25)。
 
