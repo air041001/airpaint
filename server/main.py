@@ -190,34 +190,33 @@ SILICONFLOW_SYSTEM_PROMPT = (
 # LLM 结构化输出的字段 (顺序即展示顺序). TAGS 行单独解析为最终 tag.
 _STRUCTURED_FIELDS = ("scene", "composition", "mood", "lighting", "style")
 
-# ③ 参考图理解: 视觉 LLM 从参考图提取氛围/配色/构图/场景 -> 同样的结构化输出格式 (复用 _parse_structured_output).
-# 图是"氛围参考"(非图生图): 提取 mood/color/lighting/composition, 不照搬图的主体 (除非文本指定). 见 D23.
+# ③ 参考图理解: 视觉 LLM 从参考图提取内容 -> 结构化输出. 提取策略由用户文字驱动(非写死"只提氛围"). 见 D23.
 VISION_SYSTEM_PROMPT = (
-    "You are a prompt engineer for the Anima anime image model. You receive a REFERENCE IMAGE (a VIBE reference: "
-    "mood/color/lighting/composition/setting), plus known tags and remaining user text. Extract ONLY the image's VIBE, "
-    "combine with the text's subject, then emit danbooru tags. Do NOT repeat or rephrase known tags.\n\n"
+    "You are a professional image tagger using the Danbooru tag taxonomy. "
+    "You receive a REFERENCE IMAGE and a user instruction (text). "
+    "The user's instruction tells you what to preserve from the image and what to change.\n\n"
+    "Extraction strategy -- follow the user's instruction:\n"
+    "- If the user says 'same vibe/atmosphere' (同氛围) -> extract ONLY mood, lighting, color, scene setting.\n"
+    "- If the user says 'keep pose/composition' (保持姿势/构图) -> extract composition, framing, pose, camera angle.\n"
+    "- If the user says 'copy everything' (照着画/完全保持) -> extract subject + vibe + composition (full description).\n"
+    "- If the user says 'change X but keep Y' -> extract Y from image, apply X from text.\n"
+    "- If the instruction is unclear or empty -> extract everything (full description).\n"
+    "The user's text may specify a NEW subject (character, count, attributes) that should REPLACE the image's subject where applicable.\n\n"
     "Output EXACTLY these lines, nothing else (no markdown, no quotes, no extra text):\n"
-    "scene: <the PLACE/setting tags from the image, e.g. beach, bedroom, outdoors, cafe>\n"
-    "composition: <framing / camera angle / orientation tags, from the image>\n"
-    "mood: <emotion -> atmosphere tags, from the image>\n"
-    "lighting: <light tags, from the image>\n"
+    "scene: <place/setting tags>\n"
+    "composition: <framing / camera angle / pose tags>\n"
+    "mood: <emotion -> atmosphere tags>\n"
+    "lighting: <light tags>\n"
     "style: <art style tags>\n"
     "TAGS: <final danbooru tags, lowercase, comma-separated>\n\n"
     "Rules:\n"
-    "1. VIBE ONLY from the image: mood, color palette, lighting, composition, and the PLACE/setting (beach, bedroom, etc.).\n"
-    "2. Do NOT copy the image's SUBJECT APPEARANCE -- no clothing, hair color, eye color, accessories, body type, pose, "
-    "or character identity from the image. The subject comes from the remaining TEXT, not the image. "
-    "Example: if the image shows a girl in a red swimsuit with cat ears at a beach, and the text only says '少女', "
-    "output '1girl' + the beach/lighting/mood vibe -- NOT 'cat ears', 'swimsuit', or 'red hair'.\n"
-    "3. If remaining text gives a subject (a character, 1girl/1boy, an action), use THAT subject; let the image fill ONLY the vibe.\n"
-    "4. If remaining is empty, output only the vibe + a generic count tag (1girl/1boy) if a person fits; "
-    "do NOT replicate the image's specific character design.\n"
-    "5. Do NOT include any character/series tags already listed in Known character tags.\n"
-    "6. Put a count tag (1girl/1boy/solo) FIRST in TAGS if a person is implied.\n"
-    "7. Do NOT output quality/score tags (masterpiece, best quality, score_*, safe, absurdres) - handled separately.\n"
-    "8. Use lowercase danbooru tags; spaces preferred over underscores. Do NOT add realistic/photoreal/3d/render tags "
-    "(the target model is anime-only).\n"
-    "9. TAGS collects every concrete tag from the 5 fields above. Keep under ~200 chars.\n"
+    "1. Follow the user's instruction to decide what to extract from the image vs. what to take from the text.\n"
+    "2. Do NOT repeat tags already listed in Known character tags.\n"
+    "3. Put a count tag (1girl/1boy/solo) FIRST in TAGS if a person is implied.\n"
+    "4. Do NOT output quality/score tags (masterpiece, best quality, score_*, safe, absurdres) - handled separately.\n"
+    "5. Use lowercase danbooru tags; spaces preferred over underscores. "
+    "Do NOT add realistic/photoreal/3d/render tags (the target model is anime-only).\n"
+    "6. TAGS collects every concrete tag from the 5 fields above. Keep under ~200 chars.\n"
 )
 
 # ⑤ D 保氛围迭代: 与 ③ 不同--③ 是用户上传参考图"只提氛围禁抄主体"(vibe-only), D 是"保氛围再画一版"
@@ -455,7 +454,7 @@ async def translate(text: str, reroll: bool = False, image_b64: str | None = Non
             ctx_lines.append(f"Known character tags: {', '.join(char_tags)}")
         if hits:
             ctx_lines.append(f"Known attribute tags: {', '.join(hits)}")
-        ctx_lines.append(f"Remaining: {', '.join(misses) if misses else '(none - extract everything from the image)'}")
+        ctx_lines.append(f"User instruction: {', '.join(misses) if misses else '(no specific instruction - extract everything from the image)'}")
         context = "\n".join(ctx_lines)
         try:
             new_tags, breakdown = await siliconflow_vision_translate(image_b64, context, reroll=reroll)
