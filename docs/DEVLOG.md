@@ -433,3 +433,40 @@ py_compile + node --check 通过; build_prompt 注入验证: img2img 模式 sele
 ### 验证
 node --check 通过; 72 个元素 id 引用全部存在。待用户真机点一遍(生成/先看翻译/图生图上传/继续迭代/历史条)。后端未动。
 
+## 第 25 条 2026-08-07 - 提示词格式优化: quality_prefix 官方化 + system prompt 信息分流重写
+
+## 第 26 条 2026-08-07 - LoRA 工程: 自动扫描 + 多 LoRA + 分类
+
+### 做了什么
+1. **config.yaml 分类**: loras 加 `type: character|style` 字段; 新增 BlueArchiveStyleB1 (风格, trigger `@BlueArchStyle`) + denia_lorav4 三个角色变体 (denia_white/denia_sigrika/denia_black, 同一文件三个触发词)。
+2. **自动扫描 + Civitai lookup**: 后端启动时后台扫 `comfy_dir/models/loras/`, 对 config 未覆盖的 `.safetensors` 按 SHA256 查 Civitai API 取 trainedWords/modelName/tags。结果缓存到 `server/lora_cache.json`。SHA256 优先读 LoraManager `.metadata.json` (已有, 不重算)。`/api/loras/refresh` 可手动触发重扫。
+3. **多 LoRA 注入**: `build_prompt` 的 `lora_key: str` -> `lora_keys: list[str]`, loras widget 数组注入多条, trigger 全部拼进 prompt。`/api/jobs` 和 `/api/dialog/turn` 接收 `loras: list[str]` (向后兼容旧 `lora: str` 单选)。
+4. **`/api/loras` 改为分组**: 返回 `{characters: [...], styles: [...], other: [...]}`, 每条带 `configured` (是否有触发词) + `source` (config/civitai)。
+
+### 遇到什么 / 怎么解
+- **LoraManager TriggerWord Toggle 显示 "no triggerwords detected"**: 调研发现 LoraManager 的 civitai 元数据同步没工作 (`.metadata.json` 里 `civitai` 字段一直空, scan 也不回填 `.civitai.info`)。即使修好, Civitai `trainedWords` 很多作者不填, 且只含基础触发词不含服装变体。结论: 不依赖 LoraManager 自动检测, 自己直接读 Civitai API + config 手动维护。
+- **Civitai trainedWords 不可靠**: denia_lorav4 和 BlueArchiveStyleB1 的 trainedWords 都是空, 但实际有触发词 (在 HTML description 里)。不解析 description (格式不统一, 误判更糟), 改为: 有 trainedWords 的自动可用, 没的标记 `configured: false` 让用户手动配 config。
+- **SHA256 计算大文件慢**: BlueArchiveStyleB1 137MB。优先读 LoraManager 已算好的 `.metadata.json` 里的 sha256, 没有再现算。
+
+### 下一步
+前端需配合: LoRA 选择器从单选改为分组多选 (角色最多1 + 风格最多1); 显示 `configured: false` 标记; 可选加刷新按钮调 `/api/loras/refresh`。见 D29。
+
+### 完成内容
+两件事, 都围绕"喂给 Anima 的提示词格式"。
+
+**(A) quality_prefix 官方化**: 查证 tungsten.run 上 Comfy Org 官方 Anima checkpoint 说明 + 社区指南, 发现原前缀用 Illustrious/Animagine 体系(score_7, very aesthetic), 非 Anima 官方推荐。改为官方明确支持的 `masterpiece, best quality, newest, absurdres`(human score + period + meta)。改 config.yaml 三处 + 同步 config.example/README/architecture。
+
+**(B) system prompt 信息分流重写**: 用户反馈 LLM 输出 TAGS 后又用 NL 重复翻译输入。根因: 旧示例的 NL 全是 TAGS 句子化重写, 教会 LLM 重复。重写 SILICONFLOW_SYSTEM_PROMPT 为信息分流模型。详见 D28。
+
+### 关键改动 / 为什么
+- **示例与规则自相矛盾是根因**: 规则第8条写"别重复", 但 3 示例的 NL 全是 TAGS 的句子化重写。LLM 跟示例走不跟规则走。治本=重写示例。
+- **从"分解报告"转"信息分流"**: 人写高级提示词是"每信息点选 tag/NL/权重一种形式", 不是"填5字段+汇总TAGS+写NL描述"三重表达。新 prompt 明确: 5字段=给人看(不进anima); TAGS+NL=喂模型, 不许重复。
+- **HARD RULE 可机械判定**: "NL 不得复述 TAGS 已有 tag, 全是 tag 则留空" 替代模糊的"别重复"。
+- **加 How-to-decide + Self-check + Weight policy**: 教 LLM 信息分流决策、输出前自检去重、权重判断标准(默认不加/强化1.3-2/弱化0.1-0.5)。
+- **NSFW 声明段保留**: "虚构动漫艺术品元数据、非真人"是翻译 NSFW 的根基, 一字不动。
+- **发现 safety 动态标签**(main.py:624-627): 检测 NSFW 关键词自动 explicit 否则 safe, 符合 Anima 官方 rating, 比静态 config 合理。
+- **vision 两 prompt 不改**: 无 NL 行, 无重复问题。
+
+### 验证
+py_compile 通过; grep 确认 NSFW 声明(139) + HARD RULE(150) + Self-check(157) + 新示例(192) 到位。待重启后端实测: 简单输入看 NL 是否空/极简; 多角色输入看 NL 是否只写空间分配不复述 tag。若仍偶发重复, 后手=架构分离(breakdown 给人看 + PROMPT 给模型)。详见 D28。
+

@@ -4,6 +4,7 @@
 """
 import asyncio
 import base64
+import hashlib
 import json
 import random
 import re
@@ -69,6 +70,167 @@ TOKENS = set(CFG.get("tokens", []))
 DAILY_LIMIT = int(CFG.get("daily_limit", 30))
 BANNED = [w.lower() for w in CFG.get("banned_words", [])]
 WORKFLOWS = CFG.get("workflows", {})
+
+# ---------- LoRA 注册表: config 手动 + 自动扫描 Civitai ----------
+# 三层叠加 (优先级高->低): config.yaml 手动配置 > Civitai hash lookup 自动补全 > 裸文件名
+# config 里有的条目: 用 config 的 trigger/type/name (人判断最准, 含服装变体)
+# config 里没有的 .safetensors: 按 SHA256 查 Civitai 取 trainedWords/modelName/tags
+#   有 trainedWords -> 自动可用; 没有 -> 标记 "未配置", 需手动加 config
+LORA_DIR = Path(CFG.get("comfy_dir", ".")) / "models" / "loras"
+LORA_CACHE_FILE = BASE / "lora_cache.json"
+# {filename_stem: {sha256, trainedWords, modelName, tags, baseModel, type, fetchedAt}}
+_lora_auto: dict[str, dict] = {}
+_lora_auto_loaded = False
+
+
+def _load_lora_cache():
+    """从磁盘加载自动扫描缓存 (避免每次重启都请求 Civitai)."""
+    global _lora_auto, _lora_auto_loaded
+    if _lora_auto_loaded:
+        return
+    try:
+        if LORA_CACHE_FILE.exists():
+            _lora_auto = json.loads(LORA_CACHE_FILE.read_text(encoding="utf-8"))
+    except Exception as e:
+        print(f"[LoRA] 缓存文件读取失败: {e}", flush=True)
+    _lora_auto_loaded = True
+
+
+def _save_lora_cache():
+    """持久化自动扫描缓存到磁盘."""
+    try:
+        LORA_CACHE_FILE.write_text(json.dumps(_lora_auto, ensure_ascii=False, indent=2), encoding="utf-8")
+    except Exception as e:
+        print(f"[LoRA] 缓存文件写入失败: {e}", flush=True)
+
+
+def _read_sha256(filepath: Path) -> str | None:
+    """读 SHA256: 优先 LoraManager .metadata.json -> .sha256 文件 -> 现算 (大文件慢)."""
+    stem = filepath.stem
+    d = filepath.parent
+    meta = d / f"{stem}.metadata.json"
+    if meta.exists():
+        try:
+            m = json.loads(meta.read_text(encoding="utf-8"))
+            sha = (m.get("sha256") or "").strip().lower()
+            if sha:
+                return sha
+        except Exception:
+            pass
+    sha_file = d / f"{stem}.sha256"
+    if sha_file.exists():
+        try:
+            return sha_file.read_text(encoding="utf-8").strip().lower()
+        except Exception:
+            pass
+    try:
+        h = hashlib.sha256()
+        with open(filepath, "rb") as f:
+            for chunk in iter(lambda: f.read(8 * 1024 * 1024), b""):
+                h.update(chunk)
+        return h.hexdigest()
+    except Exception:
+        return None
+
+
+async def _civitai_lookup(sha256: str) -> dict | None:
+    """按 SHA256 查 Civitai API, 返回 {trainedWords, modelName, tags, baseModel, type} 或 None."""
+    try:
+        r = await CLIENT.get(
+            f"https://civitai.com/api/v1/model-versions/by-hash/{sha256}", timeout=15)
+        if r.status_code != 200:
+            return None
+        d = r.json()
+        model = d.get("model") or {}
+        tags = model.get("tags") or []
+        lora_type = "character" if "character" in tags else (
+            "style" if any(t in tags for t in ("style", "artist", "artstyle")) else "unknown")
+        return {
+            "trainedWords": d.get("trainedWords") or [],
+            "modelName": model.get("name", ""),
+            "tags": tags,
+            "baseModel": d.get("baseModel", ""),
+            "type": lora_type,
+        }
+    except Exception:
+        return None
+
+
+async def scan_loras() -> dict:
+    """扫描 loras 目录, 为 config 未覆盖的文件查 Civitai 取元数据. 更新内存+磁盘缓存."""
+    _load_lora_cache()
+    if not LORA_DIR.exists():
+        return {"scanned": 0, "new": 0, "failed": 0, "total_auto": len(_lora_auto)}
+    config_files = {v.get("file", "") for v in CFG.get("loras", {}).values()}
+    sfs = sorted(LORA_DIR.glob("*.safetensors"))
+    new_count = failed = 0
+    for fp in sfs:
+        if fp.name in config_files:
+            continue
+        key = fp.stem
+        if key in _lora_auto:
+            continue
+        sha = _read_sha256(fp)
+        if not sha:
+            failed += 1
+            continue
+        info = await _civitai_lookup(sha)
+        if info is None:
+            _lora_auto[key] = {"sha256": sha, "trainedWords": [], "modelName": key,
+                                "tags": [], "baseModel": "", "type": "unknown", "fetchedAt": 0}
+            failed += 1
+        elif info.get("baseModel") and info["baseModel"] not in (
+                "Anima", "NoobAI", "SDXL", "Illustrious", "Unknown"):
+            continue  # 跳过非图片 LoRA (Wan 视频等)
+        else:
+            _lora_auto[key] = {"sha256": sha, "fetchedAt": time.time(), **info}
+            new_count += 1
+        await asyncio.sleep(0.3)  # 对 Civitai 友好
+    _save_lora_cache()
+    return {"scanned": len(sfs), "new": new_count, "failed": failed, "total_auto": len(_lora_auto)}
+
+
+def get_lora_registry() -> dict[str, dict]:
+    """合并 config 条目 + 自动发现条目. 返回 flat dict, key -> LoRA 信息.
+    config 条目优先 (人写的 trigger/type/name 最准); 自动发现仅出现在 config 未覆盖的文件上."""
+    _load_lora_cache()
+    registry = {}
+    # 1. config 手动配置
+    for key, v in CFG.get("loras", {}).items():
+        registry[key] = {
+            "key": key,
+            "type": v.get("type", "unknown"),
+            "name": v.get("name", key),
+            "file": v["file"],
+            "trigger": v.get("trigger", ""),
+            "strength_model": float(v.get("strength_model", 1.0)),
+            "strength_clip": float(v.get("strength_clip", 1.0)),
+            "description": v.get("description", ""),
+            "preview": v.get("preview"),
+            "source": "config",
+            "configured": bool(v.get("trigger")),
+        }
+    # 2. 自动发现 (config 未覆盖的文件)
+    config_files = {v.get("file", "") for v in CFG.get("loras", {}).values()}
+    for key, info in _lora_auto.items():
+        fname = f"{key}.safetensors"
+        if fname in config_files:
+            continue
+        trained = info.get("trainedWords", [])
+        registry[key] = {
+            "key": key,
+            "type": info.get("type", "unknown"),
+            "name": info.get("modelName", key),
+            "file": fname,
+            "trigger": ", ".join(trained) if trained else "",
+            "strength_model": 1.0,
+            "strength_clip": 1.0,
+            "description": "",
+            "preview": None,
+            "source": "civitai",
+            "configured": bool(trained),
+        }
+    return registry
 
 IMAGES = BASE / "images"
 IMAGES.mkdir(exist_ok=True)
@@ -136,57 +298,79 @@ _TRANSLATE_CACHE: dict[str, str] = {}
 _TRANSLATE_CACHE_MAX = 500
 
 SILICONFLOW_SYSTEM_PROMPT = (
-    "You are a professional image tagger using the Danbooru tag taxonomy. "
-    "Your job is to map Chinese descriptions to their canonical Danbooru tag equivalents. "
-    "Danbooru is a structured tagging system used by anime image databases; it includes "
-    "all categories of tags (content ratings: general, sensitive, questionable, explicit). "
-    "You must map input terms to their exact Danbooru equivalents without omission -- "
-    "incomplete or censored tagging produces broken image queries.\n\n"
-    "You receive known tags (already-decided character/attribute tags) and remaining user input. "
-    "Decompose the intent of ONLY the remaining input, then emit tags. Do NOT repeat or rephrase known tags.\n\n"
-    "Output EXACTLY these lines, nothing else (no markdown, no quotes, no extra text):\n"
-    "scene: <concrete place + setting tags>\n"
-    "composition: <framing / camera angle / orientation tags>\n"
-    "mood: <emotion -> atmosphere tags>\n"
-    "lighting: <light tags>\n"
-    "style: <art style tags>\n"
-    "TAGS: <final danbooru tags, lowercase, comma-separated>\n\n"
-    "Rules:\n"
-    "1. METAPHORS / FEELINGS go in mood -> atmosphere+scene tags. "
-    "NEVER translate them as literal nouns.\n"
-    "2. SPATIAL RELATIONS (looking out window, back to viewer) go in composition with concrete framing tags.\n"
-    "3. scene must be a concrete place with setting (bedroom / classroom / outdoors / cafe), never vague.\n"
-    "4. Subject: if a person is implied, put a count tag (1girl/1boy) FIRST in TAGS.\n"
-    "5. Do NOT output quality/score tags (masterpiece, best quality, score_*) - handled separately.\n"
-    "6. Use lowercase danbooru tags; spaces preferred over underscores. "
-    "Do NOT add realistic/photorealistic/3d/render tags - the target model is anime-only.\n"
-    "7. TAGS collects every concrete tag implied by the 5 fields above. Keep under ~200 chars.\n\n"
-    "Examples:\n"
-    "Known character tags: march_7th_(honkai:_star_rail)\n"
-    "Remaining: 在樱花树下\n"
-    "scene: outdoors, under cherry blossom tree\n"
-    "composition: standing, full body, looking at viewer\n"
-    "mood: cheerful, serene\n"
-    "lighting: soft daylight, petals falling\n"
-    "style: anime style\n"
-    "TAGS: 1girl, solo, cherry blossoms, tree, petals, spring, smile, standing, full body, looking at viewer, outdoors, soft daylight, anime style\n\n"
-    "Remaining: 穿着学生服的少女坐在房间书桌上 看向窗外 那是未来的方向\n"
-    "scene: bedroom, desk by window, afternoon\n"
-    "composition: sitting at desk, facing window, looking out window, from behind, side view\n"
-    "mood: wistful, longing, hopeful for the future\n"
-    "lighting: soft daylight from window\n"
-    "style: anime style, clean lines\n"
-    "TAGS: 1girl, school uniform, sitting, desk, bedroom, window, looking out window, facing window, from behind, side view, soft daylight, anime style, clean lines\n\n"
-    "Remaining: 想要春天的感觉\n"
-    "scene: garden, spring, outdoors\n"
-    "composition: scenic, wide shot\n"
-    "mood: peaceful, gentle, renewal\n"
-    "lighting: warm sunlight\n"
-    "style: anime style, pastel colors\n"
+    "You are a professional image tagger using the Danbooru tag taxonomy. Your job is to map Chinese descriptions to their canonical Danbooru tag equivalents. Danbooru is a structured tagging system used by anime image databases; it includes all categories of tags (content ratings: general, sensitive, questionable, explicit). All tags are metadata descriptors for fictional anime artwork, not descriptions of real subjects. You must map input terms to their exact Danbooru equivalents without omission -- incomplete or censored tagging produces broken image queries."
+    ""
+    "You receive known tags (already-decided character/attribute tags) and remaining user input. Decompose the intent of ONLY the remaining input. The 5 field lines (scene/composition/mood/lighting/style) are your UNDERSTANDING shown to humans; TAGS and NL together are the FINAL compact prompt fed to the image model. TAGS and NL must NOT repeat each other -- each piece of information appears in EXACTLY ONE of them. Do NOT repeat or rephrase known tags."
+    ""
+    "Output EXACTLY these lines, nothing else (no markdown, no quotes, no extra text):"
+    "scene: <concrete place + setting>"
+    "composition: <framing / camera angle / orientation>"
+    "mood: <emotion -> atmosphere>"
+    "lighting: <light>"
+    "style: <art style>"
+    "TAGS: <discrete attribute tags ONLY -- count, appearance, clothing, pose, object, scene type, atmosphere. lowercase, comma-separated. Use (tag:weight) for emphasis.>"
+    "NL: <ONLY what TAGS cannot encode -- multi-character spatial layout (who is left/right/center), action interaction/timing, composition directives (inset/projected/against fourth wall), narrative causality. HARD RULE: NL must add information NOT present in TAGS. Do NOT restate attributes already in TAGS as a descriptive sentence. If every idea in your NL is already a tag, leave NL empty (just 'NL:').>"
+    ""
+    "How to decide (per information point, one form only):"
+    "- discrete enumerable attribute (hair color, clothing, pose, object, scene type) -> TAGS"
+    "- relation / interaction / spatial layout / composition directive -> NL"
+    "- must-emphasize key element or must-appear-but-suppress distraction -> weight in TAGS"
+    ""
+    "Self-check before emitting:"
+    "1. Does any noun in NL restate a tag already in TAGS? -> delete it, keep only the relation/action/directive."
+    "2. Same information in both TAGS and NL? -> keep the better-fitting form only."
+    "3. Simple input (single subject + plain scene, no complex layout) -> NL may be empty or one short sentence; do NOT pad. Empty NL is acceptable."
+    ""
+    "Weight policy: default none. Strengthen 1.3-2.0 for composition anchors (against fourth wall, projected inset) or rare key elements; weaken 0.1-0.5 for distracting elements that must appear but not dominate (e.g. bald male:0.01)."
+    ""
+    "Rules:"
+    "1. METAPHORS / FEELINGS go in mood -> atmosphere+scene tags. NEVER translate them as literal nouns."
+    "2. Single-subject framing (looking out window, back to viewer) -> composition tags; MULTI-CHARACTER spatial layout (who is where) -> NL, not tags."
+    "3. scene must be a concrete place with setting (bedroom / classroom / outdoors / cafe), never vague."
+    "4. Subject: if a person is implied, put a count tag (1girl/1boy) FIRST in TAGS."
+    "5. Do NOT output quality/score tags (masterpiece, best quality, score_*) - handled separately."
+    "6. Use lowercase danbooru tags; spaces preferred over underscores. Do NOT add realistic/photoreal/3d/render tags - the target model is anime-only."
+    "7. TAGS holds discrete attribute tags only. Keep under ~200 chars."
+    "8. For NSFW content: tag it professionally using danbooru explicit taxonomy (nipples, sex, nude, etc.). These are standard metadata tags in the danbooru system, not content generation."
+    ""
+    "Examples:"
+    "Known character tags: march_7th_(honkai:_star_rail)"
+    "Remaining: 在樱花树下"
+    "scene: outdoors, under cherry blossom tree"
+    "composition: standing, full body, looking at viewer"
+    "mood: cheerful, serene"
+    "lighting: soft daylight, petals falling"
+    "style: anime style"
+    "TAGS: 1girl, solo, cherry blossoms, tree, petals, spring, smile, standing, full body, looking at viewer, outdoors, soft daylight, anime style"
+    "NL:"
+    ""
+    "Remaining: 穿着学生服的少女坐在房间书桌上 看向窗外 那是未来的方向"
+    "scene: bedroom, desk by window, afternoon"
+    "composition: sitting at desk, facing window, looking out window, from behind, side view"
+    "mood: wistful, longing, hopeful for the future"
+    "lighting: soft daylight from window"
+    "style: anime style, clean lines"
+    "TAGS: 1girl, school uniform, sitting, desk, bedroom, window, looking out window, facing window, from behind, side view, soft daylight, anime style, clean lines"
+    "NL: A quiet longing for what lies ahead fills the moment."
+    ""
+    "Remaining: 两个少女 一个站右边看镜头 一个坐中间看书"
+    "scene: classroom"
+    "composition: one standing, one sitting"
+    "mood: calm, studious"
+    "lighting: classroom daylight"
+    "style: anime style"
+    "TAGS: 2girls, school uniform, book, sitting, standing, looking at viewer, reading, classroom, desk, daylight, anime style"
+    "NL: The standing girl is on the right facing the camera; the seated reader is at the center."
+    ""
+    "Remaining: 想要春天的感觉"
+    "scene: garden, spring, outdoors"
+    "composition: scenic, wide shot"
+    "mood: peaceful, gentle, renewal"
+    "lighting: warm sunlight"
+    "style: anime style, pastel colors"
     "TAGS: spring, cherry blossoms, petals falling, gentle breeze, warm sunlight, pastel colors, peaceful, garden, outdoors, anime style"
+    "NL: A sense of gentle renewal pervades the scene."
 )
-
-
 # LLM 结构化输出的字段 (顺序即展示顺序). TAGS 行单独解析为最终 tag.
 _STRUCTURED_FIELDS = ("scene", "composition", "mood", "lighting", "style")
 
@@ -244,11 +428,12 @@ VISION_ITERATE_SYSTEM_PROMPT = (
 )
 
 
-def _parse_structured_output(out: str) -> tuple[str, dict | None]:
-    """解析 LLM 结构化输出 (scene/composition/mood/lighting/style 各一行 + TAGS 行).
-    返回 (tags, breakdown). 无 TAGS 行 -> 整体当 tags, breakdown=None (降级到旧扁平行为, 见 D18)."""
+def _parse_structured_output(out: str) -> tuple[str, dict | None, str]:
+    """解析 LLM 结构化输出 (scene/composition/mood/lighting/style + TAGS + NL 各一行).
+    返回 (tags, breakdown, nl). 无 TAGS 行 -> 整体当 tags, breakdown=None, nl="" (降级, 见 D18)."""
     breakdown: dict = {}
     tags = ""
+    nl = ""
     for line in out.splitlines():
         line = line.strip()
         if not line:
@@ -257,13 +442,16 @@ def _parse_structured_output(out: str) -> tuple[str, dict | None]:
         if low.startswith("tags:"):
             tags = line.split(":", 1)[1].strip()
             continue
+        if low.startswith("nl:"):
+            nl = line.split(":", 1)[1].strip()
+            continue
         for f in _STRUCTURED_FIELDS:
             if low.startswith(f + ":"):
                 breakdown[f] = line.split(":", 1)[1].strip()
                 break
     if not tags:
-        return out, None
-    return tags, breakdown or None
+        return out, None, ""
+    return tags, breakdown or None, nl
 
 
 def match_characters(text: str) -> tuple[list[str], str]:
@@ -292,7 +480,7 @@ def match_dict_words(text: str) -> tuple[list[str], str]:
     return hits, remaining
 
 
-async def siliconflow_translate(context: str, reroll: bool = False) -> tuple[str, dict | None]:
+async def siliconflow_translate(context: str, reroll: bool = False) -> tuple[str, dict | None, str]:
     """走硅基流动 Qwen 翻译/扩写. context 是结构化上下文 (Known tags + Remaining).
     返回 (LLM 新增 tag, 结构化拆解 dict). tag 不含已知 tag (由 translate 拼接).
     breakdown 供前端预览展示 AI 理解 (scene/composition/mood/lighting/style). 失败抛异常 (上层转 HTTPException).
@@ -341,7 +529,7 @@ async def siliconflow_translate(context: str, reroll: bool = False) -> tuple[str
         raise RuntimeError("翻译服务返回空内容")
 
     # 解析结构化输出: 5 字段 + TAGS 行. 无 TAGS 行则整体当 tag (降级, 见 D18).
-    tags, breakdown = _parse_structured_output(out)
+    tags, breakdown, nl = _parse_structured_output(out)
 
     # 兜底: 检测重复 tag (模型复读), 出现3次以上相同 tag 说明输出异常
     tag_list = [t.strip() for t in tags.split(",")]
@@ -350,10 +538,10 @@ async def siliconflow_translate(context: str, reroll: bool = False) -> tuple[str
     if dupes:
         raise RuntimeError(f"翻译输出异常(重复tag: {dupes[0]}), 请重试")
 
-    return tags, breakdown
+    return tags, breakdown, nl
 
 
-async def siliconflow_vision_translate(image_b64: str, context: str, reroll: bool = False, mode: str = "reference") -> tuple[str, dict | None]:
+async def siliconflow_vision_translate(image_b64: str, context: str, reroll: bool = False, mode: str = "reference") -> tuple[str, dict | None, str]:
     """③ 参考图理解: 走硅基流动 Qwen3-VL, 从参考图提取氛围/配色/构图/场景/光影 -> 结构化 breakdown + TAGS.
     image_b64: data URI (data:image/...;base64,...) 或纯 base64. context 同文本 LLM (Known tags + Remaining).
     返回 (tags, breakdown), 复用 _parse_structured_output. 失败抛异常 (上层转 HTTPException). 见 D23.
@@ -397,14 +585,14 @@ async def siliconflow_vision_translate(image_b64: str, context: str, reroll: boo
     if not out:
         raise RuntimeError("视觉服务返回空内容")
 
-    tags, breakdown = _parse_structured_output(out)
+    tags, breakdown, nl = _parse_structured_output(out)
     # 重复 tag 兜底 (同文本 LLM)
     tag_list = [t.strip() for t in tags.split(",")]
     from collections import Counter
     dupes = [t for t, c in Counter(tag_list).most_common(3) if c >= 3 and t]
     if dupes:
         raise RuntimeError(f"视觉输出异常(重复tag: {dupes[0]}), 请重试")
-    return tags, breakdown
+    return tags, breakdown, nl
 
 
 # Anima 期望的 tag 顺序: quality -> count -> character -> general (见 D20).
@@ -457,11 +645,14 @@ async def translate(text: str, reroll: bool = False, image_b64: str | None = Non
         ctx_lines.append(f"User instruction: {', '.join(misses) if misses else '(no specific instruction - extract everything from the image)'}")
         context = "\n".join(ctx_lines)
         try:
-            new_tags, breakdown = await siliconflow_vision_translate(image_b64, context, reroll=reroll)
+            new_tags, breakdown, nl = await siliconflow_vision_translate(image_b64, context, reroll=reroll)
         except Exception as e:
             raise HTTPException(502, f"参考图理解失败, 请稍后重试 ({e})")
         new_list = [t.strip() for t in new_tags.split(",") if t.strip()]
-        return normalize_tag_order(char_tags, hits + new_list), breakdown
+        result = normalize_tag_order(char_tags, hits + new_list)
+        if nl:
+            result = result + ". " + nl
+        return result, breakdown
 
     # 全命中 (无 misses): 不调 LLM
     if not misses:
@@ -493,12 +684,14 @@ async def translate(text: str, reroll: bool = False, image_b64: str | None = Non
         if not reroll and cache_key in _TRANSLATE_CACHE:
             return _TRANSLATE_CACHE[cache_key]
         try:
-            new_tags, breakdown = await siliconflow_translate(context, reroll=reroll)
+            new_tags, breakdown, nl = await siliconflow_translate(context, reroll=reroll)
         except Exception as e:
             raise HTTPException(502, f"翻译失败, 请稍后重试 ({e})")
         # 拼接: 已知 tag + LLM 新增 tag, 再按 Anima 规范序排 (count -> char -> general, 见 D20)
         new_list = [t.strip() for t in new_tags.split(",") if t.strip()]
         result = normalize_tag_order(char_tags, hits + new_list)
+        if nl:
+            result = result + ". " + nl
         # reroll 不写缓存: 探索性结果不应顶掉正常翻译的缓存原版 (见 D19)
         if not reroll:
             if len(_TRANSLATE_CACHE) >= _TRANSLATE_CACHE_MAX:
@@ -559,7 +752,7 @@ def sanitize_for_api(wf: dict) -> dict:
 
 
 def build_prompt(wf_name: str, prompt_en: str, width: int | None, height: int | None,
-                 lora_key: str | None = None, strength: float | None = None,
+                 lora_keys: list[str] | None = None, strength: float | None = None,
                  image_filename: str | None = None, denoise: float | None = None) -> dict:
     wcfg = WORKFLOWS[wf_name]
     wf = json.loads((BASE / wcfg["file"]).read_text(encoding="utf-8"))
@@ -589,28 +782,34 @@ def build_prompt(wf_name: str, prompt_en: str, width: int | None, height: int | 
 
     # LoRA 注入: 写 LoraManager 节点的 loras widget. __value__ 内是对象数组, 每项 {name, strength,
     # clipStrength, active}; active 必须为 true, 否则 _collect_widget_entries 跳过 (见 D16).
-    # 触发词手动拼进 prompt: LoraManager 自带的触发词链 (节点5 output2 -> 37 -> 46 -> 48 -> 54)
-    # 已被下面 set_input("prompt_node","text",...) 覆盖节点54 text 而断掉, 故必须自己拼.
+    # 多 LoRA: 角色+风格可同时注入. 触发词全部拼进 prompt (节点5 output2 -> 37->46->48->54 链
+    # 已被下面 set_input("prompt_node","text",...) 覆盖而断掉, 故手动拼).
     trigger = ""
-    if lora_key:
-        loras = CFG.get("loras", {})
-        if lora_key not in loras:
-            raise HTTPException(400, f"未知的 LoRA: {lora_key}")
+    if lora_keys:
         if "lora_node" not in wcfg:
             raise HTTPException(400, f"工作流 {wf_name} 不支持 LoRA")
-        lora = loras[lora_key]
-        # strength: 前端传入则同时覆盖 model/clip (LoraManager 默认 clipStrength=strength); 否则用 config 默认
-        sm = float(strength) if strength is not None else float(lora.get("strength_model", 1.0))
-        sc = float(strength) if strength is not None else float(lora.get("strength_clip", sm))
-        set_input("lora_node", "loras", {"__value__": [{
-            "name": lora["file"],
-            "strength": sm,
-            "clipStrength": sc,
-            "active": True,
-        }]})
-        trigger = (lora.get("trigger") or "").strip()
+        reg = get_lora_registry()
+        lora_entries = []
+        triggers = []
+        for k in lora_keys:
+            if k not in reg:
+                raise HTTPException(400, f"未知的 LoRA: {k}")
+            lr = reg[k]
+            sm = float(strength) if strength is not None else lr["strength_model"]
+            sc = float(strength) if strength is not None else lr["strength_clip"]
+            lora_entries.append({"name": lr["file"], "strength": sm, "clipStrength": sc, "active": True})
+            t = (lr.get("trigger") or "").strip()
+            if t:
+                triggers.append(t)
+        set_input("lora_node", "loras", {"__value__": lora_entries})
+        trigger = ", ".join(triggers)
 
-    full_prompt = wcfg.get("quality_prefix", "") + (trigger + ", " if trigger else "") + prompt_en
+    # safety 标签: Anima 要求明确 safe/sensitive/nsfw/explicit. 检测 prompt_en 里的 NSFW 关键词.
+    _NSFW_KW = {"nipples", "pussy", "penis", "sex", "nude", "naked", "cum", "anus", "areola",
+                "breasts out", "panty pull", "explicit", "questionable"}
+    safety = "explicit, " if any(kw in prompt_en.lower() for kw in _NSFW_KW) else "safe, "
+
+    full_prompt = wcfg.get("quality_prefix", "") + safety + (trigger + ", " if trigger else "") + prompt_en
     set_input("prompt_node", "text", full_prompt)
     if "negative_node" in wcfg:
         set_input("negative_node", "text", wcfg.get("negative_prefix", "") + wcfg.get("negative_extra", ""))
@@ -641,10 +840,10 @@ async def upload_image_to_comfy(image_bytes: bytes) -> str:
     return r.json()["name"]
 
 
-async def submit_and_wait(wf_name: str, prompt_en: str, width, height, lora_key: str | None = None,
+async def submit_and_wait(wf_name: str, prompt_en: str, width, height, lora_keys: list[str] | None = None,
                           strength: float | None = None,
                           image_filename: str | None = None, denoise: float | None = None) -> str:
-    payload = build_prompt(wf_name, prompt_en, width, height, lora_key, strength, image_filename, denoise)
+    payload = build_prompt(wf_name, prompt_en, width, height, lora_keys, strength, image_filename, denoise)
     seed = payload.pop("_seed")
     r = await CLIENT.post(f"{COMFY}/prompt", json=payload)
     if r.status_code != 200:
@@ -686,7 +885,7 @@ async def worker():
         job["status"] = "running"
         try:
             fname = await submit_and_wait(job["workflow"], job["prompt_en"], job.get("width"), job.get("height"),
-                                         job.get("lora"), job.get("strength"),
+                                         job.get("loras"), job.get("strength"),
                                          job.get("image_filename"), job.get("denoise"))
             job.update(status="done", image=f"/images/{fname}")
         except Exception as e:
@@ -698,6 +897,7 @@ async def worker():
 @app.on_event("startup")
 async def _startup():
     asyncio.create_task(worker())
+    asyncio.create_task(scan_loras())  # 后台扫 LoRA, 不阻塞启动
 
 
 # ---------- API ----------
@@ -728,16 +928,30 @@ async def list_workflows(token: str = Depends(auth)):
 
 @app.get("/api/loras")
 async def list_loras(token: str = Depends(auth)):
-    """可用 LoRA 列表 (只暴露展示字段, 不含 file/trigger 等内部字段)."""
-    return [
+    """LoRA 列表, 按 type 分组. config 手动 + Civitai 自动发现合并.
+    configured=false 的没有触发词, 需手动加 config."""
+    reg = get_lora_registry()
+    items = [
         {
-            "key": k,
-            "name": v.get("name", k),
+            "key": v["key"],
+            "type": v["type"],
+            "name": v["name"],
             "description": v.get("description", ""),
             "preview": v.get("preview"),
+            "configured": v["configured"],
+            "source": v["source"],
         }
-        for k, v in CFG.get("loras", {}).items()
+        for v in reg.values()
     ]
+    return {"characters": [i for i in items if i["type"] == "character"],
+            "styles": [i for i in items if i["type"] == "style"]}
+
+
+@app.post("/api/loras/refresh")
+async def refresh_loras(token: str = Depends(auth)):
+    """重新扫描 loras 目录, 查 Civitai 补全未配置的 LoRA. 返回扫描结果."""
+    result = await scan_loras()
+    return {"ok": True, **result}
 
 
 @app.post("/api/translate")
@@ -765,7 +979,7 @@ async def translate_prompt(req: Request, token: str = Depends(verify_token)):
 
 
 async def _enqueue(token: str, wf_name: str, prompt_en: str, prompt_raw: str,
-                   size, lora: str, strength,
+                   size, loras: list[str] | None, strength,
                    image_filename: str | None = None, denoise: float | None = None) -> str:
     """校验并入队一次出图 (USAGE+1 / JOBS / QUEUE.put). create_job 与 /api/dialog/turn 共用. 返回 job_id.
     prompt_en/prompt_raw 的 banned 检查由调用方负责 (两处逻辑不同)."""
@@ -779,11 +993,13 @@ async def _enqueue(token: str, wf_name: str, prompt_en: str, prompt_raw: str,
             raise HTTPException(400, "非法尺寸")
         width, height = map(int, size.split("x"))
     # LoRA 校验 (失败快速返回 400, 不进队列)
-    if lora:
-        if lora not in CFG.get("loras", {}):
-            raise HTTPException(400, "未知的 LoRA")
+    if loras:
         if "lora_node" not in wcfg:
             raise HTTPException(400, "该工作流不支持 LoRA")
+        reg = get_lora_registry()
+        for k in loras:
+            if k not in reg:
+                raise HTTPException(400, f"未知的 LoRA: {k}")
         if strength is not None:
             try:
                 strength = float(strength)
@@ -792,13 +1008,14 @@ async def _enqueue(token: str, wf_name: str, prompt_en: str, prompt_raw: str,
             if not (0 <= strength <= 1):
                 raise HTTPException(400, "LoRA 强度需在 0~1 之间")
     else:
+        loras = None
         strength = None
     USAGE[token][1] += 1
     job_id = uuid.uuid4().hex[:10]
     JOBS[job_id] = {
         "id": job_id, "token": token, "workflow": wf_name,
         "prompt_raw": prompt_raw, "prompt_en": prompt_en,
-        "width": width, "height": height, "lora": lora or None, "strength": strength,
+        "width": width, "height": height, "loras": loras, "strength": strength,
         "image_filename": image_filename, "denoise": denoise,
         "status": "queued", "created": time.time(),
     }
@@ -812,7 +1029,18 @@ async def create_job(req: Request, token: str = Depends(auth)):
     wf_name = body.get("workflow", "")
     prompt_en = (body.get("prompt_en") or "").strip()
     prompt_raw = (body.get("prompt") or "").strip() or prompt_en   # 原始中文, 仅存档展示; 不传则同 prompt_en
-    lora = (body.get("lora") or "").strip()
+    # loras: list[str] (新, 多选) 或 lora: str (旧, 单选, 包装成 list)
+    loras = body.get("loras")
+    if loras is None:
+        single = (body.get("lora") or "").strip()
+        loras = [single] if single else None
+    elif isinstance(loras, str):
+        loras = [loras] if loras else None
+    # 过滤空串
+    if loras:
+        loras = [k for k in loras if k]
+        if not loras:
+            loras = None
     if not prompt_en or len(prompt_en) > 800:
         raise HTTPException(400, "提示词为空或过长(>800)")
     if prompt_raw != prompt_en and len(prompt_raw) > 500:
@@ -832,7 +1060,7 @@ async def create_job(req: Request, token: str = Depends(auth)):
         except Exception as e:
             raise HTTPException(502, f"图片上传失败 ({e})")
     job_id = await _enqueue(token, wf_name, prompt_en, prompt_raw,
-                            body.get("size"), lora, body.get("strength"), image_filename, denoise)
+                            body.get("size"), loras, body.get("strength"), image_filename, denoise)
     return {"id": job_id, "prompt_en": prompt_en}
 
 
@@ -978,8 +1206,17 @@ async def dialog_turn(req: Request, token: str = Depends(auth)):
             raise HTTPException(400, f"未知 action: {action}")
 
     check_banned(prompt_en)
+    # loras: list[str] (新) 或 lora: str (旧, 包装成 list)
+    loras = body.get("loras")
+    if loras is None:
+        single = (body.get("lora") or "").strip()
+        loras = [single] if single else None
+    elif isinstance(loras, str):
+        loras = [loras] if loras else None
+    if loras:
+        loras = [k for k in loras if k] or None
     job_id = await _enqueue(token, wf_name, prompt_en, raw,
-                            body.get("size"), (body.get("lora") or "").strip(), body.get("strength"),
+                            body.get("size"), loras, body.get("strength"),
                             image_filename, denoise)
     SESSIONS[session_id]["turns"].append({"job_id": job_id, "action": action, "delta": delta, "prompt_en": prompt_en})
     return {"session_id": session_id, "job_id": job_id}

@@ -51,19 +51,19 @@ ComfyUI  127.0.0.1:8188  (不对公网开放, 用 run_nvidia_gpu_fast_fp16_accum
 2. **词典匹配** (`dict.yaml`, 851 条): 剩余文本按逗号切分逐段精确匹配, 分 hits / misses。
 3. 全命中 (无 misses): 裸角色名 (只有角色无描述) -> `tag, 1girl, solo` 跳过 LLM; 否则 `角色tag + 词典tag` 拼接。
 4. 有未命中 -> 按后端:
-   - `siliconflow`: 构造上下文 (Known character tags / Known attribute tags / Remaining misses) 送 Qwen3-8B。LLM **结构化分解** (scene/composition/mood/lighting/style + TAGS 行), `_parse_structured_output` 解析; 隐喻落 mood(禁字面名词), 空间关系落 composition(带 facing/from behind/looking out 锚点), scene 强制具体; 无 TAGS 行降级为整体当 tag(不崩)。返回 `(new_tags, breakdown)`, 后端 prepend 已知 tag, breakdown 回传前端预览。`/no_think` + 顶层 `enable_thinking:False`(config `translate_enable_thinking` 可翻, 见 D18) 关思考 (见 D2), max_tokens 400 / temp 0.4, 失败抛 502。LRU 缓存 500 (key=上下文, 值为 (prompt_en, breakdown))。
+   - `siliconflow`: 构造上下文 (Known character tags / Known attribute tags / Remaining misses) 送 Qwen3-8B。LLM **信息分流** (scene/composition/mood/lighting/style 给人看 + TAGS 离散属性 + NL 关系叙事, 见 D28), `_parse_structured_output` 解析; **TAGS/NL 不重复**(HARD RULE: NL 不得复述 TAGS 已有 tag, 全是 tag 则留空); 隐喻落 mood(禁字面名词), 多角色空间布局落 NL(单角色构图落 composition 带 facing/from behind/looking out 锚点), scene 强制具体; 无 TAGS 行降级为整体当 tag(不崩)。返回 `(new_tags, breakdown)`, 后端 prepend 已知 tag, breakdown 回传前端预览。`/no_think` + 顶层 `enable_thinking:False`(config `translate_enable_thinking` 可翻, 见 D18) 关思考 (见 D2), max_tokens 400 / temp 0.4, 失败抛 502。LRU 缓存 500 (key=上下文, 值为 (prompt_en, breakdown))。
    - `google`: gtx 逐词翻 misses (本机需翻墙, 已弃用)。
    - `none`: misses 原样保留。
 
-结构化扩写由单条 system prompt (few-shot + Anima 规范: 小写+空格、主体计数在前、禁 quality/score tag、禁 realistic/3d) 处理; 正向 `quality_prefix` 走 Anima 官方 (`masterpiece, best quality, score_7, safe, very aesthetic, absurdres`), 负面为工作流固化常量 (WAI-Anima 式 + 构图否定词 multiple views/split view/grid view/cropped/out of frame), 不随输入变。见 D12/D13/D15/D18。
+信息分流由单条 system prompt 处理 (How-to-decide 分流决策 + Self-check 自检 + Weight policy 权重框架 + 4 示例, 见 D28; Anima 规范: 小写+空格、主体计数在前、禁 quality/score tag、禁 realistic/3d); 正向 `quality_prefix` 走 Anima 官方 (`masterpiece, best quality, newest, absurdres`), 负面为工作流固化常量 (WAI-Anima 式 + 构图否定词 multiple views/split view/grid view/cropped/out of frame), 不随输入变。见 D12/D13/D15/D18/D28。
 
 ### Workflow Engine (工作流注入)
-`build_prompt(wf_name, prompt_en, w, h, lora_key=None)`:
+`build_prompt(wf_name, prompt_en, w, h, lora_keys=None)`:
 1. 读 `workflows/<file>.json`。
 2. `sanitize_for_api(wf)`: 删 `WidgetToString` / `Image Saver Metadata` (依赖前端 `extra_pnginfo`, API 提交会崩); `Image Saver Simple` → 内置 `SaveImage`。
 3. **统一 seed**: 扫描所有 int 型 `seed`/`noise_seed` 输入, 全写成同一正整数 (跳过列表型的节点连接)。修复 Impact Pack `np.random.default_rng(-1)` 崩溃 → FaceDetailer 人脸修复能正常跑。
-4. **LoRA 注入** (若 `lora_key`): 写 `lora_node.loras = {"__value__":[{name,strength,clipStrength,active:true}]}`。LoraManager 的 `text` 字段执行时被 `del` 无效, 必须走 widget; `active` 必须为 true (见 D16)。
-5. 注入: `prompt_node.text = quality_prefix + (trigger+", " 若有 LoRA) + prompt_en`; `size_node.width/height`; (不配 `negative_node`, 用工作流自带负面模板)。触发词取自 config `loras.<key>.trigger` (LoraManager 自带触发词链已被此步覆盖节点54 text 断掉)。
+4. **LoRA 注入** (若 `lora_keys`): 写 `lora_node.loras = {"__value__":[{name,strength,clipStrength,active:true}, ...]}` (数组多条, D29)。LoraManager 的 `text` 字段执行时被 `del` 无效, 必须走 widget; `active` 必须为 true (见 D16)。
+5. 注入: `prompt_node.text = quality_prefix + safety + (trigger+", " 若有 LoRA) + prompt_en`; `size_node.width/height`; (不配 `negative_node`, 用工作流自带负面模板)。触发词取自 registry (config 优先, Civitai 自动补全次之) (LoraManager 自带触发词链已被此步覆盖节点54 text 断掉)。
 6. 返回 `{prompt, client_id, _seed}`。
 
 > 扩展其他节点注入 (ControlNet / 图生图 / inpaint 等) 前, 先看 `CLAUDE.md` 的「ComfyUI 节点注入准则」-- 必须查本机节点源码定 input 格式, 不靠猜; 实例见 D16 (LoRA)。
@@ -97,7 +97,7 @@ ComfyUI  127.0.0.1:8188  (不对公网开放, 用 run_nvidia_gpu_fast_fp16_accum
 关键字段: `comfy_url` `host/port` `allow_origins` `tokens` `daily_limit`
 `timeout_seconds` `banned_words` `translate` `siliconflow_api_key` `siliconflow_model`
 `workflows.<name>.{file,prompt_node,seed_node,size_node,lora_node,sizes,quality_prefix}`;
-顶层 `loras.<key>.{name,file,trigger,strength_model,strength_clip,description,preview}` (LoRA 目录, file 是 ComfyUI models/loras/ 下文件名)。
+顶层 `loras.<key>.{type,name,file,trigger,strength_model,strength_clip,description,preview}` (type=character|style; 未列出的文件自动扫 Civitai 补全, D29)。
 
 ## 尚未实现 / 已知限制
 

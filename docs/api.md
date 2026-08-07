@@ -44,15 +44,31 @@ Authorization: Bearer <token>
 ```
 
 ### GET /api/loras
-列出可用 LoRA (需鉴权)。只暴露展示字段, 不含 file/trigger 等内部信息。
+列出可用 LoRA (需鉴权)。合并 config 手动配置 + Civitai 自动发现, 按 type 分组。
 
 响应 `200`:
 ```json
-[
-  { "key": "ningen_mame", "name": "人间豆 (Ningen Mame)", "description": "Q版/可爱风格", "preview": "/images/lora_previews/ningen_mame.jpg" }
-]
+{
+  "characters": [
+    { "key": "salt_finale_maid", "type": "character", "name": "Salt - Finale (女仆装)", "description": "...", "preview": "/images/lora_previews/salt_maid.jpg", "configured": true, "source": "config" }
+  ],
+  "styles": [
+    { "key": "shiratama_art", "type": "style", "name": "白玉画风 (Shiratama)", "description": "...", "preview": null, "configured": true, "source": "config" }
+  ],
+  "other": []
+}
 ```
-`preview` 可能为 `null` (前端应容错隐藏)。
+- `configured`: false 表示无触发词 (Civitai trainedWords 为空), 需在 config.yaml 手动配置后才能正常使用。
+- `source`: `"config"` (手动配置) 或 `"civitai"` (自动发现)。
+- `preview` 可能为 `null` (前端应容错隐藏)。
+
+### POST /api/loras/refresh
+重新扫描 LoRA 目录, 查 Civitai 补全未配置的 LoRA 元数据 (需鉴权)。
+
+响应 `200`:
+```json
+{ "ok": true, "scanned": 10, "new": 2, "failed": 1, "total_auto": 3 }
+```
 
 ### POST /api/translate
 只翻译不排队 (需鉴权, 不计入 image 限额): 中文 -> 英文 tag (角色->词典->LLM 三层 + 结构化扩写, LRU 缓存)。前端「预览提示词」和「直接生成」都先调它拿 prompt_en。
@@ -84,7 +100,7 @@ Authorization: Bearer <token>
   "prompt_en": "1girl, white hair, blue eyes, cat ears, smile",
   "prompt": "白发蓝眼睛的猫耳少女, 微笑, 站在樱花树下",
   "size": "832x1216",
-  "lora": "ningen_mame",
+  "loras": ["salt_finale_maid", "shiratama_art"],
   "strength": 0.8,
   "image": "(可选, base64 data URI, 图生图模式)",
   "denoise": 0.35
@@ -93,8 +109,8 @@ Authorization: Bearer <token>
 - `prompt_en`: 必填, 已翻译英文 tag (可经用户编辑), ≤800 字符, 经内容过滤。
 - `prompt`: 可选, 原始中文 (仅存档展示, ≤500); 不传则 prompt_raw 同 prompt_en。
 - `size`: 可选, 必须是该工作流 `sizes` 之一; 不传取第一个。
-- `lora`: 可选, `GET /api/loras` 返回的 `key` 之一; 不传或空表示不用 LoRA。工作流需配了 `lora_node` 才支持。
-- `strength`: 可选, LoRA 强度 0~1 (1=满), 仅 `lora` 有值时生效; 不传用 config 默认 1.0。
+- `loras`: 可选, `GET /api/loras` 返回的 `key` 数组 (支持多 LoRA, 如角色+风格)。向后兼容: 旧 `lora: "key"` 单选仍接受。不传或空表示不用 LoRA。工作流需配了 `lora_node` 才支持。
+- `strength`: 可选, LoRA 强度 0~1 (1=满), 覆盖所有选中 LoRA; 不传用 config 各自默认值。
 - `image`: 可选, base64 (data URI 或纯 base64)。图生图模式: 后端上传到 ComfyUI input -> 注入 LoadImage + ImpactSwitch select=2 + denoise。工作流需配 `image_node`/`switch_node`/`denoise_node` (见 D26)。
 - `denoise`: 可选, 0.1~0.9。图生图重采样强度: 低=接近原图(微调), 高=大改。默认 0.35。
 
@@ -136,7 +152,7 @@ failed (失败):
 
 请求体:
 ```json
-{ "session_id": "可选, 首轮省略", "action": "start|redo|tweak", "prompt": "首轮中文描述(start 必填)", "delta": "可选改动 (redo/tweak)", "denoise": 0.35, "workflow": "anima", "size": "832x1216", "lora": "", "strength": 1 }
+{ "session_id": "可选, 首轮省略", "action": "start|redo|tweak", "prompt": "首轮中文描述(start 必填)", "delta": "可选改动 (redo/tweak)", "denoise": 0.35, "workflow": "anima", "size": "832x1216", "loras": ["salt_finale_maid"], "strength": 1 }
 ```
 - `start`: 建会话 + 首图。
 - `redo` (换一版): `delta` 有则累积重翻译, 无则复用当前 prompt_en 换 seed。

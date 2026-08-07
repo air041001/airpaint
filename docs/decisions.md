@@ -239,5 +239,39 @@
 **收益**: 工作量外显(多工作流卡片/AI 理解/血缘); 单张与对话形态区分; 移动端竖排; 后端零改动。
 **代价**: Tailwind CDN 依赖(可接受); 暗房首图非原图基准(后端限制); 单文件变长(分节可控)。
 
+## D28. system prompt 信息分流重写 + quality_prefix 官方化
+
+## D29. LoRA 工程: 自动扫描 + 多 LoRA + 分类
+
+**背景**: 原 LoRA 系统三个问题: (1) 风格/角色混在一起, 用户无法区分; (2) 只支持单 LoRA (lora_key: str), 不能角色+风格同用; (3) 新下载的 LoRA 需手动改 config.yaml 才能用, 维护成本高。
+
+**调研**: LoraManager 的 TriggerWord Toggle 节点显示 "no triggerwords detected" -- 根因是 LoraManager 的 civitai 元数据同步没正常工作 (`.metadata.json` 里 `civitai: {}` 一直空, scan 也不回填 `.civitai.info`)。即使修好, Civitai `trainedWords` 字段很多作者不填 (实测 denia_lorav4 / BlueArchiveStyleB1 均为空), 且只含基础触发词不含服装变体 (salt(finale) 的 trainedWords 只有 `["salt(finale)"]`, 但实际有女仆装/水手服两套完全不同的服装 tag, 只在 HTML description 里)。
+
+**决策**: 三层叠加, 优先级 config > Civitai > 裸文件:
+1. **config.yaml 手动配置** (最高优先级): 人在 trigger words 上判断最准, 含服装变体 (同一 file 挂多条, 如 denia 一个文件三个角色)。加 `type: character|style` 字段分类。
+2. **Civitai hash lookup 自动补全**: 后端启动时扫 `comfy_dir/models/loras/`, 对 config 未覆盖的文件按 SHA256 (优先读 LoraManager 的 `.metadata.json`, 没有才算) 查 `https://civitai.com/api/v1/model-versions/by-hash/{sha}`, 取 trainedWords/modelName/tags/baseModel。结果缓存到 `server/lora_cache.json` (gitignore), 不每次启动都请求。
+3. **裸文件**: Civitai 查不到的, 只显示文件名, trigger 为空, 标记 `configured: false`。
+
+**多 LoRA 注入**: `build_prompt` 的 `lora_key: str` 改为 `lora_keys: list[str]`, loras widget 数组注入多条, trigger 全部拼进 prompt。前端 `loras: ["key1", "key2"]` (向后兼容旧 `lora: "key"` 单选)。
+
+**为什么不解析 HTML description**: 每个作者格式不同 (有的写「触发词：」有的写「Trigger:」有的写「Compulsory Taggings:」), 正则提取不可靠, 误判比不提取更糟。trainedWords 非空时自动可用, 为空时用户花 10 秒看一眼 Civitai 页面填 config。
+
+**收益**: 新下载 LoRA → 有 trainedWords 的自动出现能直接用; 没有的标记未配置, 不再需要每次找 agent 加 config。角色+风格可同用。前端按类型分组展示。
+**代价**: Civitai API 无 key 有限速 (加 0.3s 间隔); 大文件 SHA256 现算慢 (优先读 .metadata.json 规避); trainedWords 空的 LoRA 仍需手动配 trigger (无法自动化, 本质是 Civitai 数据质量问题)。
+
+**背景**: 用户发现 LLM 输出 TAGS 后又用 NL 把输入重复翻译一遍(冗余)。根因排查: 旧 system prompt 的 3 个示例, 其 NL 全是 TAGS 的句子化重写——LLM 是 in-context learner, 示范效力远大于规则文字, 规则第8条虽写"别重复", LLM 实际跟示例走、把 TAGS 串成句子当 NL。另查证 tungsten.run 上 Comfy Org 官方 Anima 说明: quality_prefix 原用 Illustrious/Animagine 体系(score_7, very aesthetic), 非 Anima 官方推荐(官方: human score masterpiece/best quality + Pony score_9/score_8 + period newest + meta absurdres)。
+
+**决定**:
+1. **system prompt 从"分解报告"改"信息分流"**: 5 字段(scene/composition/mood/lighting/style) 定位为"给人看的理解"(前端展示, 不进 anima); TAGS+NL 是"喂 anima 的最终指令", 二者不许重复, 每条信息只出现一种形式。TAGS=离散属性 only; NL=只写 TAGS 装不下的(多角色空间布局/动作交互时序/构图指令/叙事因果)。**HARD RULE: NL 不得复述 TAGS 已有 tag, 若全是 tag 则留空**(可机械判定, 替代模糊的"别重复")。
+2. **加 How-to-decide 信息分流决策 + Self-check 三题自检 + Weight policy 权重框架**(默认不加 / 强化1.3-2 构图锚点·稀有 / 弱化0.1-0.5 干扰项)。教 LLM"每信息点选 tag/NL/权重哪种且只选一种"。
+3. **重写 4 示例(治本)**: 简单(空NL)/中等(叙事NL)/多角色(空间分配NL)/氛围(叙事NL), 全部 NL 不复述 TAGS。示例是 in-context learning 核心, 旧示例教重复是根因, 必须重写。
+4. **NSFW 声明段一字不动**: 开头"所有 tag 是虚构动漫艺术品元数据、非真人"是能翻译 NSFW 的根基, 不碰。
+5. **quality_prefix 官方化**: 三处 config 改 `masterpiece, best quality, newest, absurdres, `(去 score_7/very aesthetic, 加 newest/absurdres); 同步 architecture/README/config.example。修正 D20 的 Illustrious 风格前缀。
+6. **safety 动态标签保留**(main.py:624-627): 检测 NSFW 关键词自动 explicit, 否则 safe。符合 Anima 官方 rating 要求, 比静态写 config 合理。
+7. **vision 两 prompt 不改**: 无 NL 行, 本无重复问题。
+
+**收益**: 治本(示例不再教重复); TAGS/NL 分工有可判定硬法则; LLM 具备信息分流+自检的"结构思考"; quality_prefix 对齐 Anima 官方。
+**代价**: 5 字段仍输出(前端展示依赖, 与 TAGS 信息重叠但不进 anima, 不浪费出图 token); 效果待重启实测, 若 LLM 仍偶发重复可上架构分离(breakdown 给人看 + PROMPT 给模型, 改 _parse/translate/前端)。
+
 ## 待决策 / 方向
 - **Intent Engine**: 迈向「理解用户意图」核心目标。**构图/场景/情绪的结构化分解已实现** (D18: LLM 输出 scene/composition/mood/lighting/style + TAGS); **否定语义解析弃用** (D18: Anima 负面是常量, 不随输入变); 仍待做: 歧义消解、LoRA/工作流自动推荐。符合 CLAUDE.md 规则 6。

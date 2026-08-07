@@ -46,7 +46,7 @@ workflows:
     seed_node: "6"                   # KSampler
     size_node: "56"                  # EmptyLatentImage
     sizes: ["832x1216", "1216x832", "1024x1024"]
-    quality_prefix: "masterpiece, best quality, ultra detailed, "
+    quality_prefix: "masterpiece, best quality, newest, absurdres, "
 ```
 
 改 token / 限流 / 翻译模型后, **重启后端**生效。

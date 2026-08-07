@@ -6,6 +6,7 @@ images/
 __pycache__/
 *.pyc
 *.log
+server/lora_cache.json
 
 # 便携版 gh CLI (大文件, 自行下载即可, 非源码)
 .tools/gh/

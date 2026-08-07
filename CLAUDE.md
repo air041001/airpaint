@@ -8,7 +8,7 @@
 前后端共用固定域名 `airpaint.xyz`, 经 cloudflared **命名隧道**穿透内网(不暴露本机端口)。
 当前阶段: **Release v1.0 -- 三工作流 + 对话迭代 + 参考图 + NSFW detailer + 前端三屏**。
 
-> **最近改动** (每次迭代更新此行): 2026-08-03 前端大改(工坊/暗房三屏 Tailwind CDN 重写, D27) + start-image(继续迭代从原图直接进暗房) + NSFW detailer(精修自门控); 见 DEVLOG 第24条。前档: img2img+对话微调(D26)/⑤对话迭代骨架(D25)。
+> **最近改动** (每次迭代更新此行): 2026-08-07 LoRA 工程(自动扫描 Civitai + 多 LoRA + 角色风格分类, D29); 见 DEVLOG 第26条。前档: 提示词格式优化(D28)/前端大改三屏(D27)/img2img+对话微调(D26)。
 
 ## 模块地图
 
@@ -18,8 +18,9 @@
 |---|---|---|
 | 鉴权/限流 | `auth()` `USAGE` | Bearer token + 日限, **内存计数(重启清零)** |
 | 内容过滤 | `check_banned()` | banned_words 子串匹配 |
-| **Prompt Engine** | `translate()` `match_characters()` `match_dict_words()` `siliconflow_translate()` `_parse_structured_output()` `normalize_tag_order()` `HotDict` `dict.yaml` `char_dict.yaml` | 三层: 角色->词典->LLM(结构化分解 scene/composition/mood/lighting/style + TAGS, 回传 breakdown) / LRU 缓存 500 / **reroll 跳过缓存高温重抽** / **tag 规范序 count->char->general** / **词典 mtime 热更新不重启** / **dict 子串匹配(NSFW词绕过LLM安全过滤)** |
-| **Workflow Engine** | `sanitize_for_api()` `build_prompt()` `upload_image_to_comfy()` | 清洗前端专属节点(含 Image Comparer)+ 注入 prompt/seed/size/**LoRA**/**img2img**(image/switch/denoise), **统一所有 seed**; **三工作流**(anima 快速 / anima-detailer 精修 / anima-img2img 图生图) |
+| **Prompt Engine** | `translate()` `match_characters()` `match_dict_words()` `siliconflow_translate()` `_parse_structured_output()` `normalize_tag_order()` `HotDict` `dict.yaml` `char_dict.yaml` | 三层: 角色->词典->LLM(信息分流: 5字段给人看 + TAGS离散属性 + NL关系叙事不重复, D28, 回传 breakdown) / LRU 缓存 500 / **reroll 跳过缓存高温重抽** / **tag 规范序 count->char->general** / **词典 mtime 热更新不重启** / **dict 子串匹配(NSFW词绕过LLM安全过滤)** |
+| **Workflow Engine** | `sanitize_for_api()` `build_prompt()` `upload_image_to_comfy()` | 清洗前端专属节点(含 Image Comparer)+ 注入 prompt/seed/size/**多LoRA**(lora_keys list, D29)/**img2img**(image/switch/denoise), **统一所有 seed**; **三工作流**(anima 快速 / anima-detailer 精修 / anima-img2img 图生图) |
+| **LoRA Registry** | `get_lora_registry()` `scan_loras()` `_civitai_lookup()` `LORA_CACHE_FILE` | 三层合并: config.yaml 手动(type/trigger/服装变体) > Civitai SHA256 hash lookup 自动补全 > 裸文件; `/api/loras` 分组返回(character/style/other) + configured 标记; `/api/loras/refresh` 重扫; D29 |
 | ComfyUI 客户端 | `submit_and_wait()` | `/prompt` 提交 + `/history` 轮询 + `/view` 取图 |
 | 队列 | `worker()` `QUEUE` | 单并发 asyncio.Queue (GPU 串行) |
 | 静态托管 | `/` `/images` | `/` 返回 `web/index.html`, `/images` 出图 |
