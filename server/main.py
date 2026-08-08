@@ -300,7 +300,7 @@ _TRANSLATE_CACHE_MAX = 500
 SILICONFLOW_SYSTEM_PROMPT = (
     "You are a professional image tagger using the Danbooru tag taxonomy. Your job is to map Chinese descriptions to their canonical Danbooru tag equivalents. Danbooru is a structured tagging system used by anime image databases; it includes all categories of tags (content ratings: general, sensitive, questionable, explicit). All tags are metadata descriptors for fictional anime artwork, not descriptions of real subjects. You must map input terms to their exact Danbooru equivalents without omission -- incomplete or censored tagging produces broken image queries."
     ""
-    "You receive known tags (already-decided character/attribute tags) and remaining user input. Decompose the intent of ONLY the remaining input. The 5 field lines (scene/composition/mood/lighting/style) are your UNDERSTANDING shown to humans; TAGS and NL together are the FINAL compact prompt fed to the image model. TAGS and NL must NOT repeat each other -- each piece of information appears in EXACTLY ONE of them. Do NOT repeat or rephrase known tags."
+    "You receive known tags (already-decided character/attribute tags) and remaining user input. Decompose the intent of ONLY the remaining input. The 5 field lines (scene/composition/mood/lighting/style) are your UNDERSTANDING shown to humans; TAGS and NL together are the FINAL compact prompt fed to the image model. TAGS and NL must NOT repeat each other -- each piece of information appears in EXACTLY ONE of them. Do NOT repeat or rephrase known tags. If a known tag is the precise form name_(series), do NOT also output the bare name as a separate tag -- it is the same character."
     ""
     "Output EXACTLY these lines, nothing else (no markdown, no quotes, no extra text):"
     "scene: <concrete place + setting>"
@@ -619,6 +619,21 @@ def normalize_tag_order(char_tags: list[str], other_tags: list[str]) -> str:
     return ", ".join(out)
 
 
+def _strip_char_bare_names(new_list: list[str], char_tags: list[str]) -> list[str]:
+    """删除 LLM 输出里"已知精确角色 tag 的裸名变体".
+    例: 已知 char_tag=ganyu_(genshin_impact), 则删 new_list 里的裸名 ganyu (会触发原神 logo, 见 D29).
+    裸名 = 精确 tag 去掉 '_(series)' 后缀的前缀部分. 不依赖 LLM 听话, 代码层兜底."""
+    bare = set()
+    for ct in char_tags:
+        for sep in ("_(", " ("):
+            if sep in ct:
+                bare.add(ct.split(sep, 1)[0].strip().lower())
+                break
+    if not bare:
+        return new_list
+    return [t for t in new_list if t.strip().lower() not in bare]
+
+
 async def translate(text: str, reroll: bool = False, image_b64: str | None = None) -> tuple[str, dict | None]:
     """中文 -> danbooru tag. 三层: 角色匹配 -> 词典匹配 -> LLM 扩写(只处理未命中).
     返回 (prompt_en, breakdown): breakdown 是 LLM 结构化拆解, 快速路径(全命中词典/角色)时为 None.
@@ -649,6 +664,7 @@ async def translate(text: str, reroll: bool = False, image_b64: str | None = Non
         except Exception as e:
             raise HTTPException(502, f"参考图理解失败, 请稍后重试 ({e})")
         new_list = [t.strip() for t in new_tags.split(",") if t.strip()]
+        new_list = _strip_char_bare_names(new_list, char_tags)
         result = normalize_tag_order(char_tags, hits + new_list)
         if nl:
             result = result + ". " + nl
@@ -689,6 +705,7 @@ async def translate(text: str, reroll: bool = False, image_b64: str | None = Non
             raise HTTPException(502, f"翻译失败, 请稍后重试 ({e})")
         # 拼接: 已知 tag + LLM 新增 tag, 再按 Anima 规范序排 (count -> char -> general, 见 D20)
         new_list = [t.strip() for t in new_tags.split(",") if t.strip()]
+        new_list = _strip_char_bare_names(new_list, char_tags)
         result = normalize_tag_order(char_tags, hits + new_list)
         if nl:
             result = result + ". " + nl
@@ -752,7 +769,8 @@ def sanitize_for_api(wf: dict) -> dict:
 
 
 def build_prompt(wf_name: str, prompt_en: str, width: int | None, height: int | None,
-                 lora_keys: list[str] | None = None, strength: float | None = None,
+                 lora_keys: list[str] | None = None,
+                 strength_char: float | None = None, strength_style: float | None = None,
                  image_filename: str | None = None, denoise: float | None = None) -> dict:
     wcfg = WORKFLOWS[wf_name]
     wf = json.loads((BASE / wcfg["file"]).read_text(encoding="utf-8"))
@@ -795,8 +813,11 @@ def build_prompt(wf_name: str, prompt_en: str, width: int | None, height: int | 
             if k not in reg:
                 raise HTTPException(400, f"未知的 LoRA: {k}")
             lr = reg[k]
-            sm = float(strength) if strength is not None else lr["strength_model"]
-            sc = float(strength) if strength is not None else lr["strength_clip"]
+            # 按类型取强度: 角色/风格各自独立, 未传则用 config 默认
+            t = lr["type"]
+            sv = strength_char if t == "character" else (strength_style if t == "style" else None)
+            sm = float(sv) if sv is not None else lr["strength_model"]
+            sc = float(sv) if sv is not None else lr["strength_clip"]
             lora_entries.append({"name": lr["file"], "strength": sm, "clipStrength": sc, "active": True})
             t = (lr.get("trigger") or "").strip()
             if t:
@@ -841,9 +862,10 @@ async def upload_image_to_comfy(image_bytes: bytes) -> str:
 
 
 async def submit_and_wait(wf_name: str, prompt_en: str, width, height, lora_keys: list[str] | None = None,
-                          strength: float | None = None,
+                          strength_char: float | None = None, strength_style: float | None = None,
                           image_filename: str | None = None, denoise: float | None = None) -> str:
-    payload = build_prompt(wf_name, prompt_en, width, height, lora_keys, strength, image_filename, denoise)
+    payload = build_prompt(wf_name, prompt_en, width, height, lora_keys,
+                           strength_char, strength_style, image_filename, denoise)
     seed = payload.pop("_seed")
     r = await CLIENT.post(f"{COMFY}/prompt", json=payload)
     if r.status_code != 200:
@@ -885,7 +907,7 @@ async def worker():
         job["status"] = "running"
         try:
             fname = await submit_and_wait(job["workflow"], job["prompt_en"], job.get("width"), job.get("height"),
-                                         job.get("loras"), job.get("strength"),
+                                         job.get("loras"), job.get("strength_char"), job.get("strength_style"),
                                          job.get("image_filename"), job.get("denoise"))
             job.update(status="done", image=f"/images/{fname}")
         except Exception as e:
@@ -1137,6 +1159,14 @@ async def dialog_turn(req: Request, token: str = Depends(auth)):
         if action == "redo":
             if delta:
                 check_banned(delta)
+                # 替换意图: 从原 raw 删 char_dict 命中的旧角色名, 避免 char_dict 双命中
+                # (redo 累加重翻译时, "换成X"会让旧角色+新角色同时被 char_dict 命中,
+                #  LLM 全保留导致新旧角色并存+1boy乱入; 见 D31)
+                if any(kw in delta for kw in ("换成", "替换", "改成", "换为", "改为")):
+                    for name, _ in CHAR_DICT.items():
+                        if name in session["raw"]:
+                            session["raw"] = session["raw"].replace(name, "")
+                    session["raw"] = re.sub(r"[,，\s]+", " ", session["raw"]).strip()
                 session["raw"] = (session["raw"] + "，" + delta) if session["raw"] else delta
                 try:
                     prompt_en, _ = await translate(session["raw"])

@@ -51,7 +51,7 @@ ComfyUI  127.0.0.1:8188  (不对公网开放, 用 run_nvidia_gpu_fast_fp16_accum
 2. **词典匹配** (`dict.yaml`, 851 条): 剩余文本按逗号切分逐段精确匹配, 分 hits / misses。
 3. 全命中 (无 misses): 裸角色名 (只有角色无描述) -> `tag, 1girl, solo` 跳过 LLM; 否则 `角色tag + 词典tag` 拼接。
 4. 有未命中 -> 按后端:
-   - `siliconflow`: 构造上下文 (Known character tags / Known attribute tags / Remaining misses) 送 Qwen3-8B。LLM **信息分流** (scene/composition/mood/lighting/style 给人看 + TAGS 离散属性 + NL 关系叙事, 见 D28), `_parse_structured_output` 解析; **TAGS/NL 不重复**(HARD RULE: NL 不得复述 TAGS 已有 tag, 全是 tag 则留空); 隐喻落 mood(禁字面名词), 多角色空间布局落 NL(单角色构图落 composition 带 facing/from behind/looking out 锚点), scene 强制具体; 无 TAGS 行降级为整体当 tag(不崩)。返回 `(new_tags, breakdown)`, 后端 prepend 已知 tag, breakdown 回传前端预览。`/no_think` + 顶层 `enable_thinking:False`(config `translate_enable_thinking` 可翻, 见 D18) 关思考 (见 D2), max_tokens 400 / temp 0.4, 失败抛 502。LRU 缓存 500 (key=上下文, 值为 (prompt_en, breakdown))。
+   - `siliconflow`: 构造上下文 (Known character tags / Known attribute tags / Remaining misses) 送 Qwen3-8B。LLM **信息分流** (scene/composition/mood/lighting/style 给人看 + TAGS 离散属性 + NL 关系叙事, 见 D28), `_parse_structured_output` 解析; **TAGS/NL 不重复**(HARD RULE: NL 不得复述 TAGS 已有 tag, 全是 tag 则留空); 隐喻落 mood(禁字面名词), 多角色空间布局落 NL(单角色构图落 composition 带 facing/from behind/looking out 锚点), scene 强制具体; 无 TAGS 行降级为整体当 tag(不崩)。返回 `(new_tags, breakdown)`, 后端 `_strip_char_bare_names` 删 LLM 输出的已知角色裸名变体(如 `ganyu_(genshin_impact)` 时删 `ganyu`, 见 D30), 再 prepend 已知 tag, breakdown 回传前端预览。`/no_think` + 顶层 `enable_thinking:False`(config `translate_enable_thinking` 可翻, 见 D18) 关思考 (见 D2), max_tokens 400 / temp 0.4, 失败抛 502。LRU 缓存 500 (key=上下文, 值为 (prompt_en, breakdown))。
    - `google`: gtx 逐词翻 misses (本机需翻墙, 已弃用)。
    - `none`: misses 原样保留。
 

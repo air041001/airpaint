@@ -470,3 +470,37 @@ node --check 通过; 72 个元素 id 引用全部存在。待用户真机点一�
 ### 验证
 py_compile 通过; grep 确认 NSFW 声明(139) + HARD RULE(150) + Self-check(157) + 新示例(192) 到位。待重启后端实测: 简单输入看 NL 是否空/极简; 多角色输入看 NL 是否只写空间分配不复述 tag。若仍偶发重复, 后手=架构分离(breakdown 给人看 + PROMPT 给模型)。详见 D28。
 
+## 第 27 条 2026-08-08 - 修: 角色精确 tag 裸名变体去重 (防 ganyu 触发原神 logo)
+
+### 做了什么
+用户实测: char_dict 命中"甘雨"→`ganyu_(genshin_impact)` 后, 翻译结果仍含裸名 `ganyu`, 触发原神 logo(删 ganyu 即消失)。
+
+### 根因
+- **LLM 违规**: D28 规则"Do NOT repeat or rephrase known tags"只防整串相等, `ganyu` ≠ `ganyu_(genshin_impact)`, LLM 当独立泛用名输出。
+- **后处理没兜**: `normalize_tag_order` 只整串去重(seen set), 裸名不在 seen, 保留。
+- **logo 触发**: Anima 训练里 `ganyu`(裸名)强关联原神甘雨图(带 logo), 比 `ganyu_(genshin_impact)`(精确)更"纯原神", 是触发 logo 的充分条件。
+
+### 怎么解 (A+B 双层)
+- **A 代码兜底**: 加 `_strip_char_bare_names(new_list, char_tags)`——对每个 char_tag 提取裸名(去 `_(series)` 后缀), 删 new_list 里等于裸名的项。translate() 的 siliconflow/vision 两分支 normalize 前调用。不依赖 LLM 听话。
+- **B system prompt 加硬规则**: D28 那句补"If a known tag is the precise form name_(series), do NOT also output the bare name as a separate tag"。减少 LLM 输出概率。
+
+## 第 28 条 2026-08-09 - 修: 暗房 redo 替换意图检测 (换成X时删旧角色名防双命中)
+
+### 做了什么
+用户暗房"把图中人物换成天宫心", 结果新旧角色并存 + 1boy 乱入, 出图还是甘雨。
+
+### 根因
+- redo 实现(1162)是"delta 累加到 raw + 整体重翻译", 把"换"当追加。
+- 累加后 raw 含两个角色名, char_dict 双命中, 两角色 tag 都作为 known 给 LLM, LLM 全保留。
+- LLM 见两主体名误判双人, 加 1boy+1girl。
+- tweak(img2img, denoise 默认0.35 只微调)不受影响——用户不会用 tweak 换主体。
+
+### 怎么解
+redo 分支(1162)累加前检测替换意图词(换成/替换/改成/换为/改为), 命中则遍历 CHAR_DICT.items() 从 raw 删旧角色名, 清逗号空格, 再 += delta 重翻译。raw 只剩新角色名, char_dict 单命中, 干净替换。tweak 未改。
+
+### 验证
+py_compile 通过; grep 确认 redo 分支替换意图检测(1162-1165)到位。待重启后端用"把图中人物换成天宫心"实测确认 ganyu 不再出现。详见 D31。
+
+### 验证
+py_compile 通过; grep 确认 `_strip_char_bare_names` 函数(622) + 两处调用(667/708) + system prompt 新规则(303) 到位。待重启后端用"甘雨"实测确认 ganyu 不再出现 + 原神 logo 消失。详见 D30。
+

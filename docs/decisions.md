@@ -273,5 +273,25 @@
 **收益**: 治本(示例不再教重复); TAGS/NL 分工有可判定硬法则; LLM 具备信息分流+自检的"结构思考"; quality_prefix 对齐 Anima 官方。
 **代价**: 5 字段仍输出(前端展示依赖, 与 TAGS 信息重叠但不进 anima, 不浪费出图 token); 效果待重启实测, 若 LLM 仍偶发重复可上架构分离(breakdown 给人看 + PROMPT 给模型, 改 _parse/translate/前端)。
 
+## D30. 修: 角色精确 tag 裸名变体去重 (防 LLM 输出 ganyu 触发原神 logo)
+
+**背景**: 用户发现 char_dict 命中"甘雨"→`ganyu_(genshin_impact)` 后, 翻译结果仍含裸名 `ganyu`, 实测触发原神 logo(删 ganyu 即消失)。根因两层: (1) LLM 违规——D28 规则"Do NOT repeat or rephrase known tags"只防整串相等, `ganyu` ≠ `ganyu_(genshin_impact)`, LLM 不认违规, 且 `ganyu` 本身是合法 danbooru tag 当独立泛用名输出; (2) 后处理没兜——`normalize_tag_order` 只整串去重(seen set), 裸名不在 seen, 保留。原神 logo 触发: Anima 训练里 `ganyu`(裸名)强关联原神甘雨图(带 logo), 比 `ganyu_(genshin_impact)`(精确, 训练集被衍生图稀释)更"纯原神", 是触发 logo 的充分条件。
+
+**决定**:
+1. **代码兜底(A, 必须)**: 加 `_strip_char_bare_names(new_list, char_tags)`——对每个 char_tag 提取裸名(去 `_(series)` 后缀, 如 `ganyu_(genshin_impact)`→`ganyu`), 删 new_list 里等于裸名的项。在 translate() 的 siliconflow/vision 两分支 normalize 前调用。不依赖 LLM 听话。
+2. **system prompt 加硬规则(B, 辅助)**: D28 那句"Do NOT repeat or rephrase known tags"补"If a known tag is the precise form name_(series), do NOT also output the bare name as a separate tag"。减少 LLM 输出概率。
+
+**收益**: 治本(代码兜底, LLM 再不听话也不出裸名); 防 IP logo 误触发(不只原神, 任何 `角色_(系列)` 的裸名都可能弱化精度)。
+**代价**: 裸名提取靠 `_(`/` (`分隔符, 极少数角色 tag 格式特殊可能漏(但 char_dict 都是标准 danbooru 精确 tag, 覆盖好)。
+
+## D31. 修: 暗房 redo 替换意图检测 (换成X时删旧角色名防 char_dict 双命中)
+
+**背景**: 用户暗房迭代"把图中人物换成天宫心", 结果 prompt_en 新旧角色并存(`ganyu_(genshin_impact)` + `amamiya_kokoro_(hololive)`) + 1boy 乱入, 出图仍是原神甘雨。根因: redo 实现(1162行)是"delta 累加到原 raw 末尾 + 整体重翻译", 把"换"语义当追加。累加后 raw 含两个角色名, `match_characters()` 双命中, 两个角色 tag 作为 known tags 喂 LLM, LLM 无法判断该删哪个, 全保留; 且 LLM 见两主体名误判双人加 1boy+1girl。tweak(img2img) 不受影响——denoise 默认 0.35 只微调(换姿势/去衣服), 用户不会用 tweak 换主体, 不触发双命中。
+
+**决定**: redo 分支(1162)累加前检测 delta 是否含替换意图词(`换成/替换/改成/换为/改为`), 命中则遍历 CHAR_DICT.items() 从 session["raw"] 删所有旧角色名, 清多余逗号/空格, 再 += delta 重翻译。这样 raw 只剩新角色名, char_dict 单命中, LLM 输出干净替换。
+
+**收益**: "换主体"语义正确执行(删旧加新); 防 char_dict 双命中导致的属性串色/IP logo; 不影响追加描述类 redo。
+**代价**: 意图词靠枚举(换成/替换/改成/换为/改为), 用户换种说法("变成长椅上坐着天宫心")可能漏检; tweak 未改(实际用法不触发)。
+
 ## 待决策 / 方向
 - **Intent Engine**: 迈向「理解用户意图」核心目标。**构图/场景/情绪的结构化分解已实现** (D18: LLM 输出 scene/composition/mood/lighting/style + TAGS); **否定语义解析弃用** (D18: Anima 负面是常量, 不随输入变); 仍待做: 歧义消解、LoRA/工作流自动推荐。符合 CLAUDE.md 规则 6。
