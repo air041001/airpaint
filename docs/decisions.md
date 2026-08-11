@@ -241,6 +241,20 @@
 
 ## D28. system prompt 信息分流重写 + quality_prefix 官方化
 
+**背景**: 用户发现 LLM 输出 TAGS 后又用 NL 把输入重复翻译一遍(冗余)。根因排查: 旧 system prompt 的 3 个示例, 其 NL 全是 TAGS 的句子化重写——LLM 是 in-context learner, 示范效力远大于规则文字, 规则第8条虽写"别重复", LLM 实际跟示例走、把 TAGS 串成句子当 NL。另查证 tungsten.run 上 Comfy Org 官方 Anima 说明: quality_prefix 原用 Illustrious/Animagine 体系(score_7, very aesthetic), 非 Anima 官方推荐(官方: human score masterpiece/best quality + Pony score_9/score_8 + period newest + meta absurdres)。
+
+**决定**:
+1. **system prompt 从"分解报告"改"信息分流"**: 5 字段(scene/composition/mood/lighting/style) 定位为"给人看的理解"(前端展示, 不进 anima); TAGS+NL 是"喂 anima 的最终指令", 二者不许重复, 每条信息只出现一种形式。TAGS=离散属性 only; NL=只写 TAGS 装不下的(多角色空间布局/动作交互时序/构图指令/叙事因果)。**HARD RULE: NL 不得复述 TAGS 已有 tag, 若全是 tag 则留空**(可机械判定, 替代模糊的"别重复")。
+2. **加 How-to-decide 信息分流决策 + Self-check 三题自检 + Weight policy 权重框架**(默认不加 / 强化1.3-2 构图锚点·稀有 / 弱化0.1-0.5 干扰项)。教 LLM"每信息点选 tag/NL/权重哪种且只选一种"。
+3. **重写 4 示例(治本)**: 简单(空NL)/中等(叙事NL)/多角色(空间分配NL)/氛围(叙事NL), 全部 NL 不复述 TAGS。示例是 in-context learning 核心, 旧示例教重复是根因, 必须重写。
+4. **NSFW 声明段一字不动**: 开头"所有 tag 是虚构动漫艺术品元数据、非真人"是能翻译 NSFW 的根基, 不碰。
+5. **quality_prefix 官方化**: 三处 config 改 `masterpiece, best quality, newest, absurdres, `(去 score_7/very aesthetic, 加 newest/absurdres); 同步 architecture/README/config.example。修正 D20 的 Illustrious 风格前缀。
+6. **safety 动态标签保留**(main.py:624-627): 检测 NSFW 关键词自动 explicit, 否则 safe。符合 Anima 官方 rating 要求, 比静态写 config 合理。
+7. **vision 两 prompt 不改**: 无 NL 行, 本无重复问题。
+
+**收益**: 治本(示例不再教重复); TAGS/NL 分工有可判定硬法则; LLM 具备信息分流+自检的"结构思考"; quality_prefix 对齐 Anima 官方。
+**代价**: 5 字段仍输出(前端展示依赖, 与 TAGS 信息重叠但不进 anima, 不浪费出图 token); 效果待重启实测, 若 LLM 仍偶发重复可上架构分离(breakdown 给人看 + PROMPT 给模型, 改 _parse/translate/前端)。
+
 ## D29. LoRA 工程: 自动扫描 + 多 LoRA + 分类
 
 **背景**: 原 LoRA 系统三个问题: (1) 风格/角色混在一起, 用户无法区分; (2) 只支持单 LoRA (lora_key: str), 不能角色+风格同用; (3) 新下载的 LoRA 需手动改 config.yaml 才能用, 维护成本高。
@@ -259,20 +273,6 @@
 **收益**: 新下载 LoRA → 有 trainedWords 的自动出现能直接用; 没有的标记未配置, 不再需要每次找 agent 加 config。角色+风格可同用。前端按类型分组展示。
 **代价**: Civitai API 无 key 有限速 (加 0.3s 间隔); 大文件 SHA256 现算慢 (优先读 .metadata.json 规避); trainedWords 空的 LoRA 仍需手动配 trigger (无法自动化, 本质是 Civitai 数据质量问题)。
 
-**背景**: 用户发现 LLM 输出 TAGS 后又用 NL 把输入重复翻译一遍(冗余)。根因排查: 旧 system prompt 的 3 个示例, 其 NL 全是 TAGS 的句子化重写——LLM 是 in-context learner, 示范效力远大于规则文字, 规则第8条虽写"别重复", LLM 实际跟示例走、把 TAGS 串成句子当 NL。另查证 tungsten.run 上 Comfy Org 官方 Anima 说明: quality_prefix 原用 Illustrious/Animagine 体系(score_7, very aesthetic), 非 Anima 官方推荐(官方: human score masterpiece/best quality + Pony score_9/score_8 + period newest + meta absurdres)。
-
-**决定**:
-1. **system prompt 从"分解报告"改"信息分流"**: 5 字段(scene/composition/mood/lighting/style) 定位为"给人看的理解"(前端展示, 不进 anima); TAGS+NL 是"喂 anima 的最终指令", 二者不许重复, 每条信息只出现一种形式。TAGS=离散属性 only; NL=只写 TAGS 装不下的(多角色空间布局/动作交互时序/构图指令/叙事因果)。**HARD RULE: NL 不得复述 TAGS 已有 tag, 若全是 tag 则留空**(可机械判定, 替代模糊的"别重复")。
-2. **加 How-to-decide 信息分流决策 + Self-check 三题自检 + Weight policy 权重框架**(默认不加 / 强化1.3-2 构图锚点·稀有 / 弱化0.1-0.5 干扰项)。教 LLM"每信息点选 tag/NL/权重哪种且只选一种"。
-3. **重写 4 示例(治本)**: 简单(空NL)/中等(叙事NL)/多角色(空间分配NL)/氛围(叙事NL), 全部 NL 不复述 TAGS。示例是 in-context learning 核心, 旧示例教重复是根因, 必须重写。
-4. **NSFW 声明段一字不动**: 开头"所有 tag 是虚构动漫艺术品元数据、非真人"是能翻译 NSFW 的根基, 不碰。
-5. **quality_prefix 官方化**: 三处 config 改 `masterpiece, best quality, newest, absurdres, `(去 score_7/very aesthetic, 加 newest/absurdres); 同步 architecture/README/config.example。修正 D20 的 Illustrious 风格前缀。
-6. **safety 动态标签保留**(main.py:624-627): 检测 NSFW 关键词自动 explicit, 否则 safe。符合 Anima 官方 rating 要求, 比静态写 config 合理。
-7. **vision 两 prompt 不改**: 无 NL 行, 本无重复问题。
-
-**收益**: 治本(示例不再教重复); TAGS/NL 分工有可判定硬法则; LLM 具备信息分流+自检的"结构思考"; quality_prefix 对齐 Anima 官方。
-**代价**: 5 字段仍输出(前端展示依赖, 与 TAGS 信息重叠但不进 anima, 不浪费出图 token); 效果待重启实测, 若 LLM 仍偶发重复可上架构分离(breakdown 给人看 + PROMPT 给模型, 改 _parse/translate/前端)。
-
 ## D30. 修: 角色精确 tag 裸名变体去重 (防 LLM 输出 ganyu 触发原神 logo)
 
 **背景**: 用户发现 char_dict 命中"甘雨"→`ganyu_(genshin_impact)` 后, 翻译结果仍含裸名 `ganyu`, 实测触发原神 logo(删 ganyu 即消失)。根因两层: (1) LLM 违规——D28 规则"Do NOT repeat or rephrase known tags"只防整串相等, `ganyu` ≠ `ganyu_(genshin_impact)`, LLM 不认违规, 且 `ganyu` 本身是合法 danbooru tag 当独立泛用名输出; (2) 后处理没兜——`normalize_tag_order` 只整串去重(seen set), 裸名不在 seen, 保留。原神 logo 触发: Anima 训练里 `ganyu`(裸名)强关联原神甘雨图(带 logo), 比 `ganyu_(genshin_impact)`(精确, 训练集被衍生图稀释)更"纯原神", 是触发 logo 的充分条件。
@@ -283,6 +283,22 @@
 
 **收益**: 治本(代码兜底, LLM 再不听话也不出裸名); 防 IP logo 误触发(不只原神, 任何 `角色_(系列)` 的裸名都可能弱化精度)。
 **代价**: 裸名提取靠 `_(`/` (`分隔符, 极少数角色 tag 格式特殊可能漏(但 char_dict 都是标准 danbooru 精确 tag, 覆盖好)。
+
+## D32. 工作流合并: txt2img/img2img/detailer/inpaint 一份 JSON + 后端删节点拼接
+
+**背景**: 原 3 个工作流 (anima 快速 / anima-detailer 精修 / anima-img2img 图生图) 每加功能要重新导出 API JSON, 排列组合爆炸。想用"一份全开工作流 + 运行时选功能"替代。
+
+**调研**: (1) API 格式 JSON 无 MUTE 组信息, 不能运行时拨开关; (2) ImpactSwitch 的 select 虽可运行时切, 但**它所有输入都会执行**——精修链挂它后面, select=1 时精修链照样跑, 不省 GPU 时间, 违背"快速模式要快"; (3) 社区 AnimaDetailerV7 是图片编辑导向 (LoadImage 起, 无 txt2img), 不能直接顶快速工作流; 社区 AnimaStandardV7 才是正确基础 (有 txt2img+img2img+4路detailer)。
+
+**决定**:
+1. **基础 = 社区 AnimaStandardV7** (txt2img+img2img+4路 detailer), 嫁接 inpaint 链 (ImagePadForOutpaint→VAEEncode→SetLatentNoiseMask→KSampler→VAEDecode, 复用 LoadImage 0 的 alpha 作 mask)。
+2. **后端删节点拼接** (真正省时): build_prompt 按 `detailer:{face,hand,nsfw,eyes}` 删未选 detailer 节点、重连; 删的节点不执行 (ComfyUI 懒执行, 不可达节点跳过)。快速=删全部 detailer, VAEDecode 直连 Save。
+3. **inpaint 源切**: 有 image+inpaint 时, detailer 链源从主 VAEDecode(43) 切到 inpaint VAEDecode(206); 主 KSampler 变不可达不执行。
+4. **调参**: 社区默认 max_size=1536 + steps=16 太慢 (3.2s/步, 全精修超时); 按 DEVLOG 第19条调成 **max_size=1024 + steps=12** (全精修 95s)。
+5. **暗房**: tweak 的 `wf_name="anima-img2img"` 改 `"anima"` (img2img 由 image_filename 触发); 暗房加独立精修开关 (复用 detailerState)。
+
+**收益**: 一份 JSON 覆盖 txt2img/img2img/精修(可逐路开)/inpaint, 旧 3 工作流退役; 删节点真正省时 (快速不跑 detailer); inpaint 复用 LoadImage alpha 作 mask, 不用单独黑白 mask。
+**代价**: build_prompt 拼接逻辑依赖工作流拓扑 (detailer 链 27→28→29→30 顺序写死在 config detailer_nodes); inpaint 链用纯 KSampler (弃 AnimaLLLiteApply, 那是 kohya 包的 `_sdscripts` 节点, 工作流用的 `AnimaLLLiteApply` 带 mask 版本包未找到, 降级纯 KSampler inpaint)。
 
 ## D31. 修: 暗房 redo 替换意图检测 (换成X时删旧角色名防 char_dict 双命中)
 

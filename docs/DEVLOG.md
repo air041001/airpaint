@@ -435,22 +435,6 @@ node --check 通过; 72 个元素 id 引用全部存在。待用户真机点一�
 
 ## 第 25 条 2026-08-07 - 提示词格式优化: quality_prefix 官方化 + system prompt 信息分流重写
 
-## 第 26 条 2026-08-07 - LoRA 工程: 自动扫描 + 多 LoRA + 分类
-
-### 做了什么
-1. **config.yaml 分类**: loras 加 `type: character|style` 字段; 新增 BlueArchiveStyleB1 (风格, trigger `@BlueArchStyle`) + denia_lorav4 三个角色变体 (denia_white/denia_sigrika/denia_black, 同一文件三个触发词)。
-2. **自动扫描 + Civitai lookup**: 后端启动时后台扫 `comfy_dir/models/loras/`, 对 config 未覆盖的 `.safetensors` 按 SHA256 查 Civitai API 取 trainedWords/modelName/tags。结果缓存到 `server/lora_cache.json`。SHA256 优先读 LoraManager `.metadata.json` (已有, 不重算)。`/api/loras/refresh` 可手动触发重扫。
-3. **多 LoRA 注入**: `build_prompt` 的 `lora_key: str` -> `lora_keys: list[str]`, loras widget 数组注入多条, trigger 全部拼进 prompt。`/api/jobs` 和 `/api/dialog/turn` 接收 `loras: list[str]` (向后兼容旧 `lora: str` 单选)。
-4. **`/api/loras` 改为分组**: 返回 `{characters: [...], styles: [...], other: [...]}`, 每条带 `configured` (是否有触发词) + `source` (config/civitai)。
-
-### 遇到什么 / 怎么解
-- **LoraManager TriggerWord Toggle 显示 "no triggerwords detected"**: 调研发现 LoraManager 的 civitai 元数据同步没工作 (`.metadata.json` 里 `civitai` 字段一直空, scan 也不回填 `.civitai.info`)。即使修好, Civitai `trainedWords` 很多作者不填, 且只含基础触发词不含服装变体。结论: 不依赖 LoraManager 自动检测, 自己直接读 Civitai API + config 手动维护。
-- **Civitai trainedWords 不可靠**: denia_lorav4 和 BlueArchiveStyleB1 的 trainedWords 都是空, 但实际有触发词 (在 HTML description 里)。不解析 description (格式不统一, 误判更糟), 改为: 有 trainedWords 的自动可用, 没的标记 `configured: false` 让用户手动配 config。
-- **SHA256 计算大文件慢**: BlueArchiveStyleB1 137MB。优先读 LoraManager 已算好的 `.metadata.json` 里的 sha256, 没有再现算。
-
-### 下一步
-前端需配合: LoRA 选择器从单选改为分组多选 (角色最多1 + 风格最多1); 显示 `configured: false` 标记; 可选加刷新按钮调 `/api/loras/refresh`。见 D29。
-
 ### 完成内容
 两件事, 都围绕"喂给 Anima 的提示词格式"。
 
@@ -469,6 +453,22 @@ node --check 通过; 72 个元素 id 引用全部存在。待用户真机点一�
 
 ### 验证
 py_compile 通过; grep 确认 NSFW 声明(139) + HARD RULE(150) + Self-check(157) + 新示例(192) 到位。待重启后端实测: 简单输入看 NL 是否空/极简; 多角色输入看 NL 是否只写空间分配不复述 tag。若仍偶发重复, 后手=架构分离(breakdown 给人看 + PROMPT 给模型)。详见 D28。
+
+## 第 26 条 2026-08-07 - LoRA 工程: 自动扫描 + 多 LoRA + 分类
+
+### 做了什么
+1. **config.yaml 分类**: loras 加 `type: character|style` 字段; 新增 BlueArchiveStyleB1 (风格, trigger `@BlueArchStyle`) + denia_lorav4 三个角色变体 (denia_white/denia_sigrika/denia_black, 同一文件三个触发词)。
+2. **自动扫描 + Civitai lookup**: 后端启动时后台扫 `comfy_dir/models/loras/`, 对 config 未覆盖的 `.safetensors` 按 SHA256 查 Civitai API 取 trainedWords/modelName/tags。结果缓存到 `server/lora_cache.json`。SHA256 优先读 LoraManager `.metadata.json` (已有, 不重算)。`/api/loras/refresh` 可手动触发重扫。
+3. **多 LoRA 注入**: `build_prompt` 的 `lora_key: str` -> `lora_keys: list[str]`, loras widget 数组注入多条, trigger 全部拼进 prompt。`/api/jobs` 和 `/api/dialog/turn` 接收 `loras: list[str]` (向后兼容旧 `lora: str` 单选)。
+4. **`/api/loras` 改为分组**: 返回 `{characters: [...], styles: [...], other: [...]}`, 每条带 `configured` (是否有触发词) + `source` (config/civitai)。
+
+### 遇到什么 / 怎么解
+- **LoraManager TriggerWord Toggle 显示 "no triggerwords detected"**: 调研发现 LoraManager 的 civitai 元数据同步没工作 (`.metadata.json` 里 `civitai` 字段一直空, scan 也不回填 `.civitai.info`)。即使修好, Civitai `trainedWords` 很多作者不填, 且只含基础触发词不含服装变体。结论: 不依赖 LoraManager 自动检测, 自己直接读 Civitai API + config 手动维护。
+- **Civitai trainedWords 不可靠**: denia_lorav4 和 BlueArchiveStyleB1 的 trainedWords 都是空, 但实际有触发词 (在 HTML description 里)。不解析 description (格式不统一, 误判更糟), 改为: 有 trainedWords 的自动可用, 没的标记 `configured: false` 让用户手动配 config。
+- **SHA256 计算大文件慢**: BlueArchiveStyleB1 137MB。优先读 LoraManager 已算好的 `.metadata.json` 里的 sha256, 没有再现算。
+
+### 下一步
+前端需配合: LoRA 选择器从单选改为分组多选 (角色最多1 + 风格最多1); 显示 `configured: false` 标记; 可选加刷新按钮调 `/api/loras/refresh`。见 D29。
 
 ## 第 27 条 2026-08-08 - 修: 角色精确 tag 裸名变体去重 (防 ganyu 触发原神 logo)
 
@@ -504,3 +504,17 @@ py_compile 通过; grep 确认 redo 分支替换意图检测(1162-1165)到位。
 ### 验证
 py_compile 通过; grep 确认 `_strip_char_bare_names` 函数(622) + 两处调用(667/708) + system prompt 新规则(303) 到位。待重启后端用"甘雨"实测确认 ganyu 不再出现 + 原神 logo 消失。详见 D30。
 
+## 第 29 条 2026-08-11 - 工作流合并: 一份 JSON 覆盖 txt2img/img2img/精修/inpaint
+
+### 做了什么
+把 3 个工作流 (快速/精修/图生图) 合并成一份 AnimaFull.json, 后端删节点拼接运行时选功能。
+
+### 关键改动 / 为什么
+- **基础=社区 AnimaStandardV7** (有 txt2img+img2img+4路 detailer), 不是 AnimaDetailerV7 (那是图片编辑导向无 txt2img)。嫁接 inpaint 链 (ImagePadForOutpaint→VAEEncode→SetLatentNoiseMask→KSampler→VAEDecode, 复用 LoadImage 0 alpha 作 mask)。
+- **后端删节点拼接** (build_prompt): 按 detailer:{face,hand,nsfw,eyes} 删未选 detailer 节点重连; 不可达节点 ComfyUI 懒执行跳过, 真正省时。弃 ImpactSwitch (它所有输入都执行, 不省 GPU)。
+- **调参**: 社区默认 max_size=1536 steps=16 太慢 (3.2s/步, 全精修超时失败); 按 DEVLOG 19条调成 max_size=1024 steps=12, 全精修 95s。
+- **暗房 tweak 修 bug**: wf_name "anima-img2img"→"anima" (工作流合并后删了旧名, 报未知工作流)。暗房加独立精修开关。
+- **弃 AnimaLLLiteApply**: 工作流用的带 mask 版节点 (kohya 包是 _sdscripts 版无 mask) 来源未找到, 降级纯 KSampler inpaint。
+
+### 验证
+后端实测: txt2img 无精修 ~42s / 全精修(调参后) ~95s / inpaint(带mask) ~90s / 暗房 tweak+精修 出图成功。build_prompt 拼接 4 种配置节点链全对。详见 D32。

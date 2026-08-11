@@ -19,7 +19,7 @@
 ## Phase 2: 多工作流 + 体验升级
 
 ### 2.1 多工作流热插拔
-- [x] config.yaml 支持多工作流定义 (anima 快速 / anima-detailer 精修) - 2026-07-30
+- [x] 工作流合并: txt2img/img2img/精修/inpaint 一份 AnimaFull.json + 后端删节点拼接 (D32) - 2026-08-11
 - [x] 前端工作流下拉选择器 (既有, 现两个选项)
 - [ ] 每个工作流独立的 sizes/quality_prefix/negative_prefix (目前共享同值, 未做独立)
 - [x] 后端按选择动态加载对应 workflow JSON (build_prompt 按 wf_name 读 file)
