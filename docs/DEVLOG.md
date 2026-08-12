@@ -518,3 +518,20 @@ py_compile 通过; grep 确认 `_strip_char_bare_names` 函数(622) + 两处调�
 
 ### 验证
 后端实测: txt2img 无精修 ~42s / 全精修(调参后) ~95s / inpaint(带mask) ~90s / 暗房 tweak+精修 出图成功。build_prompt 拼接 4 种配置节点链全对。详见 D32。
+
+## 第 30 条 2026-08-12 - 撤销 inpaint 功能 (效果不达标)
+
+### 为什么撤销
+inpaint 局部重绘实测效果不达标: (1) 该工作流 inpaint 采样器用反转 mask 约定 (黑=重绘), 前端需反转; (2) 改发色时 mask 稍大就整头重绘成新角色, 紧贴头发丝才保脸, 但用户上手难; (3) 用户自己不用 inpaint, 网站也没几个人用, 投入产出不值。
+
+### 撤销了什么 (保留精修合并)
+- 移除 AnimaFull.json 的 inpaint 节点 (200-206)
+- build_prompt/page/链 inpaint 逻辑移除 (chain_source 固定主 VAEDecode 43)
+- config 移除 inpaint_source/ksampler/denoise
+- 前端移除 inpaint 画布 (inpaint-section, getInpaintRGBA, 涂抹交互)
+- **保留**: 精修合并 (AnimaFull 一份 JSON 覆盖 txt2img/img2img/4路 detailer + 后端删节点拼接), 这是 D32 主成果。
+
+### 学到的 (inpaint mask 结论, 记下避免再踩)
+- ComfyUI 通用约定白=重绘, 但**有些工作流/采样器反转 (黑=重绘)**, 必须实测。
+- inpaint 是"区域重绘"不是"改色": 改属性 (发色) 要精准 mask 紧贴目标, 否则整区域重生。
+- 改发色保同脸: denoise 0.9 + 紧贴头发 mask (不碰脸) 可行, 但 UX 难 (无缩放/撤销)。

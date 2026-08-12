@@ -772,7 +772,7 @@ def build_prompt(wf_name: str, prompt_en: str, width: int | None, height: int | 
                  lora_keys: list[str] | None = None,
                  strength_char: float | None = None, strength_style: float | None = None,
                  image_filename: str | None = None, denoise: float | None = None,
-                 inpaint: bool = False, detailer: dict | None = None) -> dict:
+                 detailer: dict | None = None) -> dict:
     wcfg = WORKFLOWS[wf_name]
     wf = json.loads((BASE / wcfg["file"]).read_text(encoding="utf-8"))
     wf = sanitize_for_api(wf)
@@ -843,13 +843,11 @@ def build_prompt(wf_name: str, prompt_en: str, width: int | None, height: int | 
     # ---- detailer 拼接 + inpaint/img2img 源切 (D32) ----
     # 合并版工作流: 一份 AnimaFull.json 含 txt2img/img2img/inpaint + 4路 detailer.
     # build_prompt 按 detailer:{hand,nsfw,face,eyes} 删未选节点、重连, 真正的"拼接" (删的节点不执行, 省时).
-    # 图片源: inpaint 用 inpaint VAEDecode(206), 否则用主 VAEDecode(43).
     detailer_cfg = wcfg.get("detailer_nodes")
     if image_filename and "image_node" in wcfg:
-        set_input("image_node", "image", image_filename)   # LoadImage: img2img 和 inpaint 共用
+        set_input("image_node", "image", image_filename)   # LoadImage: img2img 用
     if detailer_cfg:
-        # 链源: inpaint -> inpaint VAEDecode, 否则主 VAEDecode
-        chain_source = str(wcfg.get("inpaint_source", "206")) if (inpaint and image_filename) else "43"
+        chain_source = "43"   # 主 VAEDecode (detailer 链源)
         save_id = next((nid for nid, n in wf.items() if n.get("class_type") == "SaveImage"), None)
         if not save_id:
             raise HTTPException(500, f"workflow {wf_name} 找不到 SaveImage 节点")
@@ -864,18 +862,12 @@ def build_prompt(wf_name: str, prompt_en: str, width: int | None, height: int | 
             else:
                 del wf[nid]   # 删未选 detailer 节点, 重连 (依赖节点变不可达, 不执行)
         wf[save_id]["inputs"]["images"] = [prev, 0]
-    # img2img / inpaint 注入
+    # img2img 注入: 切 ImpactSwitch select=2 (VAEEncode latent) + 覆盖主 KSampler denoise
     if image_filename and "image_node" in wcfg:
-        if inpaint:
-            # inpaint: 主 KSampler 不跑 (链源=inpaint VAEDecode), 只设 inpaint KSampler denoise
-            if "inpaint_ksampler" in wcfg:
-                set_input("inpaint_ksampler", "denoise", float(wcfg.get("inpaint_denoise", 1.0)))
-        else:
-            # img2img: 切 ImpactSwitch select=2 (VAEEncode latent) + 覆盖主 KSampler denoise
-            if "switch_node" in wcfg:
-                set_input("switch_node", "select", 2)
-            if denoise is not None and "denoise_node" in wcfg:
-                set_input("denoise_node", "denoise", float(denoise))
+        if "switch_node" in wcfg:
+            set_input("switch_node", "select", 2)
+        if denoise is not None and "denoise_node" in wcfg:
+            set_input("denoise_node", "denoise", float(denoise))
     return {"prompt": wf, "client_id": CLIENT_ID, "_seed": seed}
 
 
@@ -893,10 +885,10 @@ async def upload_image_to_comfy(image_bytes: bytes) -> str:
 async def submit_and_wait(wf_name: str, prompt_en: str, width, height, lora_keys: list[str] | None = None,
                           strength_char: float | None = None, strength_style: float | None = None,
                           image_filename: str | None = None, denoise: float | None = None,
-                          inpaint: bool = False, detailer: dict | None = None) -> str:
+                          detailer: dict | None = None) -> str:
     payload = build_prompt(wf_name, prompt_en, width, height, lora_keys,
                            strength_char, strength_style, image_filename, denoise,
-                           inpaint, detailer)
+                           detailer)
     seed = payload.pop("_seed")
     r = await CLIENT.post(f"{COMFY}/prompt", json=payload)
     if r.status_code != 200:
@@ -940,7 +932,7 @@ async def worker():
             fname = await submit_and_wait(job["workflow"], job["prompt_en"], job.get("width"), job.get("height"),
                                          job.get("loras"), job.get("strength_char"), job.get("strength_style"),
                                          job.get("image_filename"), job.get("denoise"),
-                                         bool(job.get("inpaint")), job.get("detailer"))
+                                         job.get("detailer"))
             job.update(status="done", image=f"/images/{fname}")
         except Exception as e:
             job.update(status="failed", error=str(e))
@@ -1035,7 +1027,7 @@ async def translate_prompt(req: Request, token: str = Depends(verify_token)):
 async def _enqueue(token: str, wf_name: str, prompt_en: str, prompt_raw: str,
                    size, loras: list[str] | None, strength_char, strength_style,
                    image_filename: str | None = None, denoise: float | None = None,
-                   inpaint: bool = False, detailer: dict | None = None) -> str:
+                   detailer: dict | None = None) -> str:
     """校验并入队一次出图 (USAGE+1 / JOBS / QUEUE.put). create_job 与 /api/dialog/turn 共用. 返回 job_id.
     prompt_en/prompt_raw 的 banned 检查由调用方负责 (两处逻辑不同)."""
     if wf_name not in WORKFLOWS:
@@ -1081,7 +1073,7 @@ async def _enqueue(token: str, wf_name: str, prompt_en: str, prompt_raw: str,
         "width": width, "height": height, "loras": loras,
         "strength_char": strength_char, "strength_style": strength_style,
         "image_filename": image_filename, "denoise": denoise,
-        "inpaint": inpaint, "detailer": detailer,
+        "detailer": detailer,
         "status": "queued", "created": time.time(),
     }
     await QUEUE.put(job_id)
@@ -1113,10 +1105,9 @@ async def create_job(req: Request, token: str = Depends(auth)):
     check_banned(prompt_en)
     if prompt_raw != prompt_en:
         check_banned(prompt_raw)
-    # img2img / inpaint: 图 base64 -> 上传 ComfyUI -> 拿文件名 (见 D26)
+    # img2img: 图 base64 -> 上传 ComfyUI -> 拿文件名 (见 D26)
     image_b64 = (body.get("image") or "").strip()
     denoise = body.get("denoise")
-    inpaint = bool(body.get("inpaint"))
     detailer = body.get("detailer")
     image_filename = None
     if image_b64:
@@ -1129,7 +1120,7 @@ async def create_job(req: Request, token: str = Depends(auth)):
     job_id = await _enqueue(token, wf_name, prompt_en, prompt_raw,
                             body.get("size"), loras,
                             body.get("strength_char"), body.get("strength_style"),
-                            image_filename, denoise, inpaint, detailer)
+                            image_filename, denoise, detailer)
     return {"id": job_id, "prompt_en": prompt_en}
 
 
@@ -1295,8 +1286,7 @@ async def dialog_turn(req: Request, token: str = Depends(auth)):
     job_id = await _enqueue(token, wf_name, prompt_en, raw,
                             body.get("size"), loras,
                             body.get("strength_char"), body.get("strength_style"),
-                            image_filename, denoise,
-                            bool(body.get("inpaint")), body.get("detailer"))
+                            image_filename, denoise, body.get("detailer"))
     SESSIONS[session_id]["turns"].append({"job_id": job_id, "action": action, "delta": delta, "prompt_en": prompt_en})
     return {"session_id": session_id, "job_id": job_id}
 

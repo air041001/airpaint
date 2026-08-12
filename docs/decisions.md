@@ -297,8 +297,11 @@
 4. **调参**: 社区默认 max_size=1536 + steps=16 太慢 (3.2s/步, 全精修超时); 按 DEVLOG 第19条调成 **max_size=1024 + steps=12** (全精修 95s)。
 5. **暗房**: tweak 的 `wf_name="anima-img2img"` 改 `"anima"` (img2img 由 image_filename 触发); 暗房加独立精修开关 (复用 detailerState)。
 
-**收益**: 一份 JSON 覆盖 txt2img/img2img/精修(可逐路开)/inpaint, 旧 3 工作流退役; 删节点真正省时 (快速不跑 detailer); inpaint 复用 LoadImage alpha 作 mask, 不用单独黑白 mask。
+**收益**: 一份 JSON 覆盖 txt2img/img2img/精修(可逐路开), 旧 3 工作流退役; 删节点真正省时 (快速不跑 detailer)。
+**注 (D33)**: inpaint 部分已撤销 (实测效果不达标, 见 DEVLOG 30); 保留的是精修合并。
 **代价**: build_prompt 拼接逻辑依赖工作流拓扑 (detailer 链 27→28→29→30 顺序写死在 config detailer_nodes); inpaint 链用纯 KSampler (弃 AnimaLLLiteApply, 那是 kohya 包的 `_sdscripts` 节点, 工作流用的 `AnimaLLLiteApply` 带 mask 版本包未找到, 降级纯 KSampler inpaint)。
+
+**修复 inpaint mask 反转 (实测省时记结论)**: 该工作流 inpaint 采样器用**反转约定 (黑=重绘, 白=保留)**, 与标准 (白=重绘) 相反。前端 `getInpaintRGBA` 涂的区域 alpha=0 (重绘)、未涂 alpha=255 (保留)。另 inpaint denoise 0.9 (0.7 改不动色、1.0 叠角色; 0.9 单角色+改色+保留场景)。mask 尺寸必须与图对齐 (原先 ImageScaleToTotalPixels 把图缩到 1MP 但 mask 留原尺寸错位, 已去掉 resize 让二者同尺寸)。
 
 ## D31. 修: 暗房 redo 替换意图检测 (换成X时删旧角色名防 char_dict 双命中)
 

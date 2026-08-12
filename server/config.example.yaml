@@ -28,10 +28,9 @@ siliconflow_model: "Qwen/Qwen3-8B"
 banned_words: []
 
 # ---- 工作流配置 ----
-# 合并版 AnimaFull: txt2img + img2img + 4路detailer(可拼接) + inpaint.
+# 合并版 AnimaFull: txt2img + img2img + 4路detailer(可拼接).
 # 节点 id 对照 server/workflows/AnimaFull.json 实际图核对.
 # detailer_nodes: hand/nsfw/face/eyes 四路 ADetailer, build_prompt 按 detailer:{...} 删未选/重连(省时).
-# inpaint_source: inpaint VAEDecode, build_prompt 把 detailer 链源切到它; inpaint_ksampler 是 inpaint 采样.
 workflows:
   anima:
     label: "Anima V7"
@@ -40,7 +39,7 @@ workflows:
     seed_node: "6"
     size_node: "56"
     lora_node: "5"
-    image_node: "0"       # LoadImage: img2img + inpaint 共用
+    image_node: "0"       # LoadImage: img2img 用
     switch_node: "42"     # ImpactSwitch: img2img latent 路由 (1=txt2img 2=img2img)
     denoise_node: "6"     # 主 KSampler denoise (img2img 微调用)
     detailer_nodes:
@@ -48,9 +47,6 @@ workflows:
       nsfw: "28"
       face: "29"
       eyes: "30"
-    inpaint_source: "206"
-    inpaint_ksampler: "204"
-    inpaint_denoise: 1.0
     sizes: ["832x1216", "1216x832", "1024x1024"]
     quality_prefix: "masterpiece, best quality, newest, absurdres, "
 
