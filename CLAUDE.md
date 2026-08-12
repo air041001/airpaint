@@ -8,7 +8,7 @@
 前后端共用固定域名 `airpaint.xyz`, 经 cloudflared **命名隧道**穿透内网(不暴露本机端口)。
 当前阶段: **Release v1.0 -- 三工作流 + 对话迭代 + 参考图 + NSFW detailer + 前端三屏**。
 
-> **最近改动** (每次迭代更新此行): 2026-08-11 工作流合并(txt2img/img2img/精修/inpaint 一份 AnimaFull.json + 后端删节点拼接, D32); 见 DEVLOG 第29条。前档: 暗房 redo 替换意图(D31)/角色裸名去重(D30)/LoRA 工程(D29)。
+> **最近改动** (每次迭代更新此行): 2026-08-12 工作流合并(txt2img/img2img/精修一份 AnimaFull.json + 后端删节点拼接, D32; inpaint 已撤销, D33/DEVLOG 30); 见 DEVLOG 第30条。前档: 暗房 redo 替换意图(D31)/角色裸名去重(D30)/LoRA 工程(D29)。
 
 ## 模块地图
 
@@ -19,7 +19,7 @@
 | 鉴权/限流 | `auth()` `USAGE` | Bearer token + 日限, **内存计数(重启清零)** |
 | 内容过滤 | `check_banned()` | banned_words 子串匹配 |
 | **Prompt Engine** | `translate()` `match_characters()` `match_dict_words()` `siliconflow_translate()` `_parse_structured_output()` `normalize_tag_order()` `HotDict` `dict.yaml` `char_dict.yaml` | 三层: 角色->词典->LLM(信息分流: 5字段给人看 + TAGS离散属性 + NL关系叙事不重复, D28, 回传 breakdown) / LRU 缓存 500 / **reroll 跳过缓存高温重抽** / **tag 规范序 count->char->general** / **词典 mtime 热更新不重启** / **dict 子串匹配(NSFW词绕过LLM安全过滤)** |
-| **Workflow Engine** | `sanitize_for_api()` `build_prompt()` `upload_image_to_comfy()` | 清洗前端专属节点+ 注入 prompt/seed/size/**多LoRA**/img2img/inpaint, **统一 seed**, **detailer 删节点拼接**(按 detailer:{face,hand,nsfw,eyes} 删未选重连, D32); **一份合并工作流 AnimaFull** (txt2img/img2img/精修/inpaint) |
+| **Workflow Engine** | `sanitize_for_api()` `build_prompt()` `upload_image_to_comfy()` | 清洗前端专属节点+ 注入 prompt/seed/size/**多LoRA**/img2img, **统一 seed**, **detailer 删节点拼接**(按 detailer:{face,hand,nsfw,eyes} 删未选重连, D32); **一份合并工作流 AnimaFull** (txt2img/img2img/精修) |
 | **LoRA Registry** | `get_lora_registry()` `scan_loras()` `_civitai_lookup()` `LORA_CACHE_FILE` | 三层合并: config.yaml 手动(type/trigger/服装变体) > Civitai SHA256 hash lookup 自动补全 > 裸文件; `/api/loras` 分组返回(character/style/other) + configured 标记; `/api/loras/refresh` 重扫; D29 |
 | ComfyUI 客户端 | `submit_and_wait()` | `/prompt` 提交 + `/history` 轮询 + `/view` 取图 |
 | 队列 | `worker()` `QUEUE` | 单并发 asyncio.Queue (GPU 串行) |

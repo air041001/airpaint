@@ -103,8 +103,7 @@ Authorization: Bearer <token>
   "loras": ["salt_finale_maid", "shiratama_art"],
   "strength_char": 1.0, "strength_style": 0.8,
   "detailer": {"face": true, "hand": true, "nsfw": false, "eyes": true},
-  "image": "(可选, base64 RGBA PNG, 图生图或 inpaint)",
-  "inpaint": false,
+  "image": "(可选, base64, 图生图模式)",
   "denoise": 0.35
 }
 ```
@@ -117,8 +116,6 @@ Authorization: Bearer <token>
 - `denoise`: 可选, 0.1~0.9。图生图重采样强度: 低=接近原图(微调), 高=大改。默认 0.35。
 
 - `detailer`: 可选, `{face,hand,nsfw,eyes}` 布尔, 控制 4 路精修 (默认全关=快速; 全开约 95s)。后端删未选节点重连。
-- `inpaint`: 可选, 默认 false。true 时 image 视为带 alpha mask 的 RGBA PNG, 只重绘 mask 区域 (链源切到 inpaint VAEDecode)。
-- `image`: 图生图模式 (inpaint=false) 传普通图; inpaint 模式需传 RGBA PNG (alpha=涂的区域)。
 
 校验失败: `400` (未知工作流 / prompt_en 空或过长 / 非法尺寸 / 命中禁词 / 未知 LoRA / 未知精修类型 / 工作流不支持 LoRA / LoRA 强度非法)。
 

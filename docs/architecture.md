@@ -58,7 +58,7 @@ ComfyUI  127.0.0.1:8188  (不对公网开放, 用 run_nvidia_gpu_fast_fp16_accum
 信息分流由单条 system prompt 处理 (How-to-decide 分流决策 + Self-check 自检 + Weight policy 权重框架 + 4 示例, 见 D28; Anima 规范: 小写+空格、主体计数在前、禁 quality/score tag、禁 realistic/3d); 正向 `quality_prefix` 走 Anima 官方 (`masterpiece, best quality, newest, absurdres`), 负面为工作流固化常量 (WAI-Anima 式 + 构图否定词 multiple views/split view/grid view/cropped/out of frame), 不随输入变。见 D12/D13/D15/D18/D28。
 
 ### Workflow Engine (工作流注入)
-`build_prompt(wf_name, prompt_en, w, h, lora_keys=None, strength_char, strength_style, image_filename, denoise, inpaint, detailer)`:
+`build_prompt(wf_name, prompt_en, w, h, lora_keys=None, strength_char, strength_style, image_filename, denoise, detailer)`:
 1. 读 `workflows/<file>.json`。
 2. `sanitize_for_api(wf)`: 删 `WidgetToString` / `Image Saver Metadata` (依赖前端 `extra_pnginfo`, API 提交会崩); `Image Saver Simple` → 内置 `SaveImage`。
 3. **统一 seed**: 扫描所有 int 型 `seed`/`noise_seed` 输入, 全写成同一正整数 (跳过列表型的节点连接)。修复 Impact Pack `np.random.default_rng(-1)` 崩溃 → FaceDetailer 人脸修复能正常跑。
@@ -66,7 +66,7 @@ ComfyUI  127.0.0.1:8188  (不对公网开放, 用 run_nvidia_gpu_fast_fp16_accum
 5. 注入: `prompt_node.text = quality_prefix + safety + (trigger+", " 若有 LoRA) + prompt_en`; `size_node.width/height`; (不配 `negative_node`, 用工作流自带负面模板)。触发词取自 registry (config 优先, Civitai 自动补全次之) (LoraManager 自带触发词链已被此步覆盖节点54 text 断掉)。
 6. 返回 `{prompt, client_id, _seed}`。
 
-> 扩展其他节点注入 (ControlNet / 图生图 / inpaint 等) 前, 先看 `CLAUDE.md` 的「ComfyUI 节点注入准则」-- 必须查本机节点源码定 input 格式, 不靠猜; 实例见 D16 (LoRA)。
+> 扩展其他节点注入 (ControlNet / 图生图 等) 前, 先看 `CLAUDE.md` 的「ComfyUI 节点注入准则」-- 必须查本机节点源码定 input 格式, 不靠猜; 实例见 D16 (LoRA)。
 
 ### ComfyUI 客户端
 `submit_and_wait(...)`:
