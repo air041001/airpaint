@@ -1,6 +1,6 @@
 # 架构
 
-> 当前状态反映 2026-07-25 (airpaint.xyz 命名隧道迁移后)。
+> 当前状态反映 2026-08-12 (工作流合并 D32 后)。
 > 改动架构时同步本文件 (见 `CLAUDE.md` 规则 2)。
 
 ## 部署拓扑
@@ -21,8 +21,8 @@ FastAPI 后端  127.0.0.1:8000  (server/main.py)
    ├─ 单并发队列 (asyncio.Queue, GPU 串行)
    └─ 静态托管 / + /images
    ▼
-ComfyUI  127.0.0.1:8188  (不对公网开放, 用 run_nvidia_gpu_fast_fp16_accumulation.bat 启动)
-   └─ AnimaStandard V7 工作流 (含 FaceDetailer 人脸修复)
+ComfyUI  127.0.0.1:8188  (不对公网开放)
+   └─ AnimaFull 合并工作流 (txt2img/img2img/精修, 后端删节点拼接, D32)
 ```
 
 > 前端与 API 同域不同子域: 网页在 `airpaint.xyz`, API 在 `api.airpaint.xyz`。
@@ -48,7 +48,7 @@ ComfyUI  127.0.0.1:8188  (不对公网开放, 用 run_nvidia_gpu_fast_fp16_accum
 ### Prompt Engine (翻译)
 `translate(text)` 三层流程:
 1. **角色匹配** (`match_characters`, `char_dict.yaml`): 子串扫描角色名, 返回 tag 列表 + 移除角色名后的剩余文本。
-2. **词典匹配** (`dict.yaml`, 851 条): 剩余文本按逗号切分逐段精确匹配, 分 hits / misses。
+2. **词典匹配** (`dict.yaml`, 851 条): 剩余文本**子串匹配** (最长优先, len>=2), 分 hits / misses (见 D26)。
 3. 全命中 (无 misses): 裸角色名 (只有角色无描述) -> `tag, 1girl, solo` 跳过 LLM; 否则 `角色tag + 词典tag` 拼接。
 4. 有未命中 -> 按后端:
    - `siliconflow`: 构造上下文 (Known character tags / Known attribute tags / Remaining misses) 送 Qwen3-8B。LLM **信息分流** (scene/composition/mood/lighting/style 给人看 + TAGS 离散属性 + NL 关系叙事, 见 D28), `_parse_structured_output` 解析; **TAGS/NL 不重复**(HARD RULE: NL 不得复述 TAGS 已有 tag, 全是 tag 则留空); 隐喻落 mood(禁字面名词), 多角色空间布局落 NL(单角色构图落 composition 带 facing/from behind/looking out 锚点), scene 强制具体; 无 TAGS 行降级为整体当 tag(不崩)。返回 `(new_tags, breakdown)`, 后端 `_strip_char_bare_names` 删 LLM 输出的已知角色裸名变体(如 `ganyu_(genshin_impact)` 时删 `ganyu`, 见 D30), 再 prepend 已知 tag, breakdown 回传前端预览。`/no_think` + 顶层 `enable_thinking:False`(config `translate_enable_thinking` 可翻, 见 D18) 关思考 (见 D2), max_tokens 400 / temp 0.4, 失败抛 502。LRU 缓存 500 (key=上下文, 值为 (prompt_en, breakdown))。
@@ -64,7 +64,8 @@ ComfyUI  127.0.0.1:8188  (不对公网开放, 用 run_nvidia_gpu_fast_fp16_accum
 3. **统一 seed**: 扫描所有 int 型 `seed`/`noise_seed` 输入, 全写成同一正整数 (跳过列表型的节点连接)。修复 Impact Pack `np.random.default_rng(-1)` 崩溃 → FaceDetailer 人脸修复能正常跑。
 4. **LoRA 注入** (若 `lora_keys`): 写 `lora_node.loras = {"__value__":[{name,strength,clipStrength,active:true}, ...]}` (数组多条, D29)。LoraManager 的 `text` 字段执行时被 `del` 无效, 必须走 widget; `active` 必须为 true (见 D16)。
 5. 注入: `prompt_node.text = quality_prefix + safety + (trigger+", " 若有 LoRA) + prompt_en`; `size_node.width/height`; (不配 `negative_node`, 用工作流自带负面模板)。触发词取自 registry (config 优先, Civitai 自动补全次之) (LoraManager 自带触发词链已被此步覆盖节点54 text 断掉)。
-6. 返回 `{prompt, client_id, _seed}`。
+6. **detailer 拼接** (若 `detailer:{face,hand,nsfw,eyes}`): 删未选 detailer 节点、重连 (删的节点不执行, 省时)。img2img: 切 ImpactSwitch select=2 + 覆盖主 KSampler denoise。
+7. 返回 `{prompt, client_id, _seed}`。
 
 > 扩展其他节点注入 (ControlNet / 图生图 等) 前, 先看 `CLAUDE.md` 的「ComfyUI 节点注入准则」-- 必须查本机节点源码定 input 格式, 不靠猜; 实例见 D16 (LoRA)。
 

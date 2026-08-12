@@ -39,7 +39,7 @@ Authorization: Bearer <token>
 响应 `200`:
 ```json
 [
-  { "name": "anima", "label": "AnimaStandard V7", "sizes": ["832x1216","1216x832","1024x1024"] }
+  { "name": "anima", "label": "Anima V7", "sizes": ["832x1216","1216x832","1024x1024"] }
 ]
 ```
 
@@ -159,7 +159,7 @@ failed (失败):
 ```
 - `start`: 建会话 + 首图。
 - `redo` (换一版): `delta` 有则累积重翻译, 无则复用当前 prompt_en 换 seed。`delta` 含替换意图(换成/替换/改成/换为/改为)时, 先删原 raw 里的旧角色名再重翻译, 防 char_dict 双命中(D31)。
-- `tweak` (微调/img2img): 上一张图上传 ComfyUI -> `anima-img2img` 工作流 + 低 denoise。`delta` 有则累积重翻译, 无则复用 current_en。`denoise` 控制偏离度 (默认 0.35)。
+- `tweak` (微调/img2img): 上一张图上传 ComfyUI -> 合并工作流 `anima` (img2img 由 image_filename 触发, D32) + 低 denoise。`delta` 有则累积重翻译, 无则复用 current_en。`denoise` 控制偏离度 (默认 0.35)。
 
 响应 `200`:
 ```json

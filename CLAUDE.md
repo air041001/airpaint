@@ -6,7 +6,7 @@
 
 把本机 ComfyUI 包成「中文描述 → 出图」的在线小屋, 发给朋友用。
 前后端共用固定域名 `airpaint.xyz`, 经 cloudflared **命名隧道**穿透内网(不暴露本机端口)。
-当前阶段: **Release v1.0 -- 三工作流 + 对话迭代 + 参考图 + NSFW detailer + 前端三屏**。
+当前阶段: **Release v1.1 -- 合并工作流 (txt2img/img2img/精修) + 对话迭代 + 参考图 + 前端三屏**。
 
 > **最近改动** (每次迭代更新此行): 2026-08-12 工作流合并(txt2img/img2img/精修一份 AnimaFull.json + 后端删节点拼接, D32; inpaint 已撤销, D33/DEVLOG 30); 见 DEVLOG 第30条。前档: 暗房 redo 替换意图(D31)/角色裸名去重(D30)/LoRA 工程(D29)。
 
