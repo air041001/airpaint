@@ -22,7 +22,11 @@ timeout_seconds: 300     # 单张图超时 (工作流带人脸修复, 偏慢)
 # 翻译后端: siliconflow (国内直连, LLM 直出 danbooru tag, 推荐) | google (需翻墙) | none
 translate: siliconflow
 siliconflow_api_key: "sk-你的硅基流动key"
-siliconflow_model: "Qwen/Qwen3-8B"
+siliconflow_model: "deepseek-ai/DeepSeek-V4-Flash"
+# 参考图理解: 视觉模型 (不接受 enable_thinking, 见 D23)
+siliconflow_vision_model: "Qwen/Qwen3-VL-8B-Instruct"
+# re-roll (抽卡再来一版): 高温重出一版不同分解. 正常翻译 temperature 写死 0.4, 此处仅 reroll 用
+reroll_temperature: 0.9
 
 # 被禁止的提示词关键词 (小写子串匹配), 按需扩充
 banned_words: []

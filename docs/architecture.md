@@ -17,7 +17,7 @@ cloudflared 命名隧道 "airpaint" (永久固定, 重启不变)
 FastAPI 后端  127.0.0.1:8000  (server/main.py)
    ├─ 鉴权 / 日限流 / 内容过滤
    ├─ Prompt Engine:  中文 → danbooru tag
-   ├─ Workflow Engine: 注入 prompt/seed/size/LoRA, 清洗前端专属节点
+   ├─ Workflow Engine: 注入 prompt/seed/size/LoRA, detailer 删节点拼接, 清洗前端专属节点
    ├─ 单并发队列 (asyncio.Queue, GPU 串行)
    └─ 静态托管 / + /images
    ▼
@@ -51,7 +51,7 @@ ComfyUI  127.0.0.1:8188  (不对公网开放)
 2. **词典匹配** (`dict.yaml`, 851 条): 剩余文本**子串匹配** (最长优先, len>=2), 分 hits / misses (见 D26)。
 3. 全命中 (无 misses): 裸角色名 (只有角色无描述) -> `tag, 1girl, solo` 跳过 LLM; 否则 `角色tag + 词典tag` 拼接。
 4. 有未命中 -> 按后端:
-   - `siliconflow`: 构造上下文 (Known character tags / Known attribute tags / Remaining misses) 送 Qwen3-8B。LLM **信息分流** (scene/composition/mood/lighting/style 给人看 + TAGS 离散属性 + NL 关系叙事, 见 D28), `_parse_structured_output` 解析; **TAGS/NL 不重复**(HARD RULE: NL 不得复述 TAGS 已有 tag, 全是 tag 则留空); 隐喻落 mood(禁字面名词), 多角色空间布局落 NL(单角色构图落 composition 带 facing/from behind/looking out 锚点), scene 强制具体; 无 TAGS 行降级为整体当 tag(不崩)。返回 `(new_tags, breakdown)`, 后端 `_strip_char_bare_names` 删 LLM 输出的已知角色裸名变体(如 `ganyu_(genshin_impact)` 时删 `ganyu`, 见 D30), 再 prepend 已知 tag, breakdown 回传前端预览。`/no_think` + 顶层 `enable_thinking:False`(config `translate_enable_thinking` 可翻, 见 D18) 关思考 (见 D2), max_tokens 400 / temp 0.4, 失败抛 502。LRU 缓存 500 (key=上下文, 值为 (prompt_en, breakdown))。
+   - `siliconflow`: 构造上下文 (Known character tags / Known attribute tags / Remaining misses) 送 DeepSeek-V4-Flash (config `siliconflow_model`)。LLM **信息分流** (scene/composition/mood/lighting/style 给人看 + TAGS 离散属性 + NL 关系叙事, 见 D28), `_parse_structured_output` 解析; **TAGS/NL 不重复**(HARD RULE: NL 不得复述 TAGS 已有 tag, 全是 tag 则留空); 隐喻落 mood(禁字面名词), 多角色空间布局落 NL(单角色构图落 composition 带 facing/from behind/looking out 锚点), scene 强制具体; 无 TAGS 行降级为整体当 tag(不崩)。返回 `(new_tags, breakdown)`, 后端 `_strip_char_bare_names` 删 LLM 输出的已知角色裸名变体(如 `ganyu_(genshin_impact)` 时删 `ganyu`, 见 D30), 再 prepend 已知 tag, breakdown 回传前端预览。`/no_think` + 顶层 `enable_thinking:False`(config `translate_enable_thinking` 可翻, 见 D18) 关思考 (见 D2), max_tokens 400 / temp 0.4, 失败抛 502。LRU 缓存 500 (key=上下文, 值为 (prompt_en, breakdown))。
    - `google`: gtx 逐词翻 misses (本机需翻墙, 已弃用)。
    - `none`: misses 原样保留。
 
@@ -87,22 +87,24 @@ ComfyUI  127.0.0.1:8188  (不对公网开放)
 ## 前端 (web/index.html)
 
 单文件 SPA, 无框架。localStorage 存邀请码; `API` 常量硬编码 `https://api.airpaint.xyz`。
-出图两步走 (翻译与生成解耦, 见 D17): 中文 -> `/api/translate` 拿 prompt_en + breakdown -> (可选预览/编辑) -> `/api/jobs` 传 prompt_en 提交。两按钮: 「✨ 直接生成」(翻译+提交一气呵成, 默认一键 UX) 与「🔍 预览提示词」(翻译后展示 breakdown「🤖 AI 理解」+ 可编辑 textarea, 改完点「确认生成」)。`/api/jobs` 不再翻译。
-轮询 `/api/jobs/{id}` 每 2s, 完成后展示图 + 入历史画廊(localStorage 缩略图, 最近 12 张)。
+三屏: 登录(邀请码) / 工坊(主界面) / 暗房(对话迭代)。深色暖调(安灯琥珀), 无框架。
+出图两步走 (翻译与生成解耦, 见 D17): 中文 -> `/api/translate` 拿 prompt_en + breakdown -> (可选预览/编辑) -> `/api/jobs` 传 prompt_en 提交。两按钮: 「生成」(翻译+提交一气呵成) 与「先看翻译」(翻译后展示「AI 理解」breakdown + 可编辑英文 textarea + 「再来一版」reroll, 改完点「确认生成」)。`/api/jobs` 不再翻译。
+右侧参数: 工作流(合并后单选项) / 尺寸 / LoRA(角色+风格分组, 各自强度滑块, 预览) / 参考图上传(输入框下方全宽虚线投放区)。
+轮询 `/api/jobs/{id}` 每 2s, 完成后展示图 + 入历史画廊(localStorage 缩略图, 最近 12 张)。出图后「继续迭代」进暗房: 换一版(txt2img 重抽, D31 替换意图) / 微调(img2img, 低 denoise)。
 
 > `web/` 是独立 git 仓库 → `air041001/air`。但域名迁移后已**不再依赖 GitHub Pages**
 > (前端由后端直接托管), 该仓库仅作备份, push 与否不影响线上。
 
 ## 配置 (server/config.yaml, gitignore)
 
-关键字段: `comfy_url` `host/port` `allow_origins` `tokens` `daily_limit`
-`timeout_seconds` `banned_words` `translate` `siliconflow_api_key` `siliconflow_model`
-`workflows.<name>.{file,prompt_node,seed_node,size_node,lora_node,sizes,quality_prefix}`;
-顶层 `loras.<key>.{type,name,file,trigger,strength_model,strength_clip,description,preview}` (type=character|style; 未列出的文件自动扫 Civitai 补全, D29)。
+关键字段: `comfy_url` `comfy_dir` `host/port` `allow_origins` `tokens` `daily_limit`
+`timeout_seconds` `banned_words` `translate` `siliconflow_api_key` `siliconflow_model` `siliconflow_vision_model` `reroll_temperature`
+`workflows.anima.{file,prompt_node,seed_node,size_node,lora_node,image_node,switch_node,denoise_node,detailer_nodes,sizes,quality_prefix}`;
+顶层 `loras.<key>.{type,name,file,trigger,strength_model,strength_clip,description,preview}` (type=character|style; 未列出的文件启动时自动扫 Civitai 补全, D29)。
 
 ## 尚未实现 / 已知限制
 
-- **Intent Engine**: 当前是「中文 → tag」的平铺翻译, 无意图解析 (谁/什么/风格/构图、否定、歧义)。是迈向「理解用户意图」核心目标的方向, 见 decisions.md。
+- **意图解析**: 已有 LLM 结构化分解(scene/composition/mood/lighting/style) + TAGS/NL 信息分流(D28), 但仍属「翻译器」形态(语义压平为字符串), 无独立意图/语义 IR 层。方向见 `docs/PLAN-v4`。
 - 用量/任务状态全内存, 重启清零 (Phase 3 计划 SQLite)。
-- 单工作流, 加新工作流需导出 API JSON + 校准节点 id。
+- 单份合并工作流 AnimaFull; 加功能分支 = 改 AnimaFull.json + config 声明节点 + build_prompt 拼接逻辑 (D32)。
 - 轮询取状态 (Phase 3 计划 WebSocket)。

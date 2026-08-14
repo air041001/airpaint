@@ -71,7 +71,7 @@ Authorization: Bearer <token>
 ```
 
 ### POST /api/translate
-只翻译不排队 (需鉴权, 不计入 image 限额): 中文 -> 英文 tag (角色->词典->LLM 三层 + 结构化扩写, LRU 缓存)。前端「预览提示词」和「直接生成」都先调它拿 prompt_en。
+只翻译不排队 (需鉴权, 不计入 image 限额): 中文 -> 英文 tag (角色->词典->LLM 三层 + 结构化扩写, LRU 缓存)。前端「先看翻译」和「生成」都先调它拿 prompt_en。
 
 请求体:
 ```json
@@ -111,7 +111,7 @@ Authorization: Bearer <token>
 - `prompt`: 可选, 原始中文 (仅存档展示, ≤500); 不传则 prompt_raw 同 prompt_en。
 - `size`: 可选, 必须是该工作流 `sizes` 之一; 不传取第一个。
 - `loras`: 可选, `GET /api/loras` 返回的 `key` 数组 (支持多 LoRA, 如角色+风格)。向后兼容: 旧 `lora: "key"` 单选仍接受。不传或空表示不用 LoRA。工作流需配了 `lora_node` 才支持。
-- `strength`: 可选, LoRA 强度 0~1 (1=满), 覆盖所有选中 LoRA; 不传用 config 各自默认值。
+- `strength_char` / `strength_style`: 可选, 各自 0~1 (1=满), 按选中 LoRA 的类型(character/style)分别生效; 不传用 config 各自默认值。旧 `strength` 单字段已废弃。
 - `image`: 可选, base64 (data URI 或纯 base64)。图生图模式: 后端上传到 ComfyUI input -> 注入 LoadImage + ImpactSwitch select=2 + denoise。工作流需配 `image_node`/`switch_node`/`denoise_node` (见 D26)。
 - `denoise`: 可选, 0.1~0.9。图生图重采样强度: 低=接近原图(微调), 高=大改。默认 0.35。
 
@@ -155,7 +155,7 @@ failed (失败):
 
 请求体:
 ```json
-{ "session_id": "可选, 首轮省略", "action": "start|redo|tweak", "prompt": "首轮中文描述(start 必填)", "delta": "可选改动 (redo/tweak)", "denoise": 0.35, "workflow": "anima", "size": "832x1216", "loras": ["salt_finale_maid"], "strength": 1 }
+{ "session_id": "可选, 首轮省略", "action": "start|redo|tweak", "prompt": "首轮中文描述(start 必填)", "delta": "可选改动 (redo/tweak)", "denoise": 0.35, "workflow": "anima", "size": "832x1216", "loras": ["salt_finale_maid"], "strength_char": 1.0, "strength_style": 0.8 }
 ```
 - `start`: 建会话 + 首图。
 - `redo` (换一版): `delta` 有则累积重翻译, 无则复用当前 prompt_en 换 seed。`delta` 含替换意图(换成/替换/改成/换为/改为)时, 先删原 raw 里的旧角色名再重翻译, 防 char_dict 双命中(D31)。

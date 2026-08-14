@@ -61,7 +61,7 @@ class HotDict:
 
 # 属性/感觉词典: 中文 -> danbooru tag. key 小写匹配.
 DICT = HotDict(DICT_PATH, key_fn=str.lower)
-# 角色词典: 中文名 -> danbooru 精确 tag. Qwen3-8B 认不准角色 tag (字面翻译/编造/漏认),
+# 角色词典: 中文名 -> danbooru 精确 tag. LLM 认不准角色 tag (字面翻译/编造/漏认),
 # 故角色走词典可靠命中, 命中后把 tag 作为上下文喂给 LLM (见 decisions.md D12). key 不小写 (中文无大小写).
 CHAR_DICT = HotDict(CHAR_DICT_PATH, key_fn=lambda s: s)
 
@@ -142,13 +142,16 @@ async def _civitai_lookup(sha256: str) -> dict | None:
             return None
         d = r.json()
         model = d.get("model") or {}
-        tags = model.get("tags") or []
-        lora_type = "character" if "character" in tags else (
-            "style" if any(t in tags for t in ("style", "artist", "artstyle")) else "unknown")
+        # Civitai model.tags 是 [{name, count}] 对象数组, 提取 name 列表再判类型
+        # (修: 旧代码 "character" in tags 当字符串数组用, 永远 False -> 全 unknown)
+        raw_tags = model.get("tags") or []
+        tag_names = [t.get("name", "") if isinstance(t, dict) else str(t) for t in raw_tags]
+        lora_type = "character" if "character" in tag_names else (
+            "style" if any(t in tag_names for t in ("style", "artist", "artstyle")) else "unknown")
         return {
             "trainedWords": d.get("trainedWords") or [],
             "modelName": model.get("name", ""),
-            "tags": tags,
+            "tags": tag_names,
             "baseModel": d.get("baseModel", ""),
             "type": lora_type,
         }
@@ -186,6 +189,13 @@ async def scan_loras() -> dict:
             _lora_auto[key] = {"sha256": sha, "fetchedAt": time.time(), **info}
             new_count += 1
         await asyncio.sleep(0.3)  # 对 Civitai 友好
+    # 清理: (1) 非图片 LoRA 残留 (Wan 视频等, 过滤逻辑后加无失效清理)
+    #       (2) 文件已删除/改名的旧 stem 残留 (salt(finale) 旧名永久残留问题)
+    valid_bases = {"Anima", "NoobAI", "SDXL", "Illustrious", "Unknown", ""}
+    valid_stems = {fp.stem for fp in sfs}
+    _lora_auto = {k: v for k, v in _lora_auto.items()
+                  if k in valid_stems
+                  and (not v.get("baseModel") or v["baseModel"] in valid_bases)}
     _save_lora_cache()
     return {"scanned": len(sfs), "new": new_count, "failed": failed, "total_auto": len(_lora_auto)}
 
@@ -486,7 +496,7 @@ async def siliconflow_translate(context: str, reroll: bool = False) -> tuple[str
     breakdown 供前端预览展示 AI 理解 (scene/composition/mood/lighting/style). 失败抛异常 (上层转 HTTPException).
     reroll=True: 提高温度 + 前置发散指令, 让模型给一版不同创意解读 (抽卡再抽, 见 D19)."""
     api_key = CFG.get("siliconflow_api_key", "").strip()
-    model = CFG.get("siliconflow_model", "Qwen/Qwen3-8B")
+    model = CFG.get("siliconflow_model", "deepseek-ai/DeepSeek-V4-Flash")
     if not api_key:
         raise RuntimeError("siliconflow_api_key 未在 config.yaml 中配置")
 

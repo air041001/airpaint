@@ -1,5 +1,7 @@
 # AnimaStandardV7 工作流解剖 (2026-07-29)
 
+> **现状 (2026-08-12)**: 本文解剖的是旧 AnimaStandardV7「拨组开关 + 换 JSON 文件」模型, 已被 D32 取代(合并一份 AnimaFull.json + build_prompt 运行时删节点拼接)。**节点 id 参考仍适用** (config `workflows.anima` 与 AnimaFull 共用同一套 id)。
+
 > 两种形态要分清:
 > - **完整 UI 工作流**: `E:/goole_chrome_downloads/animaWorkflows_v70/AnimaStandardV7.json` -- 76 节点, ComfyUI 里编辑用的, 含大量 MUTE(静音/旁路)的功能模块。
 > - **API 导出**: `server/workflows/AnimaStandardV7.json` -- 只有**未静音的活跃节点**(~34 个), 后端 /prompt 用的是这个。用户导出时哪些组开着, 就只导出哪些。
