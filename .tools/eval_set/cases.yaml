@@ -1,0 +1,162 @@
+# AirPaint Prompt Engine Evaluation Set (Phase 0)
+# 30 条覆盖各类别的中文输入, 用于 Prompt Engine 回归测试
+# 第一层(结构回归): 跑 run_baseline.py 记录 prompt_en + breakdown, 不生图
+# 第二层(生图): 选 5-10 条固定 seed 生图, 手动验收视觉质量
+# 用法: 改 Prompt Engine 后重跑, 对比 baseline 是否退化
+
+categories:
+  - single_character   # 单角色 (含 char_dict 命中/未命中)
+  - character_clothing # 角色 + 服装
+  - scene              # 场景
+  - complex_action     # 复杂动作
+  - pose               # 姿态
+  - multi_character    # 多人物关系
+  - composition        # 构图
+  - lighting           # 光影
+  - style              # 风格
+  - vague              # 模糊/抽象描述
+
+cases:
+  # === 单角色 (5) ===
+  - id: 001
+    category: single_character
+    input: "甘雨站在望舒客栈的阳台上"
+    notes: "char_dict 命中 ganyu, 测角色锁定 + 场景"
+  - id: 002
+    category: single_character
+    input: "天宫心在神社前微笑"
+    notes: "char_dict 命中 amamiya_kokoro (D30修正后), 测蓝发巫女形象锁定"
+  - id: 003
+    category: single_character
+    input: "粉发的少女在海边"
+    notes: "char_dict 未命中, 测 LLM 对原创角色的属性翻译"
+  - id: 004
+    category: single_character
+    input: "噶呜·古拉在水下游泳"
+    notes: "char_dict 命中 gawr_gura, 测角色 + 动作"
+  - id: 005
+    category: single_character
+    input: "芙宁娜在法庭上审判"
+    notes: "char_dict 命中 furina, 测角色 + 场景 + 氛围"
+
+  # === 角色 + 服装 (3) ===
+  - id: 006
+    category: character_clothing
+    input: "甘雨穿着婚纱站在花丛中"
+    notes: "测角色 + 非默认服装"
+  - id: 007
+    category: character_clothing
+    input: "天宫心穿着巫女服清扫神社"
+    notes: "测角色 + 默认服装变体 + 动作"
+  - id: 008
+    category: character_clothing
+    input: "兔田佩克拉穿着女仆装端茶"
+    notes: "测角色 + 服装 + 动作"
+
+  # === 场景 (3) ===
+  - id: 009
+    category: scene
+    input: "樱花树下的少女"
+    notes: "经典场景, 测基础翻译"
+  - id: 010
+    category: scene
+    input: "废弃教室里落满灰尘的课桌"
+    notes: "无角色场景, 测纯环境"
+  - id: 011
+    category: scene
+    input: "赛博朋克城市的霓虹灯下"
+    notes: "测现代/科幻场景"
+
+  # === 复杂动作 (3) ===
+  - id: 012
+    category: complex_action
+    input: "厨师少女单手颠锅火焰从锅底窜起她得意地笑围裙带子飞起"
+    notes: "动态动作协同 (D28 测试用过的), 测 NL 承担动作时序"
+  - id: 013
+    category: complex_action
+    input: "少女奔跑中回头看向镜头头发随风飘起"
+    notes: "测动态动作 + 头发物理"
+  - id: 014
+    category: complex_action
+    input: "少女从高处跳下裙摆展开像翅膀"
+    notes: "测跳跃 + 夸张物理"
+
+  # === 姿态 (3) ===
+  - id: 015
+    category: pose
+    input: "少女靠在墙上单腿支地低头看手机"
+    notes: "测复杂姿态组合"
+  - id: 016
+    category: pose
+    input: "少女坐在窗台上双腿悬空侧头看远方"
+    notes: "测坐姿 + 朝向"
+  - id: 017
+    category: pose
+    input: "少女侧躺在草地上手撑头看书"
+    notes: "测躺姿 + 手部"
+
+  # === 多人物关系 (3) ===
+  - id: 018
+    category: multi_character
+    input: "两个剑士在雨中对峙一人持刀前倾蓄力一人后撤半蹲举盾格挡闪电照亮他们的脸"
+    notes: "D28 测试用过的, 测多角色空间分配 + 交互"
+  - id: 019
+    category: multi_character
+    input: "老师正在教学生写字老师在旁边指导学生在桌前书写"
+    notes: "测多角色角色关系 + 空间"
+  - id: 020
+    category: multi_character
+    input: "两个少女背靠背坐在屋顶上看星空"
+    notes: "测多角色亲密关系 + 构图"
+
+  # === 构图 (3) ===
+  - id: 021
+    category: composition
+    input: "从下往上仰视少女她站在台阶上居高临下"
+    notes: "测仰视构图 + 透视"
+  - id: 022
+    category: composition
+    input: "俯视少女蜷缩在角落的全身"
+    notes: "测俯视构图"
+  - id: 023
+    category: composition
+    input: "少女脸部的特写一只眼睛被头发遮住"
+    notes: "测特写 + 局部"
+
+  # === 光影 (2) ===
+  - id: 024
+    category: lighting
+    input: "逆光下少女的剪影发丝边缘发光"
+    notes: "测逆光 + 轮廓光"
+  - id: 025
+    category: lighting
+    input: "霓虹灯映在少女脸上的彩色光影"
+    notes: "测人造光 + 色彩"
+
+  # === 风格 (2) ===
+  - id: 026
+    category: style
+    input: "水彩风格的少女在花园里"
+    notes: "测非默认画风"
+  - id: 027
+    category: style
+    input: "厚涂风格的少女肖像油画质感"
+    notes: "测油画质感"
+
+  # === 模糊/抽象描述 (3) ===
+  - id: 028
+    category: vague
+    input: "想要春天的感觉"
+    notes: "D28 测试用过的, 测抽象意图映射"
+  - id: 029
+    category: vague
+    input: "孤独的氛围"
+    notes: "测情绪映射"
+  - id: 030
+    category: vague
+    input: "展示天宫心的魅力"
+    notes: "用户实际用过的, 测抽象意图 + 角色锁定"
+
+# === 第二层生图候选 (固定 seed, 手动验收视觉质量) ===
+# 建议选这几条做生图回归 (覆盖角色锁定/多角色/复杂动作/模糊意图):
+# 001 (甘雨角色锁定), 002 (天宫心修正后), 012 (动态动作), 018 (多角色对峙), 030 (抽象意图)

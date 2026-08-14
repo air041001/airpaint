@@ -1,0 +1,242 @@
+# Phase 0 baseline (当前 system prompt, 2026-08-13)
+# model: deepseek-ai/DeepSeek-V4-Flash, cases: 30, ok: 30
+
+- id: 001
+  input: "甘雨站在望舒客栈的阳台上"
+  char_tags: ['ganyu_(genshin_impact)']
+  status: OK
+  TAGS: "1girl, solo, ganyu, genshin impact, balcony, night, moonlight, lantern, standing, looking at viewer, medium shot, serene, anime style"
+  NL: ""
+  breakdown: {"scene": "balcony of Wangshu Inn, Liyue, night", "composition": "standing on balcony, looking out at the view, medium shot", "mood": "serene, contemplative", "lighting": "moonlight, lantern light", "style": "anime style"}
+
+- id: 002
+  input: "天宫心在神社前微笑"
+  char_tags: ['amamiya_kokoro']
+  status: OK
+  TAGS: "1girl, solo, shrine, torii gate, smile, standing, front view, looking at viewer, outdoors, soft daylight, anime style"
+  NL: ""
+  breakdown: {"scene": "outdoors, shrine entrance, torii gate", "composition": "standing, front view, looking at viewer", "mood": "cheerful, serene", "lighting": "soft daylight", "style": "anime style"}
+
+- id: 003
+  input: "粉发的少女在海边"
+  char_tags: []
+  status: OK
+  TAGS: "1girl, pink hair, solo, beach, ocean, standing, full body, looking at viewer, bright sunlight, outdoors, anime style"
+  NL: ""
+  breakdown: {"scene": "beach, seaside, outdoors", "composition": "standing, full body, looking at viewer", "mood": "carefree, gentle, breezy", "lighting": "bright sunlight, ocean reflection", "style": "anime style"}
+
+- id: 004
+  input: "噶呜·古拉在水下游泳"
+  char_tags: ['gawr_gura_(hololive)']
+  status: OK
+  TAGS: "1girl, solo, swimming, underwater, ocean, dynamic pose, full body, light rays, dappled light, anime style"
+  NL: ""
+  breakdown: {"scene": "underwater, ocean", "composition": "swimming, dynamic pose, full body", "mood": "playful, free, serene", "lighting": "underwater light rays, dappled light", "style": "anime style"}
+
+- id: 005
+  input: "芙宁娜在法庭上审判"
+  char_tags: ['furina_(genshin_impact)']
+  status: OK
+  TAGS: "1girl, furina_(genshin_impact), courtroom, podium, trial, judge, dramatic lighting, spotlight, standing, full body, looking at viewer"
+  NL: ""
+  breakdown: {"scene": "courtroom, trial setting", "composition": "standing at podium, facing judge, full body", "mood": "dramatic, tense, authoritative", "lighting": "dramatic courtroom lighting, spotlight", "style": "anime style"}
+
+- id: 006
+  input: "甘雨穿着婚纱站在花丛中"
+  char_tags: ['ganyu_(genshin_impact)']
+  status: OK
+  TAGS: "1girl, solo, wedding dress, veil, bouquet, flower field, standing, full body, looking at viewer, outdoors, soft daylight, anime style"
+  NL: ""
+  breakdown: {"scene": "outdoors, flower garden, wedding setting", "composition": "standing, full body, looking at viewer", "mood": "romantic, serene, joyful", "lighting": "soft daylight, gentle sunlight", "style": "anime style, detailed"}
+
+- id: 007
+  input: "天宫心穿着巫女服清扫神社"
+  char_tags: ['amamiya_kokoro']
+  status: OK
+  TAGS: "1girl, solo, miko, shrine, broom, cleaning, standing, full body, outdoors, morning, soft light, anime style"
+  NL: ""
+  breakdown: {"scene": "shrine, outdoors, morning", "composition": "standing, holding broom, full body", "mood": "diligent, serene", "lighting": "soft morning light", "style": "anime style"}
+
+- id: 008
+  input: "兔田佩克拉穿着女仆装端茶"
+  char_tags: ['usada_pekora_(hololive)']
+  status: OK
+  TAGS: "1girl, solo, maid outfit, holding tray, teacup, standing, looking at viewer, cafe, indoor, warm lighting, anime style"
+  NL: ""
+  breakdown: {"scene": "cafe or maid cafe, interior", "composition": "standing, holding tray with teacup, looking at viewer", "mood": "cheerful, welcoming", "lighting": "warm indoor lighting", "style": "anime style"}
+
+- id: 009
+  input: "樱花树下的少女"
+  char_tags: []
+  status: OK
+  TAGS: "1girl, solo, cherry blossoms, tree, petals, spring, smile, standing, full body, looking at viewer, outdoors, soft daylight, anime style"
+  NL: ""
+  breakdown: {"scene": "outdoors, under cherry blossom tree", "composition": "standing, full body, looking at viewer", "mood": "serene, gentle", "lighting": "soft daylight, petals falling", "style": "anime style"}
+
+- id: 010
+  input: "废弃教室里落满灰尘的课桌"
+  char_tags: []
+  status: OK
+  TAGS: "classroom, abandoned, dust, desks, chairs, broken windows, peeling paint, dim lighting, muted colors, anime style, interior"
+  NL: ""
+  breakdown: {"scene": "abandoned classroom, dusty desks", "composition": "wide shot, interior view", "mood": "desolate, melancholic, forgotten", "lighting": "dim, dusty shafts of light", "style": "anime style, muted colors"}
+
+- id: 011
+  input: "赛博朋克城市的霓虹灯下"
+  char_tags: []
+  status: OK
+  TAGS: "1girl, neon lights, cyberpunk, city, night, street, glowing, reflections, futuristic, vibrant, anime style"
+  NL: ""
+  breakdown: {"scene": "cyberpunk city street, night, neon lights", "composition": "wide shot, street level, looking up", "mood": "futuristic, gritty, vibrant", "lighting": "neon glow, colorful reflections", "style": "anime style, cyberpunk aesthetic"}
+
+- id: 012
+  input: "厨师少女单手颠锅火焰从锅底窜起她得意地笑围裙带子飞起"
+  char_tags: []
+  status: OK
+  TAGS: "1girl, chef, apron, wok, cooking, tossing pan, flames, fire, smile, proud, looking at viewer, apron strings flying, dynamic pose, kitchen, cooktop, evening, dramatic lighting, warm colors"
+  NL: "The chef girl tosses the wok with one hand; flames leap from the pan as her apron strings fly up, and she grins with pride."
+  breakdown: {"scene": "kitchen, professional cooktop, evening", "composition": "dynamic action shot, mid shot, looking at viewer", "mood": "proud, energetic, playful", "lighting": "dramatic firelight, warm orange glow", "style": "anime style, dynamic lines"}
+
+- id: 013
+  input: "少女奔跑中回头看向镜头头发随风飘起"
+  char_tags: []
+  status: OK
+  TAGS: "1girl, running, looking back, looking at viewer, wind, hair flowing, dynamic pose, outdoors, daylight, anime style"
+  NL: ""
+  breakdown: {"scene": "outdoors, open field or street, daytime", "composition": "running, looking back at viewer, dynamic pose", "mood": "energetic, carefree, joyful", "lighting": "natural daylight, wind effect", "style": "anime style, dynamic lines"}
+
+- id: 014
+  input: "少女从高处跳下裙摆展开像翅膀"
+  char_tags: []
+  status: OK
+  TAGS: "1girl, solo, jumping, mid-air, skirt, skirt flying, dynamic pose, full body, outdoors, sky, bright sunlight, anime style, dynamic lines"
+  NL: "The girl leaps from the height, her skirt billowing out like wings as she descends."
+  breakdown: {"scene": "outdoors, high place, rooftop or cliff edge", "composition": "jumping, mid-air, dynamic pose, full body", "mood": "exhilaration, freedom, soaring", "lighting": "bright sunlight, sky backdrop", "style": "anime style, dynamic lines"}
+
+- id: 015
+  input: "少女靠在墙上单腿支地低头看手机"
+  char_tags: []
+  status: OK
+  TAGS: "1girl, leaning against wall, one foot on wall, looking at phone, smartphone, brick wall, alley, urban, outdoors, standing, side view, casual, overcast"
+  NL: ""
+  breakdown: {"scene": "urban alleyway, brick wall", "composition": "standing, leaning against wall, one leg bent with foot against wall, looking down at phone, side view", "mood": "casual, relaxed, absorbed", "lighting": "overcast daylight, diffused", "style": "anime style"}
+
+- id: 016
+  input: "少女坐在窗台上双腿悬空侧头看远方"
+  char_tags: []
+  status: OK
+  TAGS: "1girl, sitting, windowsill, legs dangling, looking away, side view, night, moonlight, bedroom, window, anime style"
+  NL: ""
+  breakdown: {"scene": "bedroom, window, windowsill, night", "composition": "sitting on windowsill, legs dangling, looking away, side view", "mood": "pensive, melancholic, longing", "lighting": "moonlight from window", "style": "anime style"}
+
+- id: 017
+  input: "少女侧躺在草地上手撑头看书"
+  char_tags: []
+  status: OK
+  TAGS: "1girl, lying on side, grass, field, propping head on hand, reading, book, outdoors, soft sunlight, anime style, soft shading"
+  NL: ""
+  breakdown: {"scene": "outdoors, grassy field, spring afternoon", "composition": "lying on side, head propped on hand, reading, low angle", "mood": "relaxed, contemplative, peaceful", "lighting": "soft sunlight, gentle shadows", "style": "anime style, soft shading"}
+
+- id: 018
+  input: "两个剑士在雨中对峙一人持刀前倾蓄力一人后撤半蹲举盾格挡闪电照亮他们的脸"
+  char_tags: []
+  status: OK
+  TAGS: "2boys, sword, shield, rain, lightning, night, dynamic pose, crouching, leaning forward, holding weapon, holding shield, face focus, dramatic lighting, anime style"
+  NL: "The left swordsman leans forward with his blade, ready to strike; the right swordsman crouches back, shield raised to block. A lightning bolt illuminates both faces."
+  breakdown: {"scene": "outdoors, rainy street or arena at night", "composition": "dynamic duel, medium shot, lightning flash illuminating faces", "mood": "tense, dramatic, confrontational", "lighting": "lightning flash, dark rain", "style": "anime style, dynamic shading"}
+
+- id: 019
+  input: "老师正在教学生写字老师在旁边指导学生在桌前书写"
+  char_tags: []
+  status: OK
+  TAGS: "1teacher, 1student, desk, writing, teaching, side view, classroom, seated, holding brush or pen, focused, educational, anime style"
+  NL: "The teacher stands to the side, guiding the student's hand as they write at the desk."
+  breakdown: {"scene": "classroom, desk, writing lesson", "composition": "side view, teacher beside student, student seated at desk", "mood": "focused, educational, patient", "lighting": "classroom lighting, soft daylight", "style": "anime style, clean lines"}
+
+- id: 020
+  input: "两个少女背靠背坐在屋顶上看星空"
+  char_tags: []
+  status: OK
+  TAGS: "2girls, back to back, sitting, rooftop, night, starry sky, stars, looking up, moonlight, anime style"
+  NL: "The two girls sit back to back on the rooftop, each gazing up at the stars."
+  breakdown: {"scene": "rooftop at night, starry sky", "composition": "sitting back to back, looking up at stars, wide shot", "mood": "peaceful, contemplative, intimate", "lighting": "starlight, moonlight", "style": "anime style"}
+
+- id: 021
+  input: "从下往上仰视少女她站在台阶上居高临下"
+  char_tags: []
+  status: OK
+  TAGS: "1girl, solo, stairs, low angle, looking down at viewer, standing, looking at viewer, outdoors, strong light, shadow"
+  NL: ""
+  breakdown: {"scene": "outdoors, staircase, steps", "composition": "low angle, looking up, standing on steps, looking down at viewer", "mood": "dominant, imposing, confident", "lighting": "strong overhead light, cast shadows", "style": "anime style"}
+
+- id: 022
+  input: "俯视少女蜷缩在角落的全身"
+  char_tags: []
+  status: OK
+  TAGS: "1girl, solo, curled up, corner, full body, high angle, looking down, dim lighting, shadow, indoors"
+  NL: ""
+  breakdown: {"scene": "room, corner, indoors", "composition": "high angle, full body, looking down", "mood": "vulnerable, lonely, withdrawn", "lighting": "dim, shadowed", "style": "anime style"}
+
+- id: 023
+  input: "少女脸部的特写一只眼睛被头发遮住"
+  char_tags: []
+  status: OK
+  TAGS: "1girl, solo, close-up, face focus, hair over one eye, one eye visible, detailed hair, soft lighting, anime style"
+  NL: ""
+  breakdown: {"scene": "close-up portrait, ambiguous background", "composition": "extreme close-up on face, one eye obscured by hair", "mood": "mysterious, introspective", "lighting": "soft diffused light", "style": "anime style, detailed hair strands"}
+
+- id: 024
+  input: "逆光下少女的剪影发丝边缘发光"
+  char_tags: []
+  status: OK
+  TAGS: "1girl, solo, silhouette, backlighting, rim lighting, hair glow, sunset, outdoors, anime style, cel shading"
+  NL: ""
+  breakdown: {"scene": "outdoors, sunset or sunrise, open area", "composition": "silhouette, facing away or side view, full body or bust", "mood": "mysterious, ethereal, serene", "lighting": "backlighting, rim lighting on hair strands", "style": "anime style, cel shading"}
+
+- id: 025
+  input: "霓虹灯映在少女脸上的彩色光影"
+  char_tags: []
+  status: OK
+  TAGS: "1girl, solo, close-up, face, looking at viewer, neon lights, night, city street, colorful lighting, reflections, cel shading, anime style"
+  NL: ""
+  breakdown: {"scene": "city street at night, neon signs", "composition": "close-up on face, looking at viewer", "mood": "vibrant, mysterious, urban", "lighting": "neon light, colorful reflections on skin", "style": "anime style, cel shading"}
+
+- id: 026
+  input: "水彩风格的少女在花园里"
+  char_tags: []
+  status: OK
+  TAGS: "1girl, solo, garden, flowers, watercolor (art style), soft daylight, outdoors, spring"
+  NL: ""
+  breakdown: {"scene": "garden, outdoors, spring", "composition": "scenic, wide shot", "mood": "gentle, whimsical", "lighting": "soft daylight", "style": "watercolor (art style)"}
+
+- id: 027
+  input: "厚涂风格的少女肖像油画质感"
+  char_tags: []
+  status: OK
+  TAGS: "1girl, solo, portrait, close-up, face focus, looking at viewer, serious expression, dramatic lighting, painterly, oil painting texture, thick paint style"
+  NL: ""
+  breakdown: {"scene": "studio, portrait setting", "composition": "close-up, face focus, looking at viewer", "mood": "serious, contemplative", "lighting": "dramatic, directional light", "style": "thick paint style, oil painting texture, painterly"}
+
+- id: 028
+  input: "想要春天的感觉"
+  char_tags: []
+  status: OK
+  TAGS: "spring, cherry blossoms, petals falling, gentle breeze, warm sunlight, pastel colors, peaceful, garden, outdoors, anime style"
+  NL: "A sense of gentle renewal pervades the scene."
+  breakdown: {"scene": "garden, spring, outdoors", "composition": "scenic, wide shot", "mood": "peaceful, gentle, renewal", "lighting": "warm sunlight", "style": "anime style, pastel colors"}
+
+- id: 029
+  input: "孤独的氛围"
+  char_tags: []
+  status: OK
+  TAGS: "1girl, solo, empty room, twilight, dim lighting, melancholic, muted colors, anime style"
+  NL: ""
+  breakdown: {"scene": "empty room, twilight", "composition": "wide shot, solitary figure", "mood": "lonely, melancholic, isolated", "lighting": "dim, twilight", "style": "anime style, muted colors"}
+
+- id: 030
+  input: "展示天宫心的魅力"
+  char_tags: ['amamiya_kokoro']
+  status: OK
+  TAGS: "1girl, solo, spotlight, stage, performance, confident, looking at viewer, close-up, centered, vibrant colors, anime style"
+  NL: ""
+  breakdown: {"scene": "stage, spotlight, performance venue", "composition": "close-up, facing viewer, centered", "mood": "confident, captivating, alluring", "lighting": "dramatic spotlight, warm glow", "style": "anime style, vibrant colors"}

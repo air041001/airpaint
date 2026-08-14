@@ -13,3 +13,6 @@ server/lora_cache.json
 
 # web/ 是独立 git 仓库 (air041001/air), 不纳入本仓库避免子模块混乱
 web/
+
+# Agent 工具数据目录 (memory/skills/... 不进项目代码仓库)
+.workbuddy/
