@@ -10,9 +10,9 @@
 >
 > 下面 Phase 2-5 是 MVP 之后的工程化补强（多工作流/前端/持久化/高级工作流），与 Prompt Intelligence 主线并行但优先级低。
 
-### Phase 0: Prompt Baseline（进行中）
-- [ ] 建 Evaluation Set 20-50 条真实需求（`.tools/eval_set/`，第一层结构回归不生图 + 第二层少量固定 seed 生图）
-- [ ] 基础维护顺手修：scan_loras 三处问题 / 文档模型名同步 DeepSeek-V4-Flash / 已知 char_dict 错误（amamiya_kokoro 已修）
+### Phase 0: Prompt Baseline（已完成 2026-08-14）
+- [x] 建 Evaluation Set 30 条（`.tools/eval_set/`，第一层结构回归 + 第二层生图验收）
+- [x] 基础维护顺手修：scan_loras 三处问题 / 文档模型名同步 DeepSeek-V4-Flash / 已知 char_dict 错误（amamiya_kokoro 已修）
 
 ### Phase 1: Prompt IR + Compiler（核心，进行中）
 - [ ] 定义 Prompt IR（12 字段 JSON：subject/appearance/clothing/action/pose/interaction/scene/composition/lighting/mood/style/constraints）
