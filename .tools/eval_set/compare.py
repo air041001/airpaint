@@ -5,6 +5,7 @@
 用法: python .tools/eval_set/compare.py --candidate .tools/eval_set/candidate.yaml
 """
 import argparse
+import math
 import re
 from pathlib import Path
 
@@ -47,24 +48,28 @@ def bare_name(tag: str) -> str | None:
     return None
 
 
-def check_ir(row: dict, case_id: str, errors: list[str], warnings: list[str]) -> None:
+def check_ir(row: dict, case_id: str, errors: list[str], warnings: list[str]) -> bool:
     ir = row.get("prompt_ir", row.get("ir"))
     if ir is None:
-        return
+        return False
     if not isinstance(ir, dict):
         errors.append(f"[{case_id}] IR 不是 object")
-        return
+        return False
+    valid = True
     missing = [field for field in IR_FIELDS if field not in ir]
     if missing:
         errors.append(f"[{case_id}] IR 缺字段: {', '.join(missing)}")
+        valid = False
     bad_types = [field for field in IR_FIELDS if field in ir and not isinstance(ir[field], list)]
     if bad_types:
         errors.append(f"[{case_id}] IR 字段不是数组: {', '.join(bad_types)}")
+        valid = False
     if not any(ir.get(field) for field in IR_FIELDS):
         warnings.append(f"[{case_id}] IR 全空")
+    return valid
 
 
-def compare(baseline: dict[str, dict], candidate: dict[str, dict]) -> int:
+def compare(baseline: dict[str, dict], candidate: dict[str, dict], require_ir: bool = False) -> int:
     errors: list[str] = []
     warnings: list[str] = []
     missing = sorted(set(baseline) - set(candidate))
@@ -77,6 +82,8 @@ def compare(baseline: dict[str, dict], candidate: dict[str, dict]) -> int:
     ok = 0
     nl_baseline = 0
     nl_candidate = 0
+    ir_valid = 0
+    ir_seen = 0
     for case_id, base_row in baseline.items():
         row = candidate.get(case_id)
         if row is None:
@@ -107,10 +114,19 @@ def compare(baseline: dict[str, dict], candidate: dict[str, dict]) -> int:
             nl_baseline += 1
         if row.get("NL"):
             nl_candidate += 1
-        check_ir(row, case_id, errors, warnings)
+        if row.get("prompt_ir", row.get("ir")) is not None:
+            ir_seen += 1
+        if check_ir(row, case_id, errors, warnings):
+            ir_valid += 1
+
+    if require_ir:
+        minimum = math.ceil(len(baseline) * 0.9)
+        if ir_valid < minimum:
+            errors.append(f"IR 有效率不足: {ir_valid}/{len(baseline)}，要求至少 {minimum}")
 
     print(f"baseline={len(baseline)}, candidate={len(candidate)}, candidate OK={ok}")
     print(f"NL: baseline={nl_baseline}, candidate={nl_candidate}")
+    print(f"IR: valid={ir_valid}, present={ir_seen}, total={len(candidate)}")
     if errors:
         print("\nFAIL")
         for error in errors:
@@ -128,6 +144,8 @@ def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--baseline", type=Path, default=DEFAULT_BASELINE)
     parser.add_argument("--candidate", type=Path, default=DEFAULT_CANDIDATE)
+    parser.add_argument("--require-ir", action="store_true",
+                        help="要求至少 90%% case 具有完整 12 字段 IR")
     args = parser.parse_args()
     baseline_path = args.baseline if args.baseline.is_absolute() else BASE / args.baseline
     candidate_path = args.candidate if args.candidate.is_absolute() else BASE / args.candidate
@@ -135,7 +153,7 @@ def main() -> None:
         raise SystemExit(f"baseline 不存在: {baseline_path}")
     if not candidate_path.exists():
         raise SystemExit(f"candidate 不存在: {candidate_path}")
-    raise SystemExit(compare(load_rows(baseline_path), load_rows(candidate_path)))
+    raise SystemExit(compare(load_rows(baseline_path), load_rows(candidate_path), args.require_ir))
 
 
 if __name__ == "__main__":

@@ -18,9 +18,40 @@ def test_character_match():
 
 
 def test_bare_character_fast_path():
-    prompt_en, breakdown = asyncio.run(main.translate("甘雨"))
+    prompt_en, breakdown, prompt_ir = asyncio.run(main.translate("甘雨"))
     assert prompt_en == "1girl, solo, ganyu_(genshin_impact)", prompt_en
     assert breakdown is None, breakdown
+    assert prompt_ir is None, prompt_ir
+
+
+def test_ir_protocol_and_breakdown_derivation():
+    output = (
+        'IR: {"subject":["1girl"],"appearance":["pink hair"],"clothing":[],"action":["standing"],'
+        '"pose":[],"interaction":[],"scene":["beach"],"composition":["full body"],'
+        '"lighting":["bright sunlight"],"mood":["carefree"],"style":["anime style"],"constraints":[]}\n'
+        "TAGS: 1girl, pink hair, beach\n"
+        "NL:\n"
+    )
+    tags, breakdown, nl, prompt_ir = main._parse_structured_output(output)
+    assert tags == "1girl, pink hair, beach", tags
+    assert breakdown == {
+        "scene": "beach",
+        "composition": "full body",
+        "mood": "carefree",
+        "lighting": "bright sunlight",
+        "style": "anime style",
+    }, breakdown
+    assert nl == "", nl
+    assert prompt_ir and prompt_ir["subject"] == ["1girl"], prompt_ir
+
+
+def test_legacy_protocol_fallback():
+    output = "scene: bedroom\ncomposition: close-up\nTAGS: 1girl, bedroom\nNL:\n"
+    tags, breakdown, nl, prompt_ir = main._parse_structured_output(output)
+    assert tags == "1girl, bedroom", tags
+    assert breakdown == {"scene": "bedroom", "composition": "close-up"}, breakdown
+    assert nl == "", nl
+    assert prompt_ir is None, prompt_ir
 
 
 def test_tag_order_and_deduplication():
@@ -39,12 +70,24 @@ def test_character_bare_name_is_removed():
     assert result == ["ganyu_(genshin_impact)", "blue eyes"], result
 
 
+def test_compile_prompt_merges_tags_and_nl():
+    result = main.compile_prompt(
+        ["ganyu_(genshin_impact)"],
+        ["ganyu", "1girl", "solo", "blue eyes", "blue eyes"],
+        "She stands by the window.",
+    )
+    assert result == "1girl, solo, ganyu_(genshin_impact), blue eyes. She stands by the window.", result
+
+
 def main_test():
     tests = [
         test_character_match,
         test_bare_character_fast_path,
+        test_ir_protocol_and_breakdown_derivation,
+        test_legacy_protocol_fallback,
         test_tag_order_and_deduplication,
         test_character_bare_name_is_removed,
+        test_compile_prompt_merges_tags_and_nl,
     ]
     for test in tests:
         test()

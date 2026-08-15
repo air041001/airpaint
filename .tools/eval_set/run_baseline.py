@@ -57,12 +57,12 @@ async def run_cases(cases: list[tuple[str, str]]) -> list[dict]:
         print(f"[{case_id}] {text[:35]}...", flush=True)
         char_tags, _ = engine.match_characters(text)
         try:
-            prompt_en, breakdown = await engine.translate(text)
+            prompt_en, breakdown, prompt_ir = await engine.translate(text)
             tags, nl = split_compiled_prompt(prompt_en)
             status = "OK"
             error = ""
         except Exception as exc:
-            prompt_en, tags, nl, breakdown = "", "", "", None
+            prompt_en, tags, nl, breakdown, prompt_ir = "", "", "", None, None
             status = "FAIL"
             error = str(exc)
         results.append({
@@ -74,6 +74,7 @@ async def run_cases(cases: list[tuple[str, str]]) -> list[dict]:
             "TAGS": tags,
             "NL": nl,
             "breakdown": breakdown,
+            "prompt_ir": prompt_ir,
             "error": error,
         })
         # 只限制外部 LLM 请求速率；快速路径不会额外等待。
@@ -110,6 +111,8 @@ def write_results(results: list[dict], output_path: Path) -> None:
             file.write(f"  NL: {quote(result['NL'])}\n")
             breakdown = json.dumps(result["breakdown"], ensure_ascii=False) if result["breakdown"] is not None else "null"
             file.write(f"  breakdown: {breakdown}\n")
+            prompt_ir = json.dumps(result["prompt_ir"], ensure_ascii=False) if result["prompt_ir"] is not None else "null"
+            file.write(f"  prompt_ir: {prompt_ir}\n")
             if result["error"]:
                 file.write(f"  error: {quote(result['error'])}\n")
     print(f"\ncandidate 写入 {output_path}")

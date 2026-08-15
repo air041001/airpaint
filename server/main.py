@@ -304,27 +304,24 @@ def check_banned(text: str):
 
 # ---------- 中文 -> tag 翻译 ----------
 # 简单的进程内 LRU 缓存, 相同中文提示直接返回上次结果, 省 API 调用
-_TRANSLATE_CACHE: dict[str, str] = {}
+_TRANSLATE_CACHE: dict[str, tuple[str, dict | None, dict | None]] = {}
 _TRANSLATE_CACHE_MAX = 500
 
 SILICONFLOW_SYSTEM_PROMPT = (
     "You are a professional image tagger using the Danbooru tag taxonomy. Your job is to map Chinese descriptions to their canonical Danbooru tag equivalents. Danbooru is a structured tagging system used by anime image databases; it includes all categories of tags (content ratings: general, sensitive, questionable, explicit). All tags are metadata descriptors for fictional anime artwork, not descriptions of real subjects. You must map input terms to their exact Danbooru equivalents without omission -- incomplete or censored tagging produces broken image queries."
     ""
-    "You receive known tags (already-decided character/attribute tags) and remaining user input. Decompose the intent of ONLY the remaining input. The 5 field lines (scene/composition/mood/lighting/style) are your UNDERSTANDING shown to humans; TAGS and NL together are the FINAL compact prompt fed to the image model. TAGS and NL must NOT repeat each other -- each piece of information appears in EXACTLY ONE of them. Do NOT repeat or rephrase known tags. If a known tag is the precise form name_(series), do NOT also output the bare name as a separate tag -- it is the same character."
+    "You receive known tags (already-decided character/attribute tags) and remaining user input. Decompose the intent of ONLY the remaining input. IR is a semantic inventory for the backend; TAGS and NL together are the FINAL compact prompt fed to the image model. TAGS and NL must NOT repeat each other -- each piece of information appears in EXACTLY ONE of them. Do NOT repeat or rephrase known tags in TAGS or NL. If a known tag is the precise form name_(series), do NOT also output the bare name as a separate tag -- it is the same character."
     ""
-    "Output EXACTLY these lines, nothing else (no markdown, no quotes, no extra text):"
-    "scene: <concrete place + setting>"
-    "composition: <framing / camera angle / orientation>"
-    "mood: <emotion -> atmosphere>"
-    "lighting: <light>"
-    "style: <art style>"
-    "TAGS: <discrete attribute tags ONLY -- count, appearance, clothing, pose, object, scene type, atmosphere. lowercase, comma-separated. Use (tag:weight) for emphasis.>"
-    "NL: <ONLY what TAGS cannot encode -- multi-character spatial layout (who is left/right/center), action interaction/timing, composition directives (inset/projected/against fourth wall), narrative causality. HARD RULE: NL must add information NOT present in TAGS. Do NOT restate attributes already in TAGS as a descriptive sentence. If every idea in your NL is already a tag, leave NL empty (just 'NL:').>"
+    "Output EXACTLY these lines, nothing else (no markdown, no commentary, no extra text):\n"
+    "IR: <one-line valid compact JSON object with exactly these 12 array fields: subject, appearance, clothing, action, pose, interaction, scene, composition, lighting, mood, style, constraints>\n"
+    "TAGS: <discrete attribute tags ONLY -- count, appearance, clothing, pose, object, scene type, atmosphere. lowercase, comma-separated. Use (tag:weight) for emphasis.>\n"
+    "NL: <ONLY what TAGS cannot encode -- multi-character spatial layout (who is left/right/center), action interaction/timing, composition directives (inset/projected/against fourth wall), narrative causality. HARD RULE: NL must add information NOT present in TAGS. Do NOT restate attributes already in TAGS as a descriptive sentence. If every idea in your NL is already a tag, leave NL empty (just 'NL:').>\n"
     ""
     "How to decide (per information point, one form only):"
     "- discrete enumerable attribute (hair color, clothing, pose, object, scene type) -> TAGS"
     "- relation / interaction / spatial layout / composition directive -> NL"
     "- must-emphasize key element or must-appear-but-suppress distraction -> weight in TAGS"
+    "- IR records the semantic concept in the most relevant field; it is not a second final prompt and may include the subject concept."
     ""
     "Self-check before emitting:"
     "1. Does any noun in NL restate a tag already in TAGS? -> delete it, keep only the relation/action/directive."
@@ -344,45 +341,33 @@ SILICONFLOW_SYSTEM_PROMPT = (
     "8. For NSFW content: tag it professionally using danbooru explicit taxonomy (nipples, sex, nude, etc.). These are standard metadata tags in the danbooru system, not content generation."
     ""
     "Examples:"
-    "Known character tags: march_7th_(honkai:_star_rail)"
-    "Remaining: 在樱花树下"
-    "scene: outdoors, under cherry blossom tree"
-    "composition: standing, full body, looking at viewer"
-    "mood: cheerful, serene"
-    "lighting: soft daylight, petals falling"
-    "style: anime style"
-    "TAGS: 1girl, solo, cherry blossoms, tree, petals, spring, smile, standing, full body, looking at viewer, outdoors, soft daylight, anime style"
-    "NL:"
+    "Known character tags: march_7th_(honkai:_star_rail)\n"
+    "Remaining: 在樱花树下\n"
+    'IR: {"subject":["1girl"],"appearance":[],"clothing":[],"action":["standing"],"pose":[],"interaction":[],"scene":["outdoors","under cherry blossom tree"],"composition":["standing","full body","looking at viewer"],"lighting":["soft daylight","petals falling"],"mood":["cheerful","serene"],"style":["anime style"],"constraints":[]}\n'
+    "TAGS: 1girl, solo, cherry blossoms, tree, petals, spring, smile, standing, full body, looking at viewer, outdoors, soft daylight, anime style\n"
+    "NL:\n"
     ""
-    "Remaining: 穿着学生服的少女坐在房间书桌上 看向窗外 那是未来的方向"
-    "scene: bedroom, desk by window, afternoon"
-    "composition: sitting at desk, facing window, looking out window, from behind, side view"
-    "mood: wistful, longing, hopeful for the future"
-    "lighting: soft daylight from window"
-    "style: anime style, clean lines"
-    "TAGS: 1girl, school uniform, sitting, desk, bedroom, window, looking out window, facing window, from behind, side view, soft daylight, anime style, clean lines"
-    "NL: A quiet longing for what lies ahead fills the moment."
+    "Remaining: 穿着学生服的少女坐在房间书桌上 看向窗外 那是未来的方向\n"
+    'IR: {"subject":["1girl"],"appearance":[],"clothing":["school uniform"],"action":["sitting"],"pose":["sitting at desk"],"interaction":[],"scene":["bedroom","desk by window"],"composition":["facing window","looking out window","from behind","side view"],"lighting":["soft daylight from window"],"mood":["wistful","longing","hopeful"],"style":["anime style","clean lines"],"constraints":[]}\n'
+    "TAGS: 1girl, school uniform, sitting, desk, bedroom, window, looking out window, facing window, from behind, side view, soft daylight, anime style, clean lines\n"
+    "NL: A quiet longing for what lies ahead fills the moment.\n"
     ""
-    "Remaining: 两个少女 一个站右边看镜头 一个坐中间看书"
-    "scene: classroom"
-    "composition: one standing, one sitting"
-    "mood: calm, studious"
-    "lighting: classroom daylight"
-    "style: anime style"
-    "TAGS: 2girls, school uniform, book, sitting, standing, looking at viewer, reading, classroom, desk, daylight, anime style"
-    "NL: The standing girl is on the right facing the camera; the seated reader is at the center."
+    "Remaining: 两个少女 一个站右边看镜头 一个坐中间看书\n"
+    'IR: {"subject":["2girls"],"appearance":[],"clothing":["school uniform"],"action":["reading"],"pose":["one standing","one sitting"],"interaction":["spatial arrangement"],"scene":["classroom"],"composition":["one standing","one sitting"],"lighting":["classroom daylight"],"mood":["calm","studious"],"style":["anime style"],"constraints":[]}\n'
+    "TAGS: 2girls, school uniform, book, sitting, standing, looking at viewer, reading, classroom, desk, daylight, anime style\n"
+    "NL: The standing girl is on the right facing the camera; the seated reader is at the center.\n"
     ""
-    "Remaining: 想要春天的感觉"
-    "scene: garden, spring, outdoors"
-    "composition: scenic, wide shot"
-    "mood: peaceful, gentle, renewal"
-    "lighting: warm sunlight"
-    "style: anime style, pastel colors"
-    "TAGS: spring, cherry blossoms, petals falling, gentle breeze, warm sunlight, pastel colors, peaceful, garden, outdoors, anime style"
-    "NL: A sense of gentle renewal pervades the scene."
+    "Remaining: 想要春天的感觉\n"
+    'IR: {"subject":[],"appearance":[],"clothing":[],"action":[],"pose":[],"interaction":[],"scene":["garden","spring","outdoors"],"composition":["scenic","wide shot"],"lighting":["warm sunlight"],"mood":["peaceful","gentle","renewal"],"style":["anime style","pastel colors"],"constraints":[]}\n'
+    "TAGS: spring, cherry blossoms, petals falling, gentle breeze, warm sunlight, pastel colors, peaceful, garden, outdoors, anime style\n"
+    "NL: A sense of gentle renewal pervades the scene.\n"
 )
 # LLM 结构化输出的字段 (顺序即展示顺序). TAGS 行单独解析为最终 tag.
 _STRUCTURED_FIELDS = ("scene", "composition", "mood", "lighting", "style")
+_IR_FIELDS = (
+    "subject", "appearance", "clothing", "action", "pose", "interaction",
+    "scene", "composition", "lighting", "mood", "style", "constraints",
+)
 
 # ③ 参考图理解: 视觉 LLM 从参考图提取内容 -> 结构化输出. 提取策略由用户文字驱动(非写死"只提氛围"). 见 D23.
 VISION_SYSTEM_PROMPT = (
@@ -438,17 +423,54 @@ VISION_ITERATE_SYSTEM_PROMPT = (
 )
 
 
-def _parse_structured_output(out: str) -> tuple[str, dict | None, str]:
-    """解析 LLM 结构化输出 (scene/composition/mood/lighting/style + TAGS + NL 各一行).
-    返回 (tags, breakdown, nl). 无 TAGS 行 -> 整体当 tags, breakdown=None, nl="" (降级, 见 D18)."""
+def _validate_prompt_ir(value) -> dict | None:
+    """校验并清洗 LLM 的 12 字段 Prompt IR, 不让坏 JSON 影响最终 tag 输出."""
+    if not isinstance(value, dict):
+        return None
+    ir = {}
+    for field in _IR_FIELDS:
+        items = value.get(field, [])
+        if not isinstance(items, list):
+            return None
+        ir[field] = [str(item).strip() for item in items if str(item).strip()]
+    return ir
+
+
+def _parse_prompt_ir(payload: str) -> dict | None:
+    """解析 IR 行中的紧凑 JSON; 允许模型意外包一层 markdown fence."""
+    payload = payload.strip().strip("`").strip()
+    candidates = [payload]
+    start, end = payload.find("{"), payload.rfind("}")
+    if start >= 0 and end > start:
+        candidates.append(payload[start:end + 1])
+    for candidate in candidates:
+        try:
+            return _validate_prompt_ir(json.loads(candidate))
+        except (json.JSONDecodeError, TypeError):
+            continue
+    return None
+
+
+def _breakdown_from_ir(prompt_ir: dict) -> dict:
+    """把 IR 中面向人的 5 个维度映射回既有 breakdown API 形状."""
+    return {field: ", ".join(prompt_ir.get(field, [])) for field in _STRUCTURED_FIELDS}
+
+
+def _parse_structured_output(out: str) -> tuple[str, dict | None, str, dict | None]:
+    """解析 IR + TAGS + NL, 同时兼容旧 5 字段行协议.
+    返回 (tags, breakdown, nl, prompt_ir). 无 TAGS 行 -> 整体当 tags, 其余为空 (D18 降级)."""
     breakdown: dict = {}
     tags = ""
     nl = ""
+    prompt_ir = None
     for line in out.splitlines():
         line = line.strip()
         if not line:
             continue
         low = line.lower()
+        if low.startswith("ir:"):
+            prompt_ir = _parse_prompt_ir(line.split(":", 1)[1])
+            continue
         if low.startswith("tags:"):
             tags = line.split(":", 1)[1].strip()
             continue
@@ -459,9 +481,20 @@ def _parse_structured_output(out: str) -> tuple[str, dict | None, str]:
             if low.startswith(f + ":"):
                 breakdown[f] = line.split(":", 1)[1].strip()
                 break
+    # 兼容模型把单行 JSON 错误地格式化成多行的情况; 失败仍走旧协议或 None.
+    if prompt_ir is None:
+        match = re.search(
+            r"^\s*ir:\s*(\{.*?\})(?=\s*(?:\n\s*(?:tags|nl):|\Z))",
+            out,
+            flags=re.IGNORECASE | re.MULTILINE | re.DOTALL,
+        )
+        if match:
+            prompt_ir = _parse_prompt_ir(match.group(1))
     if not tags:
-        return out, None, ""
-    return tags, breakdown or None, nl
+        return out, None, "", None
+    if prompt_ir is not None:
+        breakdown = _breakdown_from_ir(prompt_ir)
+    return tags, breakdown or None, nl, prompt_ir
 
 
 def match_characters(text: str) -> tuple[list[str], str]:
@@ -490,10 +523,10 @@ def match_dict_words(text: str) -> tuple[list[str], str]:
     return hits, remaining
 
 
-async def siliconflow_translate(context: str, reroll: bool = False) -> tuple[str, dict | None, str]:
+async def siliconflow_translate(context: str, reroll: bool = False) -> tuple[str, dict | None, str, dict | None]:
     """走硅基流动 Qwen 翻译/扩写. context 是结构化上下文 (Known tags + Remaining).
     返回 (LLM 新增 tag, 结构化拆解 dict). tag 不含已知 tag (由 translate 拼接).
-    breakdown 供前端预览展示 AI 理解 (scene/composition/mood/lighting/style). 失败抛异常 (上层转 HTTPException).
+    breakdown 供前端预览展示 AI 理解, prompt_ir 保存 12 字段语义计划. 失败抛异常 (上层转 HTTPException).
     reroll=True: 提高温度 + 前置发散指令, 让模型给一版不同创意解读 (抽卡再抽, 见 D19)."""
     api_key = CFG.get("siliconflow_api_key", "").strip()
     model = CFG.get("siliconflow_model", "deepseek-ai/DeepSeek-V4-Flash")
@@ -522,7 +555,7 @@ async def siliconflow_translate(context: str, reroll: bool = False) -> tuple[str
                 {"role": "user", "content": user_content},
             ],
             "temperature": temperature,
-            "max_tokens": 400,
+            "max_tokens": 550,
             # ★ 关键: enable_thinking 必须放顶层, 放 extra_body 里硅基流动不认 -> 思考没关掉. (见 D2)
             "enable_thinking": thinking,
         },
@@ -538,8 +571,8 @@ async def siliconflow_translate(context: str, reroll: bool = False) -> tuple[str
     if not out:
         raise RuntimeError("翻译服务返回空内容")
 
-    # 解析结构化输出: 5 字段 + TAGS 行. 无 TAGS 行则整体当 tag (降级, 见 D18).
-    tags, breakdown, nl = _parse_structured_output(out)
+    # 解析结构化输出: IR + TAGS + NL. 旧 5 字段和无 TAGS 降级仍由解析器兼容.
+    tags, breakdown, nl, prompt_ir = _parse_structured_output(out)
 
     # 兜底: 检测重复 tag (模型复读), 出现3次以上相同 tag 说明输出异常
     tag_list = [t.strip() for t in tags.split(",")]
@@ -548,10 +581,10 @@ async def siliconflow_translate(context: str, reroll: bool = False) -> tuple[str
     if dupes:
         raise RuntimeError(f"翻译输出异常(重复tag: {dupes[0]}), 请重试")
 
-    return tags, breakdown, nl
+    return tags, breakdown, nl, prompt_ir
 
 
-async def siliconflow_vision_translate(image_b64: str, context: str, reroll: bool = False, mode: str = "reference") -> tuple[str, dict | None, str]:
+async def siliconflow_vision_translate(image_b64: str, context: str, reroll: bool = False, mode: str = "reference") -> tuple[str, dict | None, str, dict | None]:
     """③ 参考图理解: 走硅基流动 Qwen3-VL, 从参考图提取氛围/配色/构图/场景/光影 -> 结构化 breakdown + TAGS.
     image_b64: data URI (data:image/...;base64,...) 或纯 base64. context 同文本 LLM (Known tags + Remaining).
     返回 (tags, breakdown), 复用 _parse_structured_output. 失败抛异常 (上层转 HTTPException). 见 D23.
@@ -595,14 +628,14 @@ async def siliconflow_vision_translate(image_b64: str, context: str, reroll: boo
     if not out:
         raise RuntimeError("视觉服务返回空内容")
 
-    tags, breakdown, nl = _parse_structured_output(out)
+    tags, breakdown, nl, prompt_ir = _parse_structured_output(out)
     # 重复 tag 兜底 (同文本 LLM)
     tag_list = [t.strip() for t in tags.split(",")]
     from collections import Counter
     dupes = [t for t, c in Counter(tag_list).most_common(3) if c >= 3 and t]
     if dupes:
         raise RuntimeError(f"视觉输出异常(重复tag: {dupes[0]}), 请重试")
-    return tags, breakdown, nl
+    return tags, breakdown, nl, prompt_ir
 
 
 # Anima 期望的 tag 顺序: quality -> count -> character -> general (见 D20).
@@ -644,9 +677,24 @@ def _strip_char_bare_names(new_list: list[str], char_tags: list[str]) -> list[st
     return [t for t in new_list if t.strip().lower() not in bare]
 
 
-async def translate(text: str, reroll: bool = False, image_b64: str | None = None) -> tuple[str, dict | None]:
+def compile_prompt(char_tags: list[str], other_tags: list[str], nl: str = "") -> str:
+    """把已知 tag、候选 tag 和可选 NL 编译成模型语义 prompt body.
+
+    quality prefix、safety、LoRA trigger 和 workflow 注入仍由 build_prompt 负责。
+    """
+    cleaned_tags = [tag.strip() for tag in other_tags if tag and tag.strip()]
+    cleaned_tags = _strip_char_bare_names(cleaned_tags, char_tags)
+    result = normalize_tag_order(char_tags, cleaned_tags)
+    nl = (nl or "").strip()
+    if result and nl:
+        return result + ". " + nl
+    return result or nl
+
+
+async def translate(text: str, reroll: bool = False, image_b64: str | None = None) -> tuple[str, dict | None, dict | None]:
     """中文 -> danbooru tag. 三层: 角色匹配 -> 词典匹配 -> LLM 扩写(只处理未命中).
-    返回 (prompt_en, breakdown): breakdown 是 LLM 结构化拆解, 快速路径(全命中词典/角色)时为 None.
+    返回 (prompt_en, breakdown, prompt_ir): breakdown 是既有 5 维展示结构,
+    prompt_ir 是 12 字段语义计划; 快速路径或旧视觉协议时二者按实际情况为 None.
     reroll=True: 只对 LLM 路径生效, 高温重出一版不同分解, 跳过缓存(探索性, 不污染正常缓存).
     image_b64: ③ 参考图 (data URI 或 base64). 有图走视觉 LLM 提氛围, 不走文本 LLM/快速路径. 见 D23."""
     backend = CFG.get("translate", "none")
@@ -670,31 +718,28 @@ async def translate(text: str, reroll: bool = False, image_b64: str | None = Non
         ctx_lines.append(f"User instruction: {', '.join(misses) if misses else '(no specific instruction - extract everything from the image)'}")
         context = "\n".join(ctx_lines)
         try:
-            new_tags, breakdown, nl = await siliconflow_vision_translate(image_b64, context, reroll=reroll)
+            new_tags, breakdown, nl, prompt_ir = await siliconflow_vision_translate(image_b64, context, reroll=reroll)
         except Exception as e:
             raise HTTPException(502, f"参考图理解失败, 请稍后重试 ({e})")
         new_list = [t.strip() for t in new_tags.split(",") if t.strip()]
-        new_list = _strip_char_bare_names(new_list, char_tags)
-        result = normalize_tag_order(char_tags, hits + new_list)
-        if nl:
-            result = result + ". " + nl
-        return result, breakdown
+        result = compile_prompt(char_tags, hits + new_list, nl)
+        return result, breakdown, prompt_ir
 
     # 全命中 (无 misses): 不调 LLM
     if not misses:
         # 裸角色名快速路径: 只有角色没别的描述 -> 补 1girl, solo
         # (LLM 对裸角色名会疯狂编场景/武器, 实测 7.9s + 噪声 tag, 见 D13)
         if char_tags and not hits:
-            return normalize_tag_order(char_tags, ["1girl", "solo"]), None
+            return compile_prompt(char_tags, ["1girl", "solo"]), None, None
         all_tags = char_tags + hits
         if all_tags:
-            return normalize_tag_order(char_tags, hits), None
+            return compile_prompt(char_tags, hits), None, None
         raise HTTPException(400, "提示词为空")
 
     # Layer 2: 有未命中 -> 后端处理
     if backend == "none":
         # 未翻译部分原样保留 (混输英文 tag 时合适)
-        return normalize_tag_order(char_tags, hits + misses), None
+        return compile_prompt(char_tags, hits + misses), None, None
 
     if backend == "siliconflow":
         # 构造上下文: 已知 tag 喂给 LLM, 只让它翻/扩 misses (不重复已知 tag)
@@ -710,28 +755,25 @@ async def translate(text: str, reroll: bool = False, image_b64: str | None = Non
         if not reroll and cache_key in _TRANSLATE_CACHE:
             return _TRANSLATE_CACHE[cache_key]
         try:
-            new_tags, breakdown, nl = await siliconflow_translate(context, reroll=reroll)
+            new_tags, breakdown, nl, prompt_ir = await siliconflow_translate(context, reroll=reroll)
         except Exception as e:
             raise HTTPException(502, f"翻译失败, 请稍后重试 ({e})")
-        # 拼接: 已知 tag + LLM 新增 tag, 再按 Anima 规范序排 (count -> char -> general, 见 D20)
+        # 编译: 已知 tag + LLM 新增 tag, 再按 Anima 规范序排并附加 NL.
         new_list = [t.strip() for t in new_tags.split(",") if t.strip()]
-        new_list = _strip_char_bare_names(new_list, char_tags)
-        result = normalize_tag_order(char_tags, hits + new_list)
-        if nl:
-            result = result + ". " + nl
+        result = compile_prompt(char_tags, hits + new_list, nl)
         # reroll 不写缓存: 探索性结果不应顶掉正常翻译的缓存原版 (见 D19)
         if not reroll:
             if len(_TRANSLATE_CACHE) >= _TRANSLATE_CACHE_MAX:
                 _TRANSLATE_CACHE.pop(next(iter(_TRANSLATE_CACHE)))
-            _TRANSLATE_CACHE[cache_key] = (result, breakdown)
-        return result, breakdown
+            _TRANSLATE_CACHE[cache_key] = (result, breakdown, prompt_ir)
+        return result, breakdown, prompt_ir
 
     if backend == "google":
         try:
             translated_missing = await google_translate_batch(misses)
         except Exception as e:
             raise HTTPException(502, f"翻译失败, 请稍后重试 ({e})")
-        return normalize_tag_order(char_tags, hits + translated_missing), None
+        return compile_prompt(char_tags, hits + translated_missing), None, None
 
     raise HTTPException(500, f"未知的 translate 后端: {backend}")
 
@@ -1013,8 +1055,8 @@ async def refresh_loras(token: str = Depends(auth)):
 @app.post("/api/translate")
 async def translate_prompt(req: Request, token: str = Depends(verify_token)):
     """只翻译不排队: 中文 -> 英文 tag (角色->词典->LLM 三层 + 结构化扩写, LRU 缓存). 不计入 image 限额.
-    返回 {prompt_en, breakdown}: breakdown 是 LLM 结构化拆解 (scene/composition/mood/lighting/style),
-    供前端预览展示 AI 理解; 快速路径(全命中词典/角色)时为 null.
+    返回 {prompt_en, breakdown, prompt_ir}: breakdown 保持 5 维前端展示形状,
+    prompt_ir 是 12 字段语义计划; 快速路径时二者为 null.
     body.reroll=true: LLM 高温重出一版不同分解 (抽卡再抽, 跳过缓存, 见 D19).
     body.image: 可选, 参考图 base64 (data URI). 有图走视觉 LLM 提氛围, 不走文本 LLM (③, 见 D23)."""
     body = await req.json()
@@ -1029,9 +1071,9 @@ async def translate_prompt(req: Request, token: str = Depends(verify_token)):
     if prompt:
         check_banned(prompt)
     reroll = bool(body.get("reroll"))
-    prompt_en, breakdown = await translate(prompt, reroll=reroll, image_b64=(image or None))
+    prompt_en, breakdown, prompt_ir = await translate(prompt, reroll=reroll, image_b64=(image or None))
     check_banned(prompt_en)
-    return {"prompt_en": prompt_en, "breakdown": breakdown}
+    return {"prompt_en": prompt_en, "breakdown": breakdown, "prompt_ir": prompt_ir}
 
 
 async def _enqueue(token: str, wf_name: str, prompt_en: str, prompt_raw: str,
@@ -1172,7 +1214,7 @@ async def dialog_turn(req: Request, token: str = Depends(auth)):
             raise HTTPException(400, "提示词为空或过长(>500)")
         check_banned(prompt)
         try:
-            prompt_en, _ = await translate(prompt)
+            prompt_en, _, _ = await translate(prompt)
         except HTTPException:
             raise
         except Exception as e:
@@ -1217,7 +1259,7 @@ async def dialog_turn(req: Request, token: str = Depends(auth)):
                     session["raw"] = re.sub(r"[,，\s]+", " ", session["raw"]).strip()
                 session["raw"] = (session["raw"] + "，" + delta) if session["raw"] else delta
                 try:
-                    prompt_en, _ = await translate(session["raw"])
+                    prompt_en, _, _ = await translate(session["raw"])
                 except HTTPException:
                     raise
                 except Exception as e:
@@ -1242,7 +1284,7 @@ async def dialog_turn(req: Request, token: str = Depends(auth)):
             try:
                 # ③ reference 路径: char_dict+dict 从 delta 预匹配(认角色名), VL 从图提氛围(vibe-only),
                 # 主体由 delta 文字给。不用 iterate(锁主体) -- 用户要"保氛围换主体"=reference, iterate 反而冲突(见 D25 修正)
-                prompt_en, _ = await translate(delta, image_b64=image_b64)
+                prompt_en, _, _ = await translate(delta, image_b64=image_b64)
             except HTTPException:
                 raise
             except Exception as e:
@@ -1269,7 +1311,7 @@ async def dialog_turn(req: Request, token: str = Depends(auth)):
             if delta:
                 session["raw"] = (session["raw"] + "，" + delta) if session["raw"] else delta
                 try:
-                    prompt_en, _ = await translate(session["raw"])
+                    prompt_en, _, _ = await translate(session["raw"])
                 except HTTPException:
                     raise
                 except Exception as e:
