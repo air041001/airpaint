@@ -1,6 +1,6 @@
 # PLAN-v5 — AirPaint Prompt Intelligence
 
-> 状态：正式路线（2026-08-15 修订，Phase 1.5 实验中）
+> 状态：正式路线（2026-08-15 修订，Phase 1.5 首轮实验完成）
 > 取代 PLAN-v4（v4 保留作历史参考）
 > 实施计划批准文件：`.workbuddy/plans/electric-forging-babbage.md`
 >
@@ -249,7 +249,7 @@ LLM 不直接负责最终 Prompt。建议输出：
 - 破坏性冲突：`_parse_structured_output`(L431) 解析逻辑改（保留旧 5 字段降级路径）；HotDict **不动**
 - 验收：结构回归通过；第二层视觉质量由 Phase 1.5 重新按人眼 A/B 实验判定。Phase 1 的 IR/Compiler 通过，但不宣称固定渲染格式已经证明能画好图。
 
-### Phase 1.5: Rendering Strategy Experiment（当前进行）
+### Phase 1.5: Rendering Strategy Experiment（首轮实验完成，R4 作为已知限制）
 
 **目标**：回答“同一语义下，什么样的 Prompt 表达更容易让 base Anima 画对”，而不是继续增加格式规则。
 
@@ -258,6 +258,7 @@ LLM 不直接负责最终 Prompt。建议输出：
 - 每个 case 比较 TAG-only、TAG+short NL、TAG+weighted spatial NL、NL-dominant；R2/R4 额外测试 semantic negative。
 - 由项目用户人眼选择胜者；vision agent 只做粗筛，不作为语义终审。
 - 实验结果形成语义类型 × 渲染策略表，之后才决定 Compiler 2.0 与 system prompt 规则。
+- base Anima 对复杂双人构图可能出现分页、黑线、人体/武器错位；无法稳定自动解决时，保留用户编辑 `prompt_en` 的产品 fallback，不为单个 case 扩张架构。
 
 ### Phase 2: Prompt Quality（Phase 1.5 结论后）
 

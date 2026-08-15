@@ -105,6 +105,7 @@ ComfyUI  127.0.0.1:8188  (不对公网开放)
 ## 尚未实现 / 已知限制
 
 - **意图解析**: Phase 1 已有 12 字段 Prompt IR + `compile_prompt`，但 IR 目前主要用于结构化记录、breakdown 派生和回归度量；TAG/NL 细分策略、字段级知识解析和结构化增量修改仍分别留给 Phase 2/4。路线见 `docs/PLAN-v5`。
+- **多角色构图限制**: base Anima 对复杂双人对峙可能产生分页、黑线或动作绑定错误；当前不做针对单一 case 的自动化特判，用户可在 `/api/translate` 返回的 `prompt_en` 编辑后再提交。
 - 用量/任务状态全内存, 重启清零 (Phase 3 计划 SQLite)。
 - 单份合并工作流 AnimaFull; 加功能分支 = 改 AnimaFull.json + config 声明节点 + build_prompt 拼接逻辑 (D32)。
 - 轮询取状态 (Phase 3 计划 WebSocket)。

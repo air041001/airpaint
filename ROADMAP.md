@@ -21,12 +21,12 @@
 - [x] Evaluation Set 真实 `translate()` 链路回归通过，新增固定 Prompt+seed 图像夹具 002/012/018
 - [ ] 人眼视觉验收：018 复检不认可“对峙感”，原 3/3 代理验收不作为质量结论，转入 Phase 1.5
 
-### Phase 1.5: Rendering Strategy 实验（当前进行）
+### Phase 1.5: Rendering Strategy 实验（首轮与 R4 专项已完成 2026-08-15）
 - [x] 固定 base Anima / workflow / sampler / CFG / steps / size / seed / negative，只改变 Prompt 渲染方式
 - [x] 7 个 case × 4 variant：TAG-only / TAG+short NL / weighted spatial NL / NL-dominant
 - [x] 加入成人 NSFW 单人与双人 case；R2/R4 额外测试 semantic negative
 - [x] 用户人眼盲评，vision agent 只做粗筛；结果记录在 D35 与 `render_exp/results.yaml`
-- [ ] R4 双人对峙换 seed 专项复测；在此之前不固化 Compiler 2.0 或 weighted rendering
+- [x] R4 双人对峙换 seed 专项复测；base Anima 仍不能稳定表达后撤/连续构图，不固化 Compiler 2.0 或 weighted rendering，保留 Prompt 手动编辑 fallback
 
 ### Phase 2-8: 见 PLAN-v5
 Prompt Quality → Character Knowledge → PromptState → LoRA Context → Trigger Engine → LoRA Composition → Workflow Intelligence

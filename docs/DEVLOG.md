@@ -548,7 +548,7 @@ inpaint 局部重绘实测效果不达标: (1) 该工作流 inpaint 采样器用
 
 - IR 在 Phase 1 负责语义记录、breakdown 派生和稳定性度量; TAGS/NL 仍是最终语义 prompt 的编译候选, 字段级 TAG/NL 策略留给 Phase 2。
 - `compile_prompt()` 统一角色裸名清理、去重、count→character→general 排序和 NL 拼接; quality prefix、safety、LoRA trigger、seed 和 workflow 注入仍由 `build_prompt()` 负责。
-- 视觉回归发现实时 LLM 输出会让固定 seed 图像不可复现, 因此第二层验收夹具同时固定 Prompt、seed 和尺寸。多角色关系增加单一连续画面护栏, 复杂特效保留来源/附着关系。
+- 视觉回归发现实时 LLM 输出会让固定 seed 图像不可复现, 因此第二层验收夹具同时固定 Prompt、seed 和尺寸。曾尝试为多角色/复杂特效增加 system prompt 护栏, 但未被实验证明有效，已在 Rendering Strategy 实验前撤回。
 
 ### 验证
 
@@ -587,3 +587,13 @@ inpaint 局部重绘实测效果不达标: (1) 该工作流 inpaint 采样器用
 ### 结论
 
 不存在当前可全局套用的 Prompt 格式。IR 保留，Renderer 改为未来按语义类型选择；weighted spatial NL、semantic negative 和 `girl/female` 词汇策略都暂不固化。详见 D35。
+
+## 第 34 条 2026-08-15 - R4 专项复测与手动编辑 fallback
+
+### 结果
+
+R4 使用第二个固定 seed 重跑 5 个变体：V1 产生了一张单一连续画面，V2 出现多余第三人，V3/V4/V5 仍出现分页或黑线。五张图都没有稳定表达右侧角色“后撤”。
+
+### 决定
+
+不再为 R4 继续堆 Prompt 规则或权重策略。base Anima 的多角色构图/动作绑定在当前 workflow 下属于已知限制；产品保留现有英文 `prompt_en` 可编辑能力，让熟悉 ComfyUI 的用户手动调整关系、姿态或删减干扰元素。R4 不再阻塞 Prompt Intelligence 主线。

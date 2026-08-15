@@ -32,3 +32,10 @@ observations:
   - "The two-character R4 case is unresolved: all variants show pagination, so this is a base-model/composition issue rather than a proven renderer winner."
   - "R2 semantic negative V5 tied its positive counterpart; semantic negative is not yet proven."
   - "The user observes `girl` works better than `female`; this run did not isolate that lexical variable because NSFW variants used `1girl` plus `adult woman`. Keep it as a follow-up hypothesis, not a confirmed rule."
+
+follow_up:
+  R4B:
+    seed: 2208
+    coarse_result: "V1 was one continuous scene; V2 added a third figure; V3/V4/V5 had pagination or black dividers."
+    human_status: "User reports all five lose the retreat action; do not continue automatic optimization."
+    decision: "Known base Anima limitation; use editable prompt_en fallback."

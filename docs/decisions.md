@@ -369,8 +369,8 @@
 3. weighted spatial NL 暂不进入生产默认策略；本轮在 base Anima 上不稳定。
 4. semantic negative 暂不进入生产默认负面；R2 平局、R4 仍失败，证据不足。
 5. `girl` vs `female` 本轮没有隔离变量。用户观察“`girl` 比 `female` 更适合当前二次元模型”作为后续词汇实验假设；NSFW 继续使用 canonical count `1girl` + 明确 `adult woman` 语义，不把 `female` 擅自替换成全局规则。
-6. R4 全变体分页，先换 seed 专项复测；若仍复现，再把它记录为 base Anima 多角色构图限制，不用 Prompt 格式掩盖。
+6. R4 换 seed 专项复测后，V1 在新 seed 得到一张连续画面，但其余变体仍分页/黑线/错位，且五张都没有稳定表达“后撤”。不继续为该 case 堆自动规则，记录为 base Anima 多角色构图/动作绑定限制；用户通过现有可编辑 `prompt_en` 手动辅助。
 
-**未决定**: Compiler 2.0 的显著性管理、动态渲染 profile、语义负面和词汇 canonicalization, 等 R4 专项复测和更多 NSFW 结果后再定。暂不写 PLAN-v6。
+**未决定**: Compiler 2.0 的显著性管理、动态渲染 profile、语义负面和词汇 canonicalization 仍不固化；本轮只把实验证实的差异记录为策略候选。PLAN-v6 等下一轮证据，不为 R4 单点问题继续扩张主线。
 
 **相关文件**: `.tools/eval_set/render_exp/cases.yaml`, `.tools/eval_set/render_exp/results.yaml`, `.tools/eval_set/render_exp/output/review.html`。
