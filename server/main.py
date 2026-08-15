@@ -684,7 +684,7 @@ async def translate(text: str, reroll: bool = False, image_b64: str | None = Non
     if not misses:
         # 裸角色名快速路径: 只有角色没别的描述 -> 补 1girl, solo
         # (LLM 对裸角色名会疯狂编场景/武器, 实测 7.9s + 噪声 tag, 见 D13)
-        if char_tags and not hits and not parts:
+        if char_tags and not hits:
             return normalize_tag_order(char_tags, ["1girl", "solo"]), None
         all_tags = char_tags + hits
         if all_tags:
