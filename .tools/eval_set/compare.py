@@ -41,6 +41,22 @@ def tag_list(row: dict) -> list[str]:
     return [tag.strip() for tag in text.split(",") if tag.strip()]
 
 
+def tag_nl_overlap(row: dict) -> list[str]:
+    """报告 TAGS 在 NL 中重复出现的长 tag；短计数词不作为告警。"""
+    nl = str(row.get("NL") or "").lower()
+    if not nl:
+        return []
+    overlaps = []
+    for tag in tag_list(row):
+        normalized = tag.lower()
+        if len(normalized) < 4 or COUNT_RE.match(normalized):
+            continue
+        pattern = r"(?<!\w)" + re.escape(normalized) + r"(?!\w)"
+        if re.search(pattern, nl):
+            overlaps.append(tag)
+    return overlaps
+
+
 def bare_name(tag: str) -> str | None:
     for separator in ("_(", " ("):
         if separator in tag:
@@ -69,7 +85,8 @@ def check_ir(row: dict, case_id: str, errors: list[str], warnings: list[str]) ->
     return valid
 
 
-def compare(baseline: dict[str, dict], candidate: dict[str, dict], require_ir: bool = False) -> int:
+def compare(baseline: dict[str, dict], candidate: dict[str, dict], require_ir: bool = False,
+            strict_tag_nl: bool = False) -> int:
     errors: list[str] = []
     warnings: list[str] = []
     missing = sorted(set(baseline) - set(candidate))
@@ -84,6 +101,7 @@ def compare(baseline: dict[str, dict], candidate: dict[str, dict], require_ir: b
     nl_candidate = 0
     ir_valid = 0
     ir_seen = 0
+    overlap_cases = 0
     for case_id, base_row in baseline.items():
         row = candidate.get(case_id)
         if row is None:
@@ -114,6 +132,14 @@ def compare(baseline: dict[str, dict], candidate: dict[str, dict], require_ir: b
             nl_baseline += 1
         if row.get("NL"):
             nl_candidate += 1
+        overlaps = tag_nl_overlap(row)
+        if overlaps:
+            overlap_cases += 1
+            message = f"[{case_id}] TAGS/NL 重复: {', '.join(overlaps)}"
+            if strict_tag_nl:
+                errors.append(message)
+            else:
+                warnings.append(message)
         if row.get("prompt_ir", row.get("ir")) is not None:
             ir_seen += 1
         if check_ir(row, case_id, errors, warnings):
@@ -126,6 +152,7 @@ def compare(baseline: dict[str, dict], candidate: dict[str, dict], require_ir: b
 
     print(f"baseline={len(baseline)}, candidate={len(candidate)}, candidate OK={ok}")
     print(f"NL: baseline={nl_baseline}, candidate={nl_candidate}")
+    print(f"TAGS/NL overlap cases: {overlap_cases}")
     print(f"IR: valid={ir_valid}, present={ir_seen}, total={len(candidate)}")
     if errors:
         print("\nFAIL")
@@ -146,6 +173,8 @@ def main() -> None:
     parser.add_argument("--candidate", type=Path, default=DEFAULT_CANDIDATE)
     parser.add_argument("--require-ir", action="store_true",
                         help="要求至少 90%% case 具有完整 12 字段 IR")
+    parser.add_argument("--strict-tag-nl", action="store_true",
+                        help="将 TAGS/NL 重复从告警升级为失败")
     args = parser.parse_args()
     baseline_path = args.baseline if args.baseline.is_absolute() else BASE / args.baseline
     candidate_path = args.candidate if args.candidate.is_absolute() else BASE / args.candidate
@@ -153,7 +182,8 @@ def main() -> None:
         raise SystemExit(f"baseline 不存在: {baseline_path}")
     if not candidate_path.exists():
         raise SystemExit(f"candidate 不存在: {candidate_path}")
-    raise SystemExit(compare(load_rows(baseline_path), load_rows(candidate_path), args.require_ir))
+    raise SystemExit(compare(load_rows(baseline_path), load_rows(candidate_path),
+                             args.require_ir, args.strict_tag_nl))
 
 
 if __name__ == "__main__":

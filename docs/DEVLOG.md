@@ -571,3 +571,19 @@ inpaint 局部重绘实测效果不达标: (1) 该工作流 inpaint 采样器用
 - Phase 1.5 改做固定变量的 Rendering Strategy A/B 实验：TAG-only、TAG+short NL、weighted spatial NL、NL-dominant。
 - 评测加入成人 NSFW 单人/双人 case；vision agent 降级为粗筛，用户人眼作为最终判定。
 - 证据出现前不继续堆生产 Compiler 规则，不提前写 PLAN-v6。
+
+## 第 33 条 2026-08-15 - 首轮 Rendering Strategy 实验完成
+
+### 结果
+
+在 base Anima 上固定 workflow、尺寸、seed、quality prefix 和默认负面，比较 7 个 case 的 TAG-only、TAG+short NL、weighted spatial NL、NL-dominant，以及 R2/R4 的 semantic negative。30 张图全部生成成功，用户完成盲评。
+
+- R6 成人 NSFW 单人选择 TAG-only，手部动作最可信。
+- R3 复杂单人姿态选择带明确空间/动作关系的 hybrid。
+- R5 逆光和 R7 成人双人没有证明长 NL 或权重一定更好。
+- R4 五个变体全部出现上下分页或中央分隔问题；没有接受的渲染胜者，需换 seed 复测。
+- 用户补充观察 `girl` 比 `female` 更适合当前二次元模型，但本轮没有隔离该词汇变量。
+
+### 结论
+
+不存在当前可全局套用的 Prompt 格式。IR 保留，Renderer 改为未来按语义类型选择；weighted spatial NL、semantic negative 和 `girl/female` 词汇策略都暂不固化。详见 D35。

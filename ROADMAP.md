@@ -22,10 +22,11 @@
 - [ ] 人眼视觉验收：018 复检不认可“对峙感”，原 3/3 代理验收不作为质量结论，转入 Phase 1.5
 
 ### Phase 1.5: Rendering Strategy 实验（当前进行）
-- [ ] 固定 base Anima / workflow / sampler / CFG / steps / size / seed / negative，只改变 Prompt 渲染方式
-- [ ] 7 个 case × 4 variant：TAG-only / TAG+short NL / weighted spatial NL / NL-dominant
-- [ ] 加入成人 NSFW 单人与双人 case；R2/R4 额外测试 semantic negative
-- [ ] 用户人眼盲评，vision agent 只做粗筛；实验结论后再修 Compiler 与 system prompt
+- [x] 固定 base Anima / workflow / sampler / CFG / steps / size / seed / negative，只改变 Prompt 渲染方式
+- [x] 7 个 case × 4 variant：TAG-only / TAG+short NL / weighted spatial NL / NL-dominant
+- [x] 加入成人 NSFW 单人与双人 case；R2/R4 额外测试 semantic negative
+- [x] 用户人眼盲评，vision agent 只做粗筛；结果记录在 D35 与 `render_exp/results.yaml`
+- [ ] R4 双人对峙换 seed 专项复测；在此之前不固化 Compiler 2.0 或 weighted rendering
 
 ### Phase 2-8: 见 PLAN-v5
 Prompt Quality → Character Knowledge → PromptState → LoRA Context → Trigger Engine → LoRA Composition → Workflow Intelligence

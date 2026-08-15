@@ -343,3 +343,34 @@
 **验证**: 真实 `translate()` 评测两轮均 30/30 成功、30/30 IR 完整; `compare.py --require-ir` 通过; 7 个零依赖 Prompt 单测通过; 固定夹具 002/012/018 生图 3/3 通过内容验收。012 的锅柄与手连接仍需人眼复核, 不构成 Phase 1 阻塞。
 
 **相关文件**: `server/main.py`, `.tools/eval_set/run_baseline.py`, `.tools/eval_set/compare.py`, `.tools/eval_set/image_cases.yaml`, `.tools/eval_set/run_gen_test.py`, `docs/api.md`, `docs/architecture.md`。
+
+## D35. Phase 1.5 首轮 Rendering Strategy 实验结果
+
+**背景**: Phase 1 的结构回归证明了 IR 可解析, 但用户人眼发现 018 的“对峙”被中央闪电和分页构图破坏。需要在不改变 checkpoint/workflow/seed 的情况下比较 Prompt 表达方式, 而不是继续凭格式推导规则。
+
+**实验**: base Anima, `anima` workflow, 固定尺寸/seed/质量前缀/默认负面, 无 LoRA/无 detailer。7 个 case 比较 V1 TAG-only、V2 TAG+short NL、V3 weighted spatial NL、V4 NL-dominant；R2/R4 追加 V5 semantic negative。共 30 张图, 用户人眼盲评, vision agent 仅粗筛。
+
+**用户结果**:
+
+| Case | 用户胜者 | 结论 |
+|---|---|---|
+| R1 简单单人 | V1（差异不明显） | 简单内容没有证明 NL 必须存在 |
+| R2 咖啡道具 | V3/V5 | 空间位置和单一道具关系有帮助；semantic negative 未证明额外收益 |
+| R3 复杂单人姿态 | V3 | 明确“哪条腿/如何靠墙/如何看手机”的关系优于泛化 NL |
+| R4 双人对峙 | V1/V4，但全部分页 | 没有可接受的全局胜者；base Anima 多角色构图问题未解决 |
+| R5 逆光剪影 | V1/V2 | 过度强调 silhouette 会损失脸部可读性 |
+| R6 成人 NSFW 单人 | V1 | TAG-only 的手部动作最可信；NSFW 暂偏 tag-first |
+| R7 成人 NSFW 双人 | V1/V2/V4 | TAG、短 NL、NL-dominant 均可；weighted V3 产生黑线分页 |
+
+**决定**:
+
+1. 不把 V1/V2/V3/V4 任一方案升级为全局固定模板。
+2. IR 继续保留为内部语义表示；最终渲染策略按语义类型选择，是后续 Compiler 方向。
+3. weighted spatial NL 暂不进入生产默认策略；本轮在 base Anima 上不稳定。
+4. semantic negative 暂不进入生产默认负面；R2 平局、R4 仍失败，证据不足。
+5. `girl` vs `female` 本轮没有隔离变量。用户观察“`girl` 比 `female` 更适合当前二次元模型”作为后续词汇实验假设；NSFW 继续使用 canonical count `1girl` + 明确 `adult woman` 语义，不把 `female` 擅自替换成全局规则。
+6. R4 全变体分页，先换 seed 专项复测；若仍复现，再把它记录为 base Anima 多角色构图限制，不用 Prompt 格式掩盖。
+
+**未决定**: Compiler 2.0 的显著性管理、动态渲染 profile、语义负面和词汇 canonicalization, 等 R4 专项复测和更多 NSFW 结果后再定。暂不写 PLAN-v6。
+
+**相关文件**: `.tools/eval_set/render_exp/cases.yaml`, `.tools/eval_set/render_exp/results.yaml`, `.tools/eval_set/render_exp/output/review.html`。

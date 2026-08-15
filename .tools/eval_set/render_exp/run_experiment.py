@@ -3,8 +3,10 @@
 import asyncio
 import html
 import json
+import os
 import random
 import sys
+import argparse
 from pathlib import Path
 
 import yaml
@@ -19,8 +21,8 @@ sys.path.insert(0, str(ROOT))
 from server import main as engine
 
 
-def load_cases() -> list[dict]:
-    data = yaml.load(CASES_PATH.read_text(encoding="utf-8"), Loader=yaml.BaseLoader) or {}
+def load_cases(path: Path = CASES_PATH) -> list[dict]:
+    data = yaml.load(path.read_text(encoding="utf-8"), Loader=yaml.BaseLoader) or {}
     return data.get("cases", [])
 
 
@@ -81,9 +83,9 @@ async def render_variant(case: dict, variant_id: str, prompt: str, negative: str
         }
 
 
-def write_review_files(rows: list[dict], cases: list[dict]) -> None:
-    OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
-    (OUTPUT_DIR / "manifest.json").write_text(
+def write_review_files(rows: list[dict], cases: list[dict], output_dir: Path = OUTPUT_DIR) -> None:
+    output_dir.mkdir(parents=True, exist_ok=True)
+    (output_dir / "manifest.json").write_text(
         json.dumps(rows, ensure_ascii=False, indent=2), encoding="utf-8")
 
     grouped = {}
@@ -100,7 +102,7 @@ def write_review_files(rows: list[dict], cases: list[dict]) -> None:
         for label, row in zip("ABCDE", entries):
             labels[label] = row["variant"]
             if row["status"] == "OK":
-                src = "../../../../server/images/" + row["image"]
+                src = Path(os.path.relpath(engine.IMAGES / row["image"], output_dir)).as_posix()
                 body = f'<img src="{html.escape(src)}" loading="lazy">'
             else:
                 body = f'<div class="failed">FAILED<br>{html.escape(row["error"])}</div>'
@@ -112,7 +114,7 @@ def write_review_files(rows: list[dict], cases: list[dict]) -> None:
             f'<p>{html.escape(str(case["input"]))}</p><div class="grid">'
             + "".join(cards) + "</div></section>")
 
-    (OUTPUT_DIR / "review_key.json").write_text(
+    (output_dir / "review_key.json").write_text(
         json.dumps(review_key, ensure_ascii=False, indent=2), encoding="utf-8")
     html_doc = """<!doctype html>
 <meta charset="utf-8">
@@ -128,14 +130,15 @@ img{display:block;width:100%;height:auto} .failed{padding:80px 10px;text-align:c
 <h1>Prompt Rendering Strategy Experiment</h1>
 <p>每组标签已随机化。请只记录每组你认为画面最符合输入意图的标签，不要猜变体名称。</p>
 """ + "\n".join(sections)
-    (OUTPUT_DIR / "review.html").write_text(html_doc, encoding="utf-8")
+    (output_dir / "review.html").write_text(html_doc, encoding="utf-8")
 
 
-async def run() -> int:
-    cases = load_cases()
+async def run(cases_path: Path = CASES_PATH, output_dir: Path = OUTPUT_DIR,
+              expected_count: int | None = 30) -> int:
+    cases = load_cases(cases_path)
     jobs = [(case, *variant) for case in cases for variant in variants_for(case)]
-    if len(jobs) != 30:
-        raise RuntimeError(f"实验数量错误: {len(jobs)}，预期 30")
+    if expected_count is not None and len(jobs) != expected_count:
+        raise RuntimeError(f"实验数量错误: {len(jobs)}，预期 {expected_count}")
 
     workflow = engine.WORKFLOWS["anima"]
     previous_negative_node = workflow.get("negative_text_node")
@@ -150,13 +153,20 @@ async def run() -> int:
         else:
             workflow["negative_text_node"] = previous_negative_node
 
-    write_review_files(rows, cases)
+    write_review_files(rows, cases, output_dir)
     ok = sum(row["status"] == "OK" for row in rows)
     print(f"\nrender experiment: {ok}/{len(rows)} images generated", flush=True)
-    print(f"review: {OUTPUT_DIR / 'review.html'}", flush=True)
-    print(f"manifest: {OUTPUT_DIR / 'manifest.json'}", flush=True)
+    print(f"review: {output_dir / 'review.html'}", flush=True)
+    print(f"manifest: {output_dir / 'manifest.json'}", flush=True)
     return 0 if ok == len(rows) else 1
 
 
 if __name__ == "__main__":
-    raise SystemExit(asyncio.run(run()))
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--cases", type=Path, default=CASES_PATH)
+    parser.add_argument("--output", type=Path, default=OUTPUT_DIR)
+    parser.add_argument("--expected-count", type=int, default=30)
+    args = parser.parse_args()
+    cases_path = args.cases if args.cases.is_absolute() else ROOT / args.cases
+    output_dir = args.output if args.output.is_absolute() else ROOT / args.output
+    raise SystemExit(asyncio.run(run(cases_path, output_dir, args.expected_count)))
