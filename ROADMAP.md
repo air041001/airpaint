@@ -6,7 +6,7 @@
 
 > 2026-08-13 确立的新主线。完整路线见 [`docs/PLAN-v5 — AirPaint Prompt Intelligence.md`](PLAN-v5%20—%20AirPaint%20Prompt%20Intelligence.md)（取代 PLAN-v4）。
 >
-> **核心**：Prompt-first，LoRA 后置。先把普通绘图 Prompt 做到比直接用 ComfyUI 更好，再把 LoRA 做成扩展辅助。LLM 是大脑（意图/语义），代码是脊髓（canonical tag/知识库/数值/workflow）。
+> **核心**：NSFW-first + Prompt-first，LoRA 后置。首要目标是把成人虚构内容的 Prompt 与出图质量做到最好，普通绘图能力顺带做强；LLM 是大脑（意图/语义），代码是脊髓（canonical tag/知识库/数值/workflow）。IR 不规定固定最终 Prompt 格式，渲染策略必须用固定变量的人眼实验验证。
 >
 > 下面 Phase 2-5 是 MVP 之后的工程化补强（多工作流/前端/持久化/高级工作流），与 Prompt Intelligence 主线并行但优先级低。
 
@@ -14,11 +14,18 @@
 - [x] 建 Evaluation Set 30 条（`.tools/eval_set/`，第一层结构回归 + 第二层生图验收）
 - [x] 基础维护顺手修：scan_loras 三处问题 / 文档模型名同步 DeepSeek-V4-Flash / 已知 char_dict 错误（amamiya_kokoro 已修）
 
-### Phase 1: Prompt IR + Compiler（核心，已完成 2026-08-15）
+### Phase 1: Prompt IR + Compiler（代码实现完成 2026-08-15，视觉策略待实验）
 - [x] 定义 Prompt IR（12 字段 JSON：subject/appearance/clothing/action/pose/interaction/scene/composition/lighting/mood/style/constraints）
 - [x] 改 LLM 输出协议：IR 单行 JSON + TAGS/NL；保留旧协议降级；DeepSeek 两轮 30/30 IR 完整
 - [x] Prompt Compiler 初版：`compile_prompt` 统一去重、角色裸名清理、排序和 NL 拼接；`build_prompt` 保留工作流适配边界
-- [x] Evaluation Set 真实 `translate()` 链路回归通过，新增固定 Prompt+seed 图像夹具 002/012/018，内容验收 3/3
+- [x] Evaluation Set 真实 `translate()` 链路回归通过，新增固定 Prompt+seed 图像夹具 002/012/018
+- [ ] 人眼视觉验收：018 复检不认可“对峙感”，原 3/3 代理验收不作为质量结论，转入 Phase 1.5
+
+### Phase 1.5: Rendering Strategy 实验（当前进行）
+- [ ] 固定 base Anima / workflow / sampler / CFG / steps / size / seed / negative，只改变 Prompt 渲染方式
+- [ ] 7 个 case × 4 variant：TAG-only / TAG+short NL / weighted spatial NL / NL-dominant
+- [ ] 加入成人 NSFW 单人与双人 case；R2/R4 额外测试 semantic negative
+- [ ] 用户人眼盲评，vision agent 只做粗筛；实验结论后再修 Compiler 与 system prompt
 
 ### Phase 2-8: 见 PLAN-v5
 Prompt Quality → Character Knowledge → PromptState → LoRA Context → Trigger Engine → LoRA Composition → Workflow Intelligence

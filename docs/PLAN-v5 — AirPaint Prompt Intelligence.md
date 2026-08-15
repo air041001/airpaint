@@ -1,14 +1,14 @@
 # PLAN-v5 — AirPaint Prompt Intelligence
 
-> 状态：正式路线（2026-08-13）
+> 状态：正式路线（2026-08-15 修订，Phase 1.5 实验中）
 > 取代 PLAN-v4（v4 保留作历史参考）
 > 实施计划批准文件：`.workbuddy/plans/electric-forging-babbage.md`
 >
 > **核心原则**：
-> 1. **Prompt-first，LoRA 后置** — LoRA 是 extension layer，不是主线。先把普通绘图 Prompt 做到比直接用 ComfyUI 更好。
+> 1. **NSFW-first，Prompt-first，LoRA 后置** — 首要目标是在当前 base Anima 上把成人虚构内容的 Prompt 与出图质量做到最好；普通绘图 Prompt 是顺带做强的基础能力，LoRA 是 extension layer，不是当前主线。
 > 2. **LLM 是大脑，代码是脊髓** — LLM 负责意图/语义/关系/偏好；代码负责 canonical tag/知识库/LoRA ID/文件/数值/ordering/validation/workflow injection。模型不直接决定 `xxx.safetensors` 或 `CFG=6.7`。
-> 3. **单人长期开发，最小可用优先** — 不铺开 8 Phase。先证明核心价值，再扩展。
-> 4. **先证明 Prompt Intelligence 比直接用 ComfyUI 更好，再扩展** Character Knowledge / LoRA Intelligence / Workflow Intelligence。
+> 3. **渲染策略必须实证** — Prompt IR 是内部语义表示，不规定固定的最终 Prompt 格式；TAG、NL、权重、空间锚点和语义负面如何组合，必须用固定工作流/seed 的人眼结果验证，不能凭格式整洁推断质量。
+> 4. **单人长期开发，最小可用优先** — 不铺开 8 Phase。先证明核心价值，再扩展 Character Knowledge / LoRA Intelligence / Workflow Intelligence。
 
 ---
 
@@ -37,6 +37,8 @@ Workflow Engine
     ↓
 ComfyUI
 ```
+
+当前首要验证场景是成人虚构内容生成。系统必须保持专业的 Danbooru/Anima NSFW 表达能力，但不把 NSFW 语义与工作流文件、节点 ID 或任意数值混在一起。
 
 ---
 
@@ -134,17 +136,19 @@ AirPaint 不把目标定义成"尽可能把所有东西都翻译成 tag"。Anima
 
 ## 6. Prompt Compiler
 
-最终 Prompt 由代码层统一编译（LLM 不直接决定最终字符串全部细节）：
+最终 Prompt 由代码层按经过验证的渲染策略编译（LLM 不直接决定最终字符串全部细节，IR 也不是固定模板）：
 
 ```
 Prompt IR + Knowledge + Model-specific rules + LoRA context + User overrides
     ↓
 Prompt Compiler
-    ↓
-Final Anima Prompt
+     ↓
+ Rendering Strategy + Prompt Compiler
+     ↓
+ Final Anima Prompt
 ```
 
-Compiler 负责：canonicalization / 去重 / tag 排序 / TAG-NL 合并 / quality prefix / safety / 模型特定规则 / LoRA context 处理 / trigger 注入 / 用户锁定项 / 用户修改项。
+Compiler 长期负责：canonicalization / 显著性与去重 / tag 排序 / TAG-NL-NL 渲染策略 / 权重与空间锚点 / quality prefix / safety / 模型特定规则 / LoRA context 处理 / trigger 注入 / 用户锁定项 / 用户修改项。具体规则必须由 Rendering Strategy 实验支持。
 
 > 现状：`normalize_tag_order`(L609) 是去重+重排的微型胚胎，`build_prompt`(L834) 做字符串拼接。Phase 1 扩展成统一编译器。
 
@@ -234,7 +238,7 @@ LLM 不直接负责最终 Prompt。建议输出：
 - 同步文档模型名（DeepSeek-V4-Flash + Qwen3-VL）
 - 修已知 char_dict 错误（amamiya_kokoro 已修；全量审查延后 Phase 3）
 
-### Phase 1: Prompt IR + Compiler（现在做，核心）
+### Phase 1: Prompt IR + Compiler（代码实现已完成）
 
 **目标**：把 Prompt Engine 从 Translator 升级成 Planner，证明抽象提升带来出图质量提升。
 
@@ -243,16 +247,26 @@ LLM 不直接负责最终 Prompt。建议输出：
 - 验证 DeepSeek-V4-Flash 输出 12 字段 JSON 稳定性（先跑 20-50 条测试，降级兜底保留）
 - Prompt Compiler 初版：`normalize_tag_order`(L609) + `build_prompt`(L834) 扩展成统一编译（canonicalization/去重/tag排序/TAG-NL合并/quality/safety/模型规则）
 - 破坏性冲突：`_parse_structured_output`(L431) 解析逻辑改（保留旧 5 字段降级路径）；HotDict **不动**
-- 验收：复杂动作/多角色/空间关系稳定表达；Evaluation Set 第一层回归不退化；第二层生图主观质量不降
+- 验收：结构回归通过；第二层视觉质量由 Phase 1.5 重新按人眼 A/B 实验判定。Phase 1 的 IR/Compiler 通过，但不宣称固定渲染格式已经证明能画好图。
 
-### Phase 2: Prompt Quality（Phase 1 稳定后）
+### Phase 1.5: Rendering Strategy Experiment（当前进行）
 
-**目标**：研究 Prompt 本身，不是加功能。
+**目标**：回答“同一语义下，什么样的 Prompt 表达更容易让 base Anima 画对”，而不是继续增加格式规则。
 
-- TAG/NL 分流规则细化（动作/姿态/多人物互动/空间关系/连续行为 → 哪些 canonical tag / 哪些 NL）
-- Dictionary vs LLM 不预设优先级，按语义类型 + Evaluation Set 实际结果形成策略
-- canonicalization / dedup / ordering 完全收进 Compiler
-- Evaluation Set 第二层生图回归
+- 固定 base Anima、workflow、采样参数、尺寸、seed、negative，只改变 Prompt rendering variant。
+- 7 个 case：简单单人、单人+道具动作、复杂单人姿态、双人对峙、场景+光影、成人 NSFW 单人、成人 NSFW 双人交互。
+- 每个 case 比较 TAG-only、TAG+short NL、TAG+weighted spatial NL、NL-dominant；R2/R4 额外测试 semantic negative。
+- 由项目用户人眼选择胜者；vision agent 只做粗筛，不作为语义终审。
+- 实验结果形成语义类型 × 渲染策略表，之后才决定 Compiler 2.0 与 system prompt 规则。
+
+### Phase 2: Prompt Quality（Phase 1.5 结论后）
+
+**目标**：把实验证明有效的 Rendering Strategy 收进 Compiler，而不是继续假设统一格式。
+
+- 按语义类型动态选择 TAG/NL/hybrid/weighted rendering
+- 研究 Dictionary vs LLM，不预设优先级，按真实图像结果形成策略
+- 将 canonicalization / salience dedup / ordering / semantic negative 收进 Compiler
+- 成人 NSFW 与普通 Prompt 分开建立回归集，固定 Prompt+seed 做第二层生图回归
 
 ### Phase 3: Character Knowledge（Phase 2 后）
 
@@ -295,7 +309,8 @@ LLM 不直接负责最终 Prompt。建议输出：
 - Prompt Compiler 初版
 
 ### 延后（Phase 2-8，按顺序）
-- TAG/NL 分流细化 / Dictionary vs LLM 策略
+- Rendering Strategy 实验结论之前的生产级 TAG/NL/权重/semantic negative 规则
+- Dictionary vs LLM 策略固化
 - char_dict 联网查询 + 知识成长 + 结构化
 - PromptState + dialog 重构
 - LoRA context / Trigger Engine / LoRA Composition / Workflow Intelligence
@@ -329,10 +344,12 @@ LLM 不直接负责最终 Prompt。建议输出：
 
 > **一个已经会用 ComfyUI 的人，觉得 AirPaint 比直接打开 ComfyUI 更适合写 Prompt、管理语义和迭代修改。**
 
-核心验证点（Phase 1 结束时回答）：
-- Prompt IR 是否让复杂动作/多角色/空间关系表达更稳定？
-- Compiler 是否让最终 prompt 更可控（canonical/去重/排序）？
-- Evaluation Set 回归是否证明"抽象提升"真的带来质量提升而非只是代码变复杂？
+核心验证点（Phase 1.5 结束时回答）：
+- 简单内容是否 TAG 更强，复杂关系是否 NL/hybrid 更强？
+- 权重与空间锚点在 base Anima 上是否有效？
+- 语义负面是否能抑制姿态/场景干扰？
+- 成人 NSFW 与普通 Prompt 是否需要不同的渲染策略？
+- Evaluation Set 是否通过人眼结果证明抽象提升真的带来画面质量提升，而不只是代码变复杂？
 
 只有这个核心成立，才继续 Phase 2-8。
 

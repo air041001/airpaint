@@ -828,7 +828,8 @@ def build_prompt(wf_name: str, prompt_en: str, width: int | None, height: int | 
                  lora_keys: list[str] | None = None,
                  strength_char: float | None = None, strength_style: float | None = None,
                  image_filename: str | None = None, denoise: float | None = None,
-                 detailer: dict | None = None) -> dict:
+                 detailer: dict | None = None,
+                 negative_text: str | None = None) -> dict:
     wcfg = WORKFLOWS[wf_name]
     wf = json.loads((BASE / wcfg["file"]).read_text(encoding="utf-8"))
     wf = sanitize_for_api(wf)
@@ -854,6 +855,23 @@ def build_prompt(wf_name: str, prompt_en: str, width: int | None, height: int | 
         if not node:
             raise HTTPException(500, f"workflow {wf_name} 配置错误: 节点 {wcfg[node_key]} 不存在")
         node["inputs"][field] = value
+
+    # 仅供 Rendering Strategy 实验的负面覆盖。正常 config 不提供
+    # negative_text_node，因此生产路径继续使用工作流固定负面模板 (D6/D18).
+    negative_node_id = wcfg.get("negative_text_node")
+    if negative_text and negative_node_id:
+        negative_node = wf.get(str(negative_node_id))
+        if not negative_node or negative_node.get("class_type") != "ImpactWildcardProcessor":
+            raise HTTPException(500, f"workflow {wf_name} 负面实验节点配置错误")
+        extra_negative = negative_text.strip().strip(",")
+        if not extra_negative:
+            raise HTTPException(400, "实验负面提示词为空")
+        inputs = negative_node.get("inputs", {})
+        for field in ("wildcard_text", "populated_text"):
+            base_negative = inputs.get(field)
+            if not isinstance(base_negative, str):
+                raise HTTPException(500, f"workflow {wf_name} 负面节点缺少 {field} 文本")
+            inputs[field] = base_negative.rstrip(" ,") + ", " + extra_negative
 
     # LoRA 注入: 写 LoraManager 节点的 loras widget. __value__ 内是对象数组, 每项 {name, strength,
     # clipStrength, active}; active 必须为 true, 否则 _collect_widget_entries 跳过 (见 D16).
@@ -941,10 +959,11 @@ async def upload_image_to_comfy(image_bytes: bytes) -> str:
 async def submit_and_wait(wf_name: str, prompt_en: str, width, height, lora_keys: list[str] | None = None,
                           strength_char: float | None = None, strength_style: float | None = None,
                           image_filename: str | None = None, denoise: float | None = None,
-                          detailer: dict | None = None) -> str:
+                          detailer: dict | None = None,
+                          negative_text: str | None = None) -> str:
     payload = build_prompt(wf_name, prompt_en, width, height, lora_keys,
-                           strength_char, strength_style, image_filename, denoise,
-                           detailer)
+                            strength_char, strength_style, image_filename, denoise,
+                            detailer, negative_text)
     seed = payload.pop("_seed")
     r = await CLIENT.post(f"{COMFY}/prompt", json=payload)
     if r.status_code != 200:

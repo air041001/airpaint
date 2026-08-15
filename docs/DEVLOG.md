@@ -555,4 +555,19 @@ inpaint 局部重绘实测效果不达标: (1) 该工作流 inpaint 采样器用
 - `python -m py_compile server/main.py` 通过。
 - 7 个零依赖 Prompt 单测通过。
 - DeepSeek-V4-Flash 两轮真实链路各 30/30 成功、30/30 12 字段 IR 完整, `compare.py --require-ir` 通过。
-- 固定 Prompt + seed 的 002/012/018 均生成成功, 视觉内容验收 3/3 通过。012 锅柄与手连接存在轻微人眼复核风险, 不阻塞 Phase 1。
+- 固定 Prompt + seed 的 002/012/018 均生成成功。最初 vision agent 报告 3/3，但该报告不作为人眼终审。
+
+## 第 32 条 2026-08-15 - 人眼复检暴露渲染策略问题
+
+### 发现
+
+用户复检 baseline 018「两个剑士对峙」后确认：图片反复被中央闪电劈成两半，几乎没有对峙感。此前的视觉代理把“左右两个主体 + 闪电存在”误判为通过，说明结构回归和粗视觉代理都不能替代人眼语义验收。
+
+进一步检查固定夹具发现，`lightning` 同时出现在 TAGS 和 NL，另有 `dramatic lighting`，同一高显著性元素被重复强化；这还违反 D28 的 TAG/NL 不重复原则，而 compare.py 尚未检查 TAGS↔NL 重叠。
+
+### 方向修正
+
+- Prompt IR 保留为内部语义表示，但不再假设固定 TAG/NL 模板会带来最好出图。
+- Phase 1.5 改做固定变量的 Rendering Strategy A/B 实验：TAG-only、TAG+short NL、weighted spatial NL、NL-dominant。
+- 评测加入成人 NSFW 单人/双人 case；vision agent 降级为粗筛，用户人眼作为最终判定。
+- 证据出现前不继续堆生产 Compiler 规则，不提前写 PLAN-v6。

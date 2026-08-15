@@ -79,6 +79,23 @@ def test_compile_prompt_merges_tags_and_nl():
     assert result == "1girl, solo, ganyu_(genshin_impact), blue eyes. She stands by the window.", result
 
 
+def test_experiment_negative_override_is_opt_in():
+    workflow = main.WORKFLOWS["anima"]
+    previous = workflow.pop("negative_text_node", None)
+    workflow["negative_text_node"] = "4"
+    try:
+        payload = main.build_prompt("anima", "1girl, sitting", 832, 1216,
+                                    negative_text="standing, walking")
+        negative = payload["prompt"]["4"]["inputs"]
+        assert negative["wildcard_text"].endswith("standing, walking"), negative
+        assert negative["populated_text"].endswith("standing, walking"), negative
+    finally:
+        if previous is None:
+            workflow.pop("negative_text_node", None)
+        else:
+            workflow["negative_text_node"] = previous
+
+
 def main_test():
     tests = [
         test_character_match,
@@ -88,6 +105,7 @@ def main_test():
         test_tag_order_and_deduplication,
         test_character_bare_name_is_removed,
         test_compile_prompt_merges_tags_and_nl,
+        test_experiment_negative_override_is_opt_in,
     ]
     for test in tests:
         test()

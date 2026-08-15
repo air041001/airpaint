@@ -8,6 +8,7 @@ __pycache__/
 *.log
 server/lora_cache.json
 .tools/eval_set/candidate*.yaml
+.tools/eval_set/render_exp/output/
 
 # 便携版 gh CLI (大文件, 自行下载即可, 非源码)
 .tools/gh/
