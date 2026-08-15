@@ -1,0 +1,19 @@
+# Phase 1 第二层固定输入回归夹具。
+# prompt_en 来自 2026-08-15 的 candidate_source_run2，seed 与尺寸固定。
+- id: "002"
+  input: "天宫心在神社前微笑"
+  prompt_en: "1girl, solo, amamiya_kokoro, smile, shrine, front view, facing viewer, walking, standing, outdoors"
+  size: "832x1216"
+  seed: 1002
+
+- id: "012"
+  input: "厨师少女单手颠锅火焰从锅底窜起她得意地笑围裙带子飞起"
+  prompt_en: "1girl, smug, apron, flames, girl, young, cute, innocent, chef hat, tossing pan, one hand holding pan, kitchen, fire, dynamic action, facing viewer, firelight, playful, anime style. Flames burst from beneath the pan as she tosses it with one hand; her apron strings fly up in the motion."
+  size: "1216x832"
+  seed: 1012
+
+- id: "018"
+  input: "两个剑士在雨中对峙一人持刀前倾蓄力一人后撤半蹲举盾格挡闪电照亮他们的脸"
+  prompt_en: "2boys, lightning, swordsman, shield, rain, night, dueling, lunging, crouching, dramatic lighting, dark atmosphere, anime style. In one continuous scene, the swordsman on the left lunges forward with his sword, poised to strike; the one on the right steps back and crouches, raising his shield to block. A lightning flash illuminates both their faces."
+  size: "1216x832"
+  seed: 1018

@@ -1,6 +1,6 @@
 # 架构
 
-> 当前状态反映 2026-08-12 (工作流合并 D32 后)。
+> 当前状态反映 2026-08-15 (Prompt IR + Compiler 实现后)。
 > 改动架构时同步本文件 (见 `CLAUDE.md` 规则 2)。
 
 ## 部署拓扑
@@ -46,12 +46,12 @@ ComfyUI  127.0.0.1:8188  (不对公网开放)
 - 对中文原文和翻译后英文各查一次。
 
 ### Prompt Engine (翻译)
-`translate(text)` 三层流程:
+`translate(text, reroll, image_b64)` 三层流程，返回 `(prompt_en, breakdown, prompt_ir)`:
 1. **角色匹配** (`match_characters`, `char_dict.yaml`): 子串扫描角色名, 返回 tag 列表 + 移除角色名后的剩余文本。
-2. **词典匹配** (`dict.yaml`, 851 条): 剩余文本**子串匹配** (最长优先, len>=2), 分 hits / misses (见 D26)。
+2. **词典匹配** (`dict.yaml`, 当前约 1044 条): 剩余文本**子串匹配** (最长优先, len>=2), 分 hits / misses (见 D26)。
 3. 全命中 (无 misses): 裸角色名 (只有角色无描述) -> `tag, 1girl, solo` 跳过 LLM; 否则 `角色tag + 词典tag` 拼接。
 4. 有未命中 -> 按后端:
-   - `siliconflow`: 构造上下文 (Known character tags / Known attribute tags / Remaining misses) 送 DeepSeek-V4-Flash (config `siliconflow_model`)。LLM **信息分流** (scene/composition/mood/lighting/style 给人看 + TAGS 离散属性 + NL 关系叙事, 见 D28), `_parse_structured_output` 解析; **TAGS/NL 不重复**(HARD RULE: NL 不得复述 TAGS 已有 tag, 全是 tag 则留空); 隐喻落 mood(禁字面名词), 多角色空间布局落 NL(单角色构图落 composition 带 facing/from behind/looking out 锚点), scene 强制具体; 无 TAGS 行降级为整体当 tag(不崩)。返回 `(new_tags, breakdown)`, 后端 `_strip_char_bare_names` 删 LLM 输出的已知角色裸名变体(如 `ganyu_(genshin_impact)` 时删 `ganyu`, 见 D30), 再 prepend 已知 tag, breakdown 回传前端预览。`/no_think` + 顶层 `enable_thinking:False`(config `translate_enable_thinking` 可翻, 见 D18) 关思考 (见 D2), max_tokens 400 / temp 0.4, 失败抛 502。LRU 缓存 500 (key=上下文, 值为 (prompt_en, breakdown))。
+    - `siliconflow`: 构造上下文 (Known character tags / Known attribute tags / Remaining misses) 送 DeepSeek-V4-Flash (config `siliconflow_model`)。LLM 输出单行 12 字段 `IR` + `TAGS` + `NL`；`_parse_structured_output` 解析并校验，5 个前端 breakdown 字段由 IR 派生。保留旧 5 字段行和无 TAGS 降级路径。**TAGS/NL 不重复**(HARD RULE: NL 不得复述 TAGS 已有 tag, 全是 tag 则留空); 隐喻落 mood(禁字面名词), 多角色空间布局落 NL, scene 强制具体。`compile_prompt` 统一做角色裸名清理、去重、count→character→general 排序和 NL 拼接；`build_prompt` 再负责 quality/safety/LoRA/workflow。`/no_think` + 顶层 `enable_thinking:False`(config `translate_enable_thinking` 可翻, 见 D18) 关思考, max_tokens 550 / temp 0.4, 失败抛 502。LRU 缓存 500 (key=上下文, 值为 `(prompt_en, breakdown, prompt_ir)`)。
    - `google`: gtx 逐词翻 misses (本机需翻墙, 已弃用)。
    - `none`: misses 原样保留。
 
@@ -88,7 +88,7 @@ ComfyUI  127.0.0.1:8188  (不对公网开放)
 
 单文件 SPA, 无框架。localStorage 存邀请码; `API` 常量硬编码 `https://api.airpaint.xyz`。
 三屏: 登录(邀请码) / 工坊(主界面) / 暗房(对话迭代)。深色暖调(安灯琥珀), 无框架。
-出图两步走 (翻译与生成解耦, 见 D17): 中文 -> `/api/translate` 拿 prompt_en + breakdown -> (可选预览/编辑) -> `/api/jobs` 传 prompt_en 提交。两按钮: 「生成」(翻译+提交一气呵成) 与「先看翻译」(翻译后展示「AI 理解」breakdown + 可编辑英文 textarea + 「再来一版」reroll, 改完点「确认生成」)。`/api/jobs` 不再翻译。
+出图两步走 (翻译与生成解耦, 见 D17): 中文 -> `/api/translate` 拿 prompt_en + breakdown（以及供调试/回归的 prompt_ir） -> (可选预览/编辑) -> `/api/jobs` 传 prompt_en 提交。两按钮: 「生成」(翻译+提交一气呵成) 与「先看翻译」(翻译后展示「AI 理解」breakdown + 可编辑英文 textarea + 「再来一版」reroll, 改完点「确认生成」)。`/api/jobs` 不再翻译。
 右侧参数: 工作流(合并后单选项) / 尺寸 / LoRA(角色+风格分组, 各自强度滑块, 预览) / 参考图上传(输入框下方全宽虚线投放区)。
 轮询 `/api/jobs/{id}` 每 2s, 完成后展示图 + 入历史画廊(localStorage 缩略图, 最近 12 张)。出图后「继续迭代」进暗房: 换一版(txt2img 重抽, D31 替换意图) / 微调(img2img, 低 denoise)。
 
@@ -104,7 +104,7 @@ ComfyUI  127.0.0.1:8188  (不对公网开放)
 
 ## 尚未实现 / 已知限制
 
-- **意图解析**: 已有 LLM 结构化分解(scene/composition/mood/lighting/style) + TAGS/NL 信息分流(D28), 但仍属「翻译器」形态(语义压平为字符串), 无独立意图/语义 IR 层。方向见 `docs/PLAN-v4`。
+- **意图解析**: Phase 1 已有 12 字段 Prompt IR + `compile_prompt`，但 IR 目前主要用于结构化记录、breakdown 派生和回归度量；TAG/NL 细分策略、字段级知识解析和结构化增量修改仍分别留给 Phase 2/4。路线见 `docs/PLAN-v5`。
 - 用量/任务状态全内存, 重启清零 (Phase 3 计划 SQLite)。
 - 单份合并工作流 AnimaFull; 加功能分支 = 改 AnimaFull.json + config 声明节点 + build_prompt 拼接逻辑 (D32)。
 - 轮询取状态 (Phase 3 计划 WebSocket)。

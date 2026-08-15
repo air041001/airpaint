@@ -14,11 +14,11 @@
 - [x] 建 Evaluation Set 30 条（`.tools/eval_set/`，第一层结构回归 + 第二层生图验收）
 - [x] 基础维护顺手修：scan_loras 三处问题 / 文档模型名同步 DeepSeek-V4-Flash / 已知 char_dict 错误（amamiya_kokoro 已修）
 
-### Phase 1: Prompt IR + Compiler（核心，进行中）
-- [ ] 定义 Prompt IR（12 字段 JSON：subject/appearance/clothing/action/pose/interaction/scene/composition/lighting/mood/style/constraints）
-- [ ] 改 LLM 输出协议：breakdown 5 字段 → Prompt IR JSON + 验证 DeepSeek 稳定性
-- [ ] Prompt Compiler 初版（normalize_tag_order + build_prompt 扩展成统一编译）
-- [ ] Evaluation Set 回归验证不退化
+### Phase 1: Prompt IR + Compiler（核心，已完成 2026-08-15）
+- [x] 定义 Prompt IR（12 字段 JSON：subject/appearance/clothing/action/pose/interaction/scene/composition/lighting/mood/style/constraints）
+- [x] 改 LLM 输出协议：IR 单行 JSON + TAGS/NL；保留旧协议降级；DeepSeek 两轮 30/30 IR 完整
+- [x] Prompt Compiler 初版：`compile_prompt` 统一去重、角色裸名清理、排序和 NL 拼接；`build_prompt` 保留工作流适配边界
+- [x] Evaluation Set 真实 `translate()` 链路回归通过，新增固定 Prompt+seed 图像夹具 002/012/018，内容验收 3/3
 
 ### Phase 2-8: 见 PLAN-v5
 Prompt Quality → Character Knowledge → PromptState → LoRA Context → Trigger Engine → LoRA Composition → Workflow Intelligence

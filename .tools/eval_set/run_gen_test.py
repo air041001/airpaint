@@ -1,56 +1,60 @@
 # -*- coding: utf-8 -*-
-"""第二层生图验收: 选 2 条代表性 case 实际生图, 让用户判断提示词出图是否符合意图。
-002 天宫心(角色锁定+场景) + 018 两剑士对峙(多角色+复杂动作)。"""
-import urllib.request, json, time
+"""第二层固定 Prompt + fixed seed 生图验收。
 
-BASE = "http://127.0.0.1:8000"
-TOKEN = "friend-123"
-H = {"Authorization": f"Bearer {TOKEN}", "Content-Type": "application/json"}
+直接复用真实 Workflow Engine 和 ComfyUI 客户端。Prompt、seed、尺寸均来自
+image_cases.yaml，避免 LLM 随机输出污染视觉回归结果。
+"""
+import asyncio
+import random
+import sys
+from pathlib import Path
 
-
-def translate(text):
-    body = json.dumps({"prompt": text}).encode()
-    req = urllib.request.Request(f"{BASE}/api/translate", data=body, headers=H)
-    with urllib.request.urlopen(req, timeout=40) as r:
-        return json.loads(r.read())
+import yaml
 
 
-def submit(prompt_en, prompt_raw, size):
-    body = json.dumps({"workflow": "anima", "prompt_en": prompt_en,
-                       "prompt": prompt_raw, "size": size}).encode()
-    req = urllib.request.Request(f"{BASE}/api/jobs", data=body, headers=H)
-    with urllib.request.urlopen(req, timeout=10) as r:
-        return json.loads(r.read())["id"]
+ROOT = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(ROOT))
+
+from server import main as engine
 
 
-def poll(jid):
-    for _ in range(90):  # 最多 180s
-        req = urllib.request.Request(f"{BASE}/api/jobs/{jid}",
-                                     headers={"Authorization": f"Bearer {TOKEN}"})
-        with urllib.request.urlopen(req, timeout=10) as r:
-            d = json.loads(r.read())
-        if d["status"] in ("done", "failed"):
-            return d
-        time.sleep(2)
-    return {"status": "timeout"}
+CASES_PATH = ROOT / ".tools" / "eval_set" / "image_cases.yaml"
 
 
-cases = [
-    ("002", "天宫心在神社前微笑", "832x1216"),
-    ("018", "两个剑士在雨中对峙一人持刀前倾蓄力一人后撤半蹲举盾格挡闪电照亮他们的脸", "1216x832"),
-]
+def load_cases() -> list[tuple[str, str, str, str, int]]:
+    data = yaml.load(CASES_PATH.read_text(encoding="utf-8"), Loader=yaml.BaseLoader) or []
+    return [
+        (str(case["id"]), str(case["input"]), str(case["prompt_en"]),
+         str(case["size"]), int(case["seed"]))
+        for case in data
+    ]
 
-for cid, text, size in cases:
-    print(f"\n=== {cid}: {text[:35]}... (size={size}) ===")
-    tr = translate(text)
-    pe = tr["prompt_en"]
-    print(f"prompt_en: {pe}")
-    jid = submit(pe, text, size)
-    print(f"job_id: {jid}, 轮询中...")
-    res = poll(jid)
-    print(f"status: {res['status']}")
-    if res["status"] == "done":
-        print(f"image_url: {BASE}{res['image']}")
-        print(f"image_path: E:/comfy-web/server/images/{res['image'].rsplit('/',1)[-1]}")
-    else:
-        print(f"error: {res.get('error', 'unknown')}")
+
+async def run_case(case_id: str, text: str, prompt_en: str, size: str, seed: int) -> bool:
+    width, height = map(int, size.split("x"))
+    print(f"\n=== {case_id}: {text[:35]}... size={size} seed={seed} ===", flush=True)
+    print(f"prompt_en: {prompt_en}", flush=True)
+    try:
+        # build_prompt 的第一个随机调用就是最终工作流 seed。
+        random.seed(seed)
+        expected_seed = random.Random(seed).randint(1, 2**31 - 1)
+        image_name = await engine.submit_and_wait("anima", prompt_en, width, height)
+        image_path = engine.IMAGES / image_name
+        print(f"workflow_seed: {expected_seed}", flush=True)
+        print(f"image_path: {image_path}", flush=True)
+        return image_path.exists()
+    except Exception as exc:
+        print(f"FAILED: {exc}", flush=True)
+        return False
+
+
+async def run_all() -> int:
+    results = []
+    for case in load_cases():
+        results.append(await run_case(*case))
+    print(f"\nimage acceptance: {sum(results)}/{len(results)} passed", flush=True)
+    return 0 if all(results) else 1
+
+
+if __name__ == "__main__":
+    raise SystemExit(asyncio.run(run_all()))

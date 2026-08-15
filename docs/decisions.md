@@ -316,3 +316,30 @@
 
 ## 待决策 / 方向
 - **Intent Engine**: 迈向「理解用户意图」核心目标。**构图/场景/情绪的结构化分解已实现** (D18: LLM 输出 scene/composition/mood/lighting/style + TAGS); **否定语义解析弃用** (D18: Anima 负面是常量, 不随输入变); 仍待做: 歧义消解、LoRA/工作流自动推荐。符合 CLAUDE.md 规则 6。
+
+## D34. Phase 1: Prompt IR 协议与语义 Compiler
+
+**背景**: D28 已把 LLM 输出拆成 5 个给人看的 breakdown 字段、TAGS 和 NL, 但 `translate()` 最终仍主要返回字符串。复杂动作、多角色关系和后续增量修改没有稳定的中间表示, 且文本/视觉路径各自重复 tag 后处理。
+
+**问题**: 直接切换成完整 JSON envelope 会扩大模型格式失败面; 让代码从 12 个 IR 字段独立推导全部 TAG/NL 又会提前引入 Phase 2 的字段级策略, 破坏 Phase 0 的行为基线。
+
+**候选**:
+1. 完整 JSON envelope (`prompt_plan + tags + nl`)。
+2. 保留 5 字段并额外输出 IR, 兼容性最好但同一语义重复表达。
+3. 用单行 IR JSON 取代 5 字段输出, 保留 TAGS/NL 作为当前编译候选, 旧行协议只作降级解析。
+
+**决定**:
+1. 采用方案 3。LLM 文本协议输出 `IR + TAGS + NL`; IR 固定 12 个字符串数组字段。
+2. 后端从 IR 的 scene/composition/mood/lighting/style 派生原有 `breakdown` 形状, `/api/translate` 以 additive `prompt_ir` 字段返回; 前端无需改动。
+3. Phase 1 中 TAGS/NL 仍是最终语义 prompt 的编译源, IR 用于结构化记录、breakdown 派生和回归度量。TAG/NL 字段策略留给 Phase 2。
+4. 新增 `compile_prompt()` 统一角色裸名清理、去重、count→character→general 排序和 NL 拼接; `build_prompt()` 继续负责 quality/safety/LoRA/workflow。
+5. 视觉 LLM 暂保留旧 5 字段协议, 解析器兼容但不把视觉 IR 纳入 Phase 1 门槛。
+6. 增加最小模型护栏: 保留显式数量/单数物体关系, 多角色关系明确单一连续画面, 物理来源/附着关系保留在 NL。
+
+**原因**: 单行 IR 保留现有行协议的降级能力, 避免重复输出 5 个展示字段; TAGS/NL 继续承接已验证的 D28 行为, 不让 Phase 1 同时承担 Phase 2 的表达策略; 编译边界把语义处理与工作流注入分开。
+
+**代价**: IR 当前不是最终 Prompt 的唯一来源; 视觉路径暂不产 IR; 文本 max_tokens 从 400 调至 550; `prompt_ir` 增加 API 返回体但保持旧字段兼容。固定生图验收同时固定 Prompt、seed、尺寸, 避免 LLM reroll 污染视觉回归。
+
+**验证**: 真实 `translate()` 评测两轮均 30/30 成功、30/30 IR 完整; `compare.py --require-ir` 通过; 7 个零依赖 Prompt 单测通过; 固定夹具 002/012/018 生图 3/3 通过内容验收。012 的锅柄与手连接仍需人眼复核, 不构成 Phase 1 阻塞。
+
+**相关文件**: `server/main.py`, `.tools/eval_set/run_baseline.py`, `.tools/eval_set/compare.py`, `.tools/eval_set/image_cases.yaml`, `.tools/eval_set/run_gen_test.py`, `docs/api.md`, `docs/architecture.md`。

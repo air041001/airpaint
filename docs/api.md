@@ -71,7 +71,7 @@ Authorization: Bearer <token>
 ```
 
 ### POST /api/translate
-只翻译不排队 (需鉴权, 不计入 image 限额): 中文 -> 英文 tag (角色->词典->LLM 三层 + 结构化扩写, LRU 缓存)。前端「先看翻译」和「生成」都先调它拿 prompt_en。
+只翻译不排队 (需鉴权, 不计入 image 限额): 中文 -> 英文 tag (角色->词典->LLM 三层 + Prompt IR 结构化扩写, LRU 缓存)。前端「先看翻译」和「生成」都先调它拿 prompt_en。
 
 请求体:
 ```json
@@ -85,10 +85,27 @@ Authorization: Bearer <token>
 
 响应 `200`:
 ```json
-{ "prompt_en": "1girl, white hair, blue eyes, cat ears, smile, ...", "breakdown": { "scene": "outdoors, cherry blossoms", "composition": "standing, looking at viewer", "mood": "cheerful", "lighting": "soft daylight", "style": "anime style" } }
+{
+  "prompt_en": "1girl, white hair, blue eyes, cat ears, smile, ...",
+  "breakdown": {
+    "scene": "outdoors, cherry blossoms",
+    "composition": "standing, looking at viewer",
+    "mood": "cheerful",
+    "lighting": "soft daylight",
+    "style": "anime style"
+  },
+  "prompt_ir": {
+    "subject": ["1girl"], "appearance": ["white hair", "blue eyes"],
+    "clothing": [], "action": [], "pose": [], "interaction": [],
+    "scene": ["outdoors", "cherry blossoms"], "composition": ["standing"],
+    "lighting": ["soft daylight"], "mood": ["cheerful"],
+    "style": ["anime style"], "constraints": []
+  }
+}
 ```
 - `prompt_en`: 翻译后的英文 danbooru tag。
-- `breakdown`: LLM 结构化拆解 (scene/composition/mood/lighting/style), 供前端预览展示「AI 理解」; 快速路径(全命中词典/角色, 未调 LLM)时为 `null`。
+- `breakdown`: 供前端预览展示「AI 理解」的 5 个维度 (scene/composition/mood/lighting/style)。文本 LLM 路径由 `prompt_ir` 派生；旧协议/快速路径没有时为 `null`。
+- `prompt_ir`: 12 字段 Prompt IR。每个字段都是字符串数组；文本 LLM 成功解析时返回，快速路径和当前视觉 LLM 旧协议路径为 `null`。IR 是语义计划，不是可直接注入工作流的文件名、节点 ID 或数值。
 
 ### POST /api/jobs
 提交生图任务 (需鉴权)。**接收已翻译的 `prompt_en`** (前端先用 `/api/translate` 翻译, 可在「预览提示词」里编辑后再提交), 后端不再翻译。

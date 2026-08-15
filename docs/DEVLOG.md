@@ -535,3 +535,24 @@ inpaint 局部重绘实测效果不达标: (1) 该工作流 inpaint 采样器用
 - ComfyUI 通用约定白=重绘, 但**有些工作流/采样器反转 (黑=重绘)**, 必须实测。
 - inpaint 是"区域重绘"不是"改色": 改属性 (发色) 要精准 mask 紧贴目标, 否则整区域重生。
 - 改发色保同脸: denoise 0.9 + 紧贴头发 mask (不碰脸) 可行, 但 UX 难 (无缩放/撤销)。
+
+## 第 31 条 2026-08-15 - Phase 1 Prompt IR + Compiler
+
+### 完成内容
+
+把 Prompt Engine 从 5 字段 breakdown + 字符串拼装推进到 12 字段 Prompt IR 协议和统一语义 Compiler。文本 LLM 现在输出单行 `IR` JSON、`TAGS`、`NL`; 后端从 IR 派生原有 breakdown, `/api/translate` 增加 `prompt_ir` 字段, 前端旧逻辑无需改动。旧 5 字段协议、无 TAGS 降级和视觉 LLM 路径保留兼容。
+
+同时修复裸角色名快速路径引用已删除 `parts` 变量导致的运行时 500, 新增零依赖 Prompt 单测。评测脚本改为直接调用真实 `translate()` 全链路, `baseline.yaml` 保持只读, candidate 与结构比较独立输出。
+
+### 关键取舍
+
+- IR 在 Phase 1 负责语义记录、breakdown 派生和稳定性度量; TAGS/NL 仍是最终语义 prompt 的编译候选, 字段级 TAG/NL 策略留给 Phase 2。
+- `compile_prompt()` 统一角色裸名清理、去重、count→character→general 排序和 NL 拼接; quality prefix、safety、LoRA trigger、seed 和 workflow 注入仍由 `build_prompt()` 负责。
+- 视觉回归发现实时 LLM 输出会让固定 seed 图像不可复现, 因此第二层验收夹具同时固定 Prompt、seed 和尺寸。多角色关系增加单一连续画面护栏, 复杂特效保留来源/附着关系。
+
+### 验证
+
+- `python -m py_compile server/main.py` 通过。
+- 7 个零依赖 Prompt 单测通过。
+- DeepSeek-V4-Flash 两轮真实链路各 30/30 成功、30/30 12 字段 IR 完整, `compare.py --require-ir` 通过。
+- 固定 Prompt + seed 的 002/012/018 均生成成功, 视觉内容验收 3/3 通过。012 锅柄与手连接存在轻微人眼复核风险, 不阻塞 Phase 1。

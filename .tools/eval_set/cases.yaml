@@ -1,7 +1,8 @@
 # AirPaint Prompt Engine Evaluation Set (Phase 0)
 # 30 条覆盖各类别的中文输入, 用于 Prompt Engine 回归测试
 # 第一层(结构回归): 跑 run_baseline.py 记录 prompt_en + breakdown, 不生图
-# 第二层(生图): 选 5-10 条固定 seed 生图, 手动验收视觉质量
+# 第二层(生图): 固定 Prompt + seed 生图, 手动验收视觉质量
+# 当前 Phase 1 夹具见 image_cases.yaml (002/012/018)。
 # 用法: 改 Prompt Engine 后重跑, 对比 baseline 是否退化
 
 categories:
