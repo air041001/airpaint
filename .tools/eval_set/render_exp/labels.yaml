@@ -1,0 +1,50 @@
+# Human labels reconstructed from the Phase 1.5 review conversation.
+# Empty failures means no material failure was reported for that image.
+experiments:
+  - id: phase1_5_first_round
+    cases:
+      R1:
+        V1: {verdict: pass, failures: []}
+        V2: {verdict: pass, failures: []}
+        V3: {verdict: pass, failures: []}
+        V4: {verdict: pass, failures: []}
+      R2:
+        V1: {verdict: pass, failures: []}
+        V2: {verdict: pass, failures: []}
+        V3: {verdict: pass, failures: []}
+        V4: {verdict: pass, failures: []}
+        V5: {verdict: pass, failures: []}
+      R3:
+        V1: {verdict: pass, failures: []}
+        V2: {verdict: fail, failures: [anatomy_nsfw, action_pose], note: "腿部人体关系错误"}
+        V3: {verdict: pass, failures: []}
+        V4: {verdict: fail, failures: [action_pose], note: "动作与输入不符"}
+      R4:
+        V1: {verdict: fail, failures: [model_artifact, spatial_composition, interaction_relation], note: "上下分页且没有稳定的后撤关系"}
+        V2: {verdict: fail, failures: [model_artifact, interaction_relation], note: "举盾清楚但对抗/后撤不成立"}
+        V3: {verdict: fail, failures: [model_artifact, spatial_composition, interaction_relation], note: "分页/关系不成立"}
+        V4: {verdict: fail, failures: [model_artifact, spatial_composition, interaction_relation], note: "上下分页且对峙关系不稳定"}
+        V5: {verdict: fail, failures: [model_artifact, spatial_composition, interaction_relation], note: "中央黑线且关系不成立"}
+      R5:
+        V1: {verdict: pass, failures: []}
+        V2: {verdict: pass, failures: []}
+        V3: {verdict: fail, failures: [lighting_style], note: "过暗，脸部细节消失"}
+        V4: {verdict: fail, failures: [lighting_style], note: "过暗，脸部细节消失"}
+      R6:
+        V1: {verdict: pass, failures: []}
+        V2: {verdict: fail, failures: [anatomy_nsfw, action_pose], note: "手部动作不清楚"}
+        V3: {verdict: fail, failures: [anatomy_nsfw, action_pose], note: "手部动作不清楚"}
+        V4: {verdict: fail, failures: [anatomy_nsfw, action_pose], note: "手部动作不清楚"}
+      R7:
+        V1: {verdict: pass, failures: []}
+        V2: {verdict: pass, failures: []}
+        V3: {verdict: fail, failures: [model_artifact, spatial_composition], note: "中央黑线分页"}
+        V4: {verdict: pass, failures: []}
+  - id: r4_second_seed
+    cases:
+      R4B:
+        V1: {verdict: fail, failures: [interaction_relation], note: "连续画面但没有后撤，右侧同时持剑和盾"}
+        V2: {verdict: fail, failures: [interaction_relation], note: "连续画面但双方都向前冲，没有后撤"}
+        V3: {verdict: fail, failures: [model_artifact, anatomy_nsfw, action_pose, interaction_relation], note: "竖向黑线、人体/武器错位且没有后撤"}
+        V4: {verdict: fail, failures: [model_artifact, anatomy_nsfw, action_pose, interaction_relation], note: "上下分页、人体/武器错位且没有后撤"}
+        V5: {verdict: fail, failures: [model_artifact, anatomy_nsfw, action_pose, interaction_relation], note: "上下分页、人体/武器错位且没有后撤"}

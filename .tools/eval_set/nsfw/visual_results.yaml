@@ -1,0 +1,11 @@
+# Human baseline review, 2026-08-15.
+reviewer: user
+results:
+  N01: {verdict: pass, notes: "正常"}
+  N02: {verdict: pass, notes: "正常"}
+  N03: {verdict: pass, notes: "正常"}
+  N05: {verdict: pass, notes: "正常"}
+  N06: {verdict: pass, notes: "正常"}
+  N08: {verdict: pass, notes: "正常"}
+notes:
+  - "N07 remains structure-only because the LLM misread bathroom edge as bathroom sex; it is retained as a failure sample."

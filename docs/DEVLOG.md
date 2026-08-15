@@ -597,3 +597,18 @@ R4 使用第二个固定 seed 重跑 5 个变体：V1 产生了一张单一连�
 ### 决定
 
 不再为 R4 继续堆 Prompt 规则或权重策略。base Anima 的多角色构图/动作绑定在当前 workflow 下属于已知限制；产品保留现有英文 `prompt_en` 可编辑能力，让熟悉 ComfyUI 的用户手动调整关系、姿态或删减干扰元素。R4 不再阻塞 Prompt Intelligence 主线。
+
+## 第 35 条 2026-08-15 - Phase 2 首轮 Profile / Source 实验
+
+### 结果
+
+- W3 的 profile A/B 中，P04 光影和 P06 成人单人支持 tag-first；P01 反而偏好保留 NL，其余多数平局或两者同样失败。
+- W4 中 Dictionary 在固定 canonical 外观、光影、NSFW tag 上更强；LLM 在咖啡道具描述中胜出；其余平局。
+- W6 的两条 `girl`/`female` 对照无明显差异，未形成词汇结论。
+- NSFW 结构集 8/8 通过，但 N07 暴露“浴室边缘”被 LLM 误写成 `bathroom sex`，已作为 failure taxonomy 样本。
+
+### 决定
+
+Phase 2 只把明确成人 NSFW、单主体、简单动作的 `tag_first` 收进 profile；不把它推广到普通 SFW。Dictionary/LLM 按语义类型继续保留候选策略，不全局固定优先级。weighted NL、semantic negative、`girl/female` 替换均不进入默认生产。复杂动作和多角色失败继续通过 taxonomy 分析，用户可编辑 `prompt_en` 辅助。
+
+NSFW 8 条结构集通过，6 条固定视觉基线由用户确认正常；N07 的“浴室边缘”被 LLM 误读为 `bathroom sex`，作为 `semantic_misread` 样本保留。Phase 2 首轮代码与实验完成，后续只在有新证据时扩展 profile。

@@ -1,0 +1,72 @@
+# W4: hand-authored source comparison, same intent and fixed conditions.
+cases:
+  - id: D01
+    category: appearance
+    input: "白发蓝眼的成年女性"
+    size: "832x1216"
+    seed: 2501
+    dictionary_prompt: "1girl, adult woman, white hair, blue eyes, long hair, portrait, anime style"
+    llm_prompt: "An adult woman with long white hair and clear blue eyes, shown in an anime portrait."
+  - id: D02
+    category: clothing
+    input: "穿红白巫女服的成年女性站在神社前"
+    size: "832x1216"
+    seed: 2502
+    dictionary_prompt: "1girl, adult woman, miko, red hakama, white shirt, shrine, standing, outdoors, anime style"
+    llm_prompt: "An adult woman in a traditional red-and-white miko outfit stands in front of a shrine."
+  - id: D03
+    category: object_action
+    input: "成年女性坐在咖啡馆端着一杯咖啡"
+    size: "832x1216"
+    seed: 2503
+    dictionary_prompt: "1girl, adult woman, sitting, cafe, coffee cup, holding cup, indoors, anime style"
+    llm_prompt: "An adult woman sits inside a cafe, holding one cup of coffee in both hands."
+  - id: D04
+    category: complex_action
+    input: "成年女性单手颠锅，火焰从锅底窜起"
+    size: "1216x832"
+    seed: 2504
+    dictionary_prompt: "1girl, adult woman, chef, apron, one hand, tossing pan, flames, cooking, kitchen, dynamic pose, anime style"
+    llm_prompt: "An adult chef tosses one pan with one hand as flames burst directly from beneath it in the kitchen."
+  - id: D05
+    category: interaction
+    input: "两个穿盔甲的武士持剑盾在同一场景中对峙"
+    size: "1216x832"
+    seed: 2505
+    dictionary_prompt: "2boys, armored knights, armor, sword, shield, fighting, duel, facing each other, dynamic pose, anime style"
+    llm_prompt: "Two armored knights face each other in one scene, one attacking with a sword while the other raises a shield to defend."
+  - id: D06
+    category: lighting_composition
+    input: "夕阳逆光下成年女性的剪影，发丝边缘发光"
+    size: "832x1216"
+    seed: 2506
+    dictionary_prompt: "1girl, adult woman, silhouette, sunset, backlighting, rim light, glowing hair, outdoors, anime style"
+    llm_prompt: "An adult woman stands in silhouette against the sunset, with a thin glow tracing the edges of her hair."
+  - id: D07
+    category: nsfw_pose
+    input: "成年女性裸体仰卧在床上，双腿抬起"
+    size: "832x1216"
+    seed: 2507
+    dictionary_prompt: "1girl, adult woman, nude, lying on back, bed, legs up, bedroom, explicit, anime style"
+    llm_prompt: "An adult nude woman lies on her back on a bed with her legs raised, in a softly lit bedroom."
+  - id: D08
+    category: nsfw_interaction
+    input: "两位成年女性裸体拥抱接吻"
+    size: "832x1216"
+    seed: 2508
+    dictionary_prompt: "2girls, adult women, nude, kissing, hugging, intimate, bedroom, explicit, anime style"
+    llm_prompt: "Two adult women kiss and hold each other in an intimate embrace in the bedroom."
+  - id: D09
+    category: scene
+    input: "废弃教室里落满灰尘的课桌"
+    size: "832x1216"
+    seed: 2509
+    dictionary_prompt: "abandoned classroom, dusty desks, chairs, broken windows, peeling paint, dim lighting, anime style"
+    llm_prompt: "An abandoned classroom sits in silence, its desks thick with dust beneath dim shafts of light."
+  - id: D10
+    category: composition
+    input: "从下往上仰视站在台阶上的成年女性"
+    size: "832x1216"
+    seed: 2510
+    dictionary_prompt: "1girl, adult woman, standing on stairs, low angle, looking down at viewer, strong light, anime style"
+    llm_prompt: "Viewed from below, an adult woman stands above the viewer on the steps and looks down with confidence."

@@ -677,7 +677,46 @@ def _strip_char_bare_names(new_list: list[str], char_tags: list[str]) -> list[st
     return [t for t in new_list if t.strip().lower() not in bare]
 
 
-def compile_prompt(char_tags: list[str], other_tags: list[str], nl: str = "") -> str:
+_RELATION_HINTS = (
+    "each other", "facing each other", "duel", "dueling", "kiss", "kissing",
+    "hug", "hugging", "embrace", "embracing", "left", "right", "beside",
+    "guiding", "opposing", "spatial", "interaction",
+)
+
+
+def infer_render_profile(prompt_ir: dict | None) -> str:
+    """根据已解析 IR 选择最小渲染策略，不改变 IR 或 LLM 输出协议.
+
+    Phase 2 只把明确成人单主体的 tag-first 证据收进生产；普通 SFW
+    内容继续保留 NL，避免把 P01 的 legacy 胜出泛化成全局删 NL。
+    """
+    if not prompt_ir:
+        return "tag_first"
+    subject = [str(item).lower() for item in prompt_ir.get("subject", [])]
+    action = [str(item).lower() for item in prompt_ir.get("action", [])]
+    pose = [str(item).lower() for item in prompt_ir.get("pose", [])]
+    interaction = [str(item).lower() for item in prompt_ir.get("interaction", [])]
+    all_terms = " ".join(
+        str(item).lower()
+        for field in ("subject", "appearance", "clothing", "action", "pose", "interaction", "constraints")
+        for item in prompt_ir.get(field, [])
+    )
+    explicit_terms = ("nude", "naked", "explicit", "nipples", "sex", "lingerie", "breasts")
+    adult_nsfw = any(term in all_terms for term in explicit_terms)
+    multiple_subjects = len(subject) > 1 or any(
+        re.match(r"^(?:[2-9]|[1-9]\d)\+?(?:girls?|boys?|others?)$", item)
+        or item.startswith("multiple ")
+        for item in subject
+    )
+    relation = any(any(hint in item for hint in _RELATION_HINTS) for item in interaction)
+    complex_motion = len(action) + len(pose) > 2
+    if adult_nsfw and not multiple_subjects and not relation and not complex_motion:
+        return "tag_first"
+    return "relation_hybrid"
+
+
+def compile_prompt(char_tags: list[str], other_tags: list[str], nl: str = "",
+                   profile: str = "relation_hybrid") -> str:
     """把已知 tag、候选 tag 和可选 NL 编译成模型语义 prompt body.
 
     quality prefix、safety、LoRA trigger 和 workflow 注入仍由 build_prompt 负责。
@@ -685,7 +724,7 @@ def compile_prompt(char_tags: list[str], other_tags: list[str], nl: str = "") ->
     cleaned_tags = [tag.strip() for tag in other_tags if tag and tag.strip()]
     cleaned_tags = _strip_char_bare_names(cleaned_tags, char_tags)
     result = normalize_tag_order(char_tags, cleaned_tags)
-    nl = (nl or "").strip()
+    nl = (nl or "").strip() if profile == "relation_hybrid" else ""
     if result and nl:
         return result + ". " + nl
     return result or nl
@@ -722,7 +761,7 @@ async def translate(text: str, reroll: bool = False, image_b64: str | None = Non
         except Exception as e:
             raise HTTPException(502, f"参考图理解失败, 请稍后重试 ({e})")
         new_list = [t.strip() for t in new_tags.split(",") if t.strip()]
-        result = compile_prompt(char_tags, hits + new_list, nl)
+        result = compile_prompt(char_tags, hits + new_list, nl, infer_render_profile(prompt_ir))
         return result, breakdown, prompt_ir
 
     # 全命中 (无 misses): 不调 LLM
@@ -730,16 +769,16 @@ async def translate(text: str, reroll: bool = False, image_b64: str | None = Non
         # 裸角色名快速路径: 只有角色没别的描述 -> 补 1girl, solo
         # (LLM 对裸角色名会疯狂编场景/武器, 实测 7.9s + 噪声 tag, 见 D13)
         if char_tags and not hits:
-            return compile_prompt(char_tags, ["1girl", "solo"]), None, None
+            return compile_prompt(char_tags, ["1girl", "solo"], profile="tag_first"), None, None
         all_tags = char_tags + hits
         if all_tags:
-            return compile_prompt(char_tags, hits), None, None
+            return compile_prompt(char_tags, hits, profile="tag_first"), None, None
         raise HTTPException(400, "提示词为空")
 
     # Layer 2: 有未命中 -> 后端处理
     if backend == "none":
         # 未翻译部分原样保留 (混输英文 tag 时合适)
-        return compile_prompt(char_tags, hits + misses), None, None
+        return compile_prompt(char_tags, hits + misses, profile="tag_first"), None, None
 
     if backend == "siliconflow":
         # 构造上下文: 已知 tag 喂给 LLM, 只让它翻/扩 misses (不重复已知 tag)
@@ -760,7 +799,7 @@ async def translate(text: str, reroll: bool = False, image_b64: str | None = Non
             raise HTTPException(502, f"翻译失败, 请稍后重试 ({e})")
         # 编译: 已知 tag + LLM 新增 tag, 再按 Anima 规范序排并附加 NL.
         new_list = [t.strip() for t in new_tags.split(",") if t.strip()]
-        result = compile_prompt(char_tags, hits + new_list, nl)
+        result = compile_prompt(char_tags, hits + new_list, nl, infer_render_profile(prompt_ir))
         # reroll 不写缓存: 探索性结果不应顶掉正常翻译的缓存原版 (见 D19)
         if not reroll:
             if len(_TRANSLATE_CACHE) >= _TRANSLATE_CACHE_MAX:
@@ -773,7 +812,7 @@ async def translate(text: str, reroll: bool = False, image_b64: str | None = Non
             translated_missing = await google_translate_batch(misses)
         except Exception as e:
             raise HTTPException(502, f"翻译失败, 请稍后重试 ({e})")
-        return compile_prompt(char_tags, hits + translated_missing), None, None
+        return compile_prompt(char_tags, hits + translated_missing, profile="tag_first"), None, None
 
     raise HTTPException(500, f"未知的 translate 后端: {backend}")
 

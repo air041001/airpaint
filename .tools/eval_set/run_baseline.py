@@ -31,8 +31,8 @@ def load_yaml(path: Path):
     return yaml.load(path.read_text(encoding="utf-8"), Loader=yaml.BaseLoader)
 
 
-def load_cases() -> list[tuple[str, str]]:
-    data = load_yaml(EVAL_DIR / "cases.yaml") or {}
+def load_cases(path: Path = EVAL_DIR / "cases.yaml") -> list[tuple[str, str]]:
+    data = load_yaml(path) or {}
     cases = []
     for case in data.get("cases", []):
         case_id = str(case["id"]).zfill(3)
@@ -120,11 +120,14 @@ def write_results(results: list[dict], output_path: Path) -> None:
 
 def main() -> None:
     parser = argparse.ArgumentParser()
+    parser.add_argument("--cases", type=Path, default=EVAL_DIR / "cases.yaml",
+                        help="输入 case 文件，默认 Phase 0 cases.yaml")
     parser.add_argument("--out", type=Path, default=DEFAULT_OUT,
                         help="candidate 输出路径，默认不覆盖 baseline.yaml")
     args = parser.parse_args()
+    cases_path = args.cases if args.cases.is_absolute() else BASE / args.cases
     output_path = args.out if args.out.is_absolute() else BASE / args.out
-    cases = load_cases()
+    cases = load_cases(cases_path)
     print(f"[setup] model={engine.CFG.get('siliconflow_model', 'unknown')}, {len(cases)} cases")
     results = asyncio.run(run_cases(cases))
     print_summary(results)

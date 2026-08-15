@@ -28,8 +28,16 @@
 - [x] 用户人眼盲评，vision agent 只做粗筛；结果记录在 D35 与 `render_exp/results.yaml`
 - [x] R4 双人对峙换 seed 专项复测；base Anima 仍不能稳定表达后撤/连续构图，不固化 Compiler 2.0 或 weighted rendering，保留 Prompt 手动编辑 fallback
 
-### Phase 2-8: 见 PLAN-v5
-Prompt Quality → Character Knowledge → PromptState → LoRA Context → Trigger Engine → LoRA Composition → Workflow Intelligence
+### Phase 2: Prompt Quality（首轮实验完成 2026-08-15）
+- [x] Failure taxonomy 第一批回标（35 张实验图）
+- [x] 8 条成人 NSFW 结构集、6 条固定视觉基线
+- [x] W3 profile A/B、W4 Dictionary vs LLM、W6 girl/female 对照
+- [x] 收窄 `tag_first`：只覆盖明确成人 NSFW 单主体简单场景；普通 SFW 保留 NL
+- [x] 补充 NSFW 人眼基线与 profile 结果；6 条固定视觉基线均通过人工检查
+- [x] 不把 weighted NL / semantic negative / girl-female 替换纳入默认策略
+
+### Phase 3-8: 见 PLAN-v5
+Character Knowledge → PromptState → LoRA Context → Trigger Engine → LoRA Composition → Workflow Intelligence
 
 ---
 

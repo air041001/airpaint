@@ -1,0 +1,24 @@
+# Phase 2 failure taxonomy. Human labels are authoritative; vision output is triage only.
+taxonomy:
+  - id: counting_subject
+    description: "人数、主体数量或主体存在性错误"
+  - id: entity_binding
+    description: "角色与发色、服装、道具或动作绑定错误"
+  - id: attribute_clothing
+    description: "外观、服装或道具属性缺失/错误"
+  - id: action_pose
+    description: "动作、姿态、手部或身体关系错误"
+  - id: interaction_relation
+    description: "对峙、接触、互看、拥抱等关系没有成立"
+  - id: spatial_composition
+    description: "左右、前后、中心、构图关系错误"
+  - id: lighting_style
+    description: "光影/风格喧宾夺主或主体不可读"
+  - id: salience_duplication
+    description: "重复显著性、元素过度强化或信息冲突"
+  - id: anatomy_nsfw
+    description: "解剖、手部或成人 NSFW 细节错误"
+  - id: model_artifact
+    description: "分页、黑线、重复主体、额外主体等模型伪影"
+  - id: semantic_misread
+    description: "输入场景、动作或关系被 LLM/模型误读为另一种语义"

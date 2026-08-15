@@ -1,0 +1,44 @@
+# Phase 2 NSFW visual baseline, prompt_en copied from the current structure candidate.
+cases:
+  - id: N01
+    category: adult_single_pose
+    input: "成年女性裸体站在卧室窗边，双腿分开，直视镜头"
+    size: "832x1216"
+    seed: 2301
+    variants:
+      V1: "1girl, bedroom, adult, nude, standing, legs apart, looking at viewer, window, window light, anime style"
+  - id: N02
+    category: adult_single_pose
+    input: "成年女性裸体仰卧在床上，双腿抬起，手放在大腿上"
+    size: "832x1216"
+    seed: 2302
+    variants:
+      V1: "1girl, face up, on bed, adult, nude, lying, legs up, hands on thighs, on back"
+  - id: N03
+    category: adult_single_clothing_prop
+    input: "成年女性裸体穿着黑色蕾丝内衣坐在床边，手持长筒袜，挑逗地看向镜头"
+    size: "832x1216"
+    seed: 2303
+    variants:
+      V1: "1girl, adult, nude, black lace lingerie, stockings, holding, sitting on bed, bedroom, bed, looking at viewer, full body, dim lighting, seductive, provocative, anime style. She holds a stocking in one hand, her gaze teasing and direct at the viewer."
+  - id: N05
+    category: adult_two_character
+    input: "两位成年女性裸体拥抱接吻，躺在床上"
+    size: "832x1216"
+    seed: 2305
+    variants:
+      V1: "2girls, hugging, on bed, adult, nude, kissing, lying, bedroom, close up, intimate, romantic, anime style. The two women are embracing and kissing while lying on the bed."
+  - id: N06
+    category: adult_mixed_pair
+    input: "成年男性和成年女性在床上亲吻拥抱，双方均为裸体"
+    size: "832x1216"
+    seed: 2306
+    variants:
+      V1: "1boy, 1girl, hugging, kissing, on bed, nude, bedroom, anime style"
+  - id: N08
+    category: adult_single_pose
+    input: "成年女性裸体跪在床上，双手撑床，回头看向镜头"
+    size: "832x1216"
+    seed: 2308
+    variants:
+      V1: "1girl, looking back, on bed, adult, nude, kneeling, on all fours, looking at viewer, facing camera, anime style"

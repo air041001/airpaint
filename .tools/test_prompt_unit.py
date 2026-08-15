@@ -96,6 +96,27 @@ def test_experiment_negative_override_is_opt_in():
             workflow["negative_text_node"] = previous
 
 
+def test_render_profile_inference():
+    simple = {"subject": ["1girl"], "action": ["standing"], "pose": [], "interaction": []}
+    nsfw_simple = {"subject": ["1girl"], "appearance": ["adult", "nude"],
+                   "action": ["standing"], "pose": ["legs apart"], "interaction": []}
+    complex_pose = {"subject": ["1girl"], "action": ["running", "looking back"],
+                    "pose": ["one leg raised"], "interaction": []}
+    two_people = {"subject": ["2boys"], "action": ["fighting"], "pose": [],
+                  "interaction": ["facing each other"]}
+    assert main.infer_render_profile(simple) == "relation_hybrid"
+    assert main.infer_render_profile(nsfw_simple) == "tag_first"
+    assert main.infer_render_profile(complex_pose) == "relation_hybrid"
+    assert main.infer_render_profile(two_people) == "relation_hybrid"
+
+
+def test_tag_first_profile_drops_nl():
+    result = main.compile_prompt([], ["1girl", "coffee"], "She holds one cup.", "tag_first")
+    assert result == "1girl, coffee", result
+    result = main.compile_prompt([], ["2boys", "sword"], "They face each other.", "relation_hybrid")
+    assert result.endswith(". They face each other."), result
+
+
 def main_test():
     tests = [
         test_character_match,
@@ -106,6 +127,8 @@ def main_test():
         test_character_bare_name_is_removed,
         test_compile_prompt_merges_tags_and_nl,
         test_experiment_negative_override_is_opt_in,
+        test_render_profile_inference,
+        test_tag_first_profile_drops_nl,
     ]
     for test in tests:
         test()

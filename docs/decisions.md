@@ -374,3 +374,24 @@
 **未决定**: Compiler 2.0 的显著性管理、动态渲染 profile、语义负面和词汇 canonicalization 仍不固化；本轮只把实验证实的差异记录为策略候选。PLAN-v6 等下一轮证据，不为 R4 单点问题继续扩张主线。
 
 **相关文件**: `.tools/eval_set/render_exp/cases.yaml`, `.tools/eval_set/render_exp/results.yaml`, `.tools/eval_set/render_exp/output/review.html`。
+
+## D36. Phase 2 首轮渲染 Profile 与来源对照结果
+
+**实验**: W3 使用同一 TAG/NL 组件比较 legacy（总是保留 NL）与 profile；W4 比较 Dictionary-style 与 LLM/NL-style Prompt；W6 比较 `girl` 与 `female` 词汇。全部固定 base Anima、workflow、尺寸和 seed，并由用户人眼评审。
+
+**结果**:
+
+- W3：P01 legacy 胜出；P04/P06 profile 胜出；P02/P03/P05/P07/P08/P09 基本平局；P10 两者都分页失败。P03/P08 的动作/姿态本身画错，不能归因于 NL 长短。
+- W4：D01/D04/D06/D07/D08 Dictionary 胜出；D03 LLM 胜出；D02/D05/D09/D10 平局。Dictionary 在 canonical 外观、光影和 NSFW tag 上更可靠，但没有形成全局优先级。
+- W6：两条 `girl`/`female` 对照均无明显差异。用户经验仍保留为后续词汇假设，但本轮不改 canonical。
+
+**决定**:
+
+1. `infer_render_profile()` 收窄为：明确成人 NSFW、单主体、无复杂关系/复杂动作时使用 `tag_first`；普通 SFW 不自动删除 NL，复杂关系继续 `relation_hybrid`。
+2. 不把 profile 泛化到所有简单 SFW；P01 的 legacy 胜出否定了全局删 NL。
+3. Dictionary-first 仅作为 canonical appearance/lighting/NSFW tags 的候选策略；新颖物体或关系仍允许 LLM candidate。暂不写死全局 Dictionary > LLM。
+4. weighted spatial NL、semantic negative、`girl/female` 替换不进入默认生产策略。
+5. 保留用户 Prompt 编辑作为复杂动作/多角色失败的正式 fallback；不为 P10 单点问题扩张架构。
+6. 继续使用 failure taxonomy 分析 counting、binding、action/pose、interaction、spatial 和 anatomy，而不是把所有失败归因于 Prompt 长短。
+
+**相关文件**: `.tools/eval_set/render_exp/phase2_results.yaml`, `.tools/eval_set/nsfw/`, `server/main.py`, `.tools/eval_set/taxonomy.yaml`。

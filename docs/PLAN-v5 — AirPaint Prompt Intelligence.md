@@ -260,14 +260,17 @@ LLM 不直接负责最终 Prompt。建议输出：
 - 实验结果形成语义类型 × 渲染策略表，之后才决定 Compiler 2.0 与 system prompt 规则。
 - base Anima 对复杂双人构图可能出现分页、黑线、人体/武器错位；无法稳定自动解决时，保留用户编辑 `prompt_en` 的产品 fallback，不为单个 case 扩张架构。
 
-### Phase 2: Prompt Quality（Phase 1.5 结论后）
+### Phase 2: Prompt Quality（首轮实现与对照实验完成 2026-08-15）
 
 **目标**：把实验证明有效的 Rendering Strategy 收进 Compiler，而不是继续假设统一格式。
 
 - 按语义类型动态选择 TAG/NL/hybrid/weighted rendering
-- 研究 Dictionary vs LLM，不预设优先级，按真实图像结果形成策略
+- 当前首个 profile 证据：明确成人 NSFW、单主体、简单动作可尝试 tag-first；普通 SFW 不默认删除 NL
+- 研究 Dictionary vs LLM，不预设全局优先级：canonical 外观/光影/NSFW tag 倾向 Dictionary，开放物体/关系保留 LLM candidate
 - 将 canonicalization / salience dedup / ordering / semantic negative 收进 Compiler
 - 成人 NSFW 与普通 Prompt 分开建立回归集，固定 Prompt+seed 做第二层生图回归
+
+当前阶段只落地了明确成人 NSFW 单主体的 `tag_first` profile、failure taxonomy 和首轮 Dictionary/LLM 对照；weighted NL、semantic negative、`girl/female` 词汇替换仍是未验证候选，不进入默认策略。
 
 ### Phase 3: Character Knowledge（Phase 2 后）
 
