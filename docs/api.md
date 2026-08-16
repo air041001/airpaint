@@ -79,7 +79,7 @@ Authorization: Bearer <token>
 ```
 - `prompt`: 选填, ≤500 字符, 经内容过滤 (与 `image` 至少一项)。
 - `image`: 可选, 参考图 base64 (data URI, ≤5MB)。有图走视觉 LLM 提氛围, 不走文本 LLM (③, 见 D23); 图不进 ComfyUI, 仍走 txt2img。
-- `reroll`: 可选, 默认 `false`。`true` 时 LLM 高温重出一版**不同**结构化分解 (抽卡再抽, 跳过 LRU 缓存); 对文本/视觉 LLM 路径都生效, 快速路径(全命中词典)仍返回同一结果。
+- `reroll`: 可选, 默认 `false`。`true` 时文本 LLM 高温重出一版**不同画师补全方案** (抽卡再抽, 跳过 LRU 缓存); 对视觉 LLM 路径仍是不同图像解读, 快速路径(全命中词典)仍返回同一结果。
 
 翻译失败: `502 {"detail":"翻译失败, 请稍后重试 (...)"}`。
 
@@ -100,12 +100,28 @@ Authorization: Bearer <token>
     "scene": ["outdoors", "cherry blossoms"], "composition": ["standing"],
     "lighting": ["soft daylight"], "mood": ["cheerful"],
     "style": ["anime style"], "constraints": []
+  },
+  "prompt_ir_meta": {
+    "mode": "painter_expansion",
+    "source": {
+      "user_intent": "remaining_input",
+      "character_tags": "dictionary",
+      "attribute_tags": "dictionary",
+      "default_completion": "painter"
+    },
+    "expansion_applied": true,
+    "reroll": false,
+    "reroll_strategy": null,
+    "prompt_ir_available": true
   }
 }
 ```
 - `prompt_en`: 翻译后的英文 danbooru tag。
 - `breakdown`: 供前端预览展示「AI 理解」的 5 个维度 (scene/composition/mood/lighting/style)。文本 LLM 路径由 `prompt_ir` 派生；旧协议/快速路径没有时为 `null`。
 - `prompt_ir`: 12 字段 Prompt IR。每个字段都是字符串数组；文本 LLM 成功解析时返回，快速路径和当前视觉 LLM 旧协议路径为 `null`。IR 是语义计划，不是可直接注入工作流的文件名、节点 ID 或数值。
+- `prompt_ir_meta`: additive 来源与补全元数据。`mode=painter_expansion` 表示当前文本 LLM 使用画师级默认补全；`source` 区分用户剩余输入、词典命中和默认补全；`reroll_strategy=new_painter_plan` 表示 reroll 会换一套补全方案。旧客户端可忽略此字段。
+
+文本 LLM 当前生产输出协议为 `IR + PROMPT`；旧 `IR + TAGS + NL` 和旧 5 字段响应仍保留解析降级，但不再与画师协议同时要求模型输出两套最终 Prompt。
 
 ### POST /api/jobs
 提交生图任务 (需鉴权)。**接收已翻译的 `prompt_en`** (前端先用 `/api/translate` 翻译, 可在「预览提示词」里编辑后再提交), 后端不再翻译。

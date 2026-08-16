@@ -57,7 +57,14 @@ async def run_cases(cases: list[tuple[str, str]]) -> list[dict]:
         print(f"[{case_id}] {text[:35]}...", flush=True)
         char_tags, _ = engine.match_characters(text)
         try:
-            prompt_en, breakdown, prompt_ir = await engine.translate(text)
+            for attempt in range(3):
+                try:
+                    prompt_en, breakdown, prompt_ir = await engine.translate(text)
+                    break
+                except Exception as exc:
+                    if attempt == 2:
+                        raise
+                    await asyncio.sleep(2 * (attempt + 1))
             tags, nl = split_compiled_prompt(prompt_en)
             status = "OK"
             error = ""

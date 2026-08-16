@@ -10,6 +10,7 @@ import yaml
 ROOT = Path(__file__).resolve().parents[3]
 DEFAULT_LABELS = ROOT / ".tools" / "eval_set" / "render_exp" / "labels.yaml"
 DEFAULT_TAXONOMY = ROOT / ".tools" / "eval_set" / "taxonomy.yaml"
+VALID_VERDICTS = {"pass", "review", "fail", "pending"}
 
 
 def load(path: Path):
@@ -25,8 +26,10 @@ def aggregate(labels: dict, taxonomy: dict) -> tuple[Counter, Counter, list[str]
         for case_id, variants in (experiment.get("cases") or {}).items():
             for variant_id, row in (variants or {}).items():
                 verdict = row.get("verdict")
-                if verdict not in {"pass", "review", "fail"}:
+                if verdict not in VALID_VERDICTS:
                     errors.append(f"{experiment.get('id')}/{case_id}/{variant_id}: invalid verdict")
+                if verdict == "pending":
+                    continue
                 verdicts[verdict] += 1
                 for failure in row.get("failures") or []:
                     if failure not in known:

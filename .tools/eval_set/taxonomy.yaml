@@ -22,3 +22,9 @@ taxonomy:
     description: "分页、黑线、重复主体、额外主体等模型伪影"
   - id: semantic_misread
     description: "输入场景、动作或关系被 LLM/模型误读为另一种语义"
+  - id: over_invention
+    description: "扩写加入未经输入支持、改变主体意图或引入不必要道具/角色的细节"
+  - id: expansion_plausibility
+    description: "扩写细节是否与输入语义、场景逻辑和画面目标自然一致；用于质量标注，不等同于失败"
+  - id: style_artifact
+    description: "画面出现明显模板化/AI 风格或风格处理削弱目标主体的细节可读性"

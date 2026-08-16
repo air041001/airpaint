@@ -36,6 +36,18 @@
 - [x] 补充 NSFW 人眼基线与 profile 结果；6 条固定视觉基线均通过人工检查
 - [x] 不把 weighted NL / semantic negative / girl-female 替换纳入默认策略
 
+### Phase 2.5/2.6: Prompt Expansion（已完成 2026-08-16）
+- [x] 7 个短输入覆盖角色细节、服装细节、场景锚定、光影、构图镜头、NSFW 张力、纯氛围扩写
+- [x] 完成 A1/A2/A3 三路、21 张固定 Prompt/seed/尺寸/negative 图像和第一轮盲评
+- [x] 统一 SFW/NSFW 补全底层协议：构图、光影、氛围、材质；NSFW 在服装状态/身体语言/揭示节奏上分流
+- [x] E1/E6/E7 关键平局换 seed 补测（9 张）并完成第二轮 A/B/C 人眼评审
+- [x] 应用第二轮结果判定矩阵：A3 对 A2 为 4 胜、1 平、2 负，进入生产改造
+- [x] 生产改造后 5 case 新旧 Prompt A/B：3 胜 2 平 0 负
+- [x] 保留生产提示词增强、`prompt_ir_meta` 和 reroll 新补全语义
+- [x] 记录产品边界：自动扩写能改善稀疏输入，但无法替代用户提供具体视觉意图
+
+Phase 2.6 收尾后不开新扩写子阶段；下一步由真实使用反馈决定，不立即建设详细输入辅助功能。
+
 ### Phase 3-8: 见 PLAN-v5
 Character Knowledge → PromptState → LoRA Context → Trigger Engine → LoRA Composition → Workflow Intelligence
 

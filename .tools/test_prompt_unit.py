@@ -117,6 +117,59 @@ def test_tag_first_profile_drops_nl():
     assert result.endswith(". They face each other."), result
 
 
+def test_prompt_ir_meta_is_additive():
+    result = asyncio.run(main.translate("甘雨", include_meta=True))
+    assert len(result) == 4, result
+    prompt_en, breakdown, prompt_ir, meta = result
+    assert prompt_en == "1girl, solo, ganyu_(genshin_impact)", prompt_en
+    assert breakdown is None and prompt_ir is None
+    assert meta["mode"] == "canonical", meta
+    assert meta["expansion_applied"] is False, meta
+
+
+def test_reroll_uses_new_painter_plan_metadata():
+    meta = main._prompt_ir_meta("painter_expansion", reroll=True)
+    assert meta["expansion_applied"] is True, meta
+    assert meta["reroll_strategy"] == "new_painter_plan", meta
+
+
+def test_painter_prompt_protocol_is_final_prompt():
+    output = (
+        'IR: {"subject":["1girl"],"appearance":["pink hair"],"clothing":[],"action":["standing"],'
+        '"pose":[],"interaction":[],"scene":["cherry blossom tree"],"composition":["medium shot"],'
+        '"lighting":["soft afternoon light"],"mood":["gentle"],"style":["anime style"],"constraints":[]}\n'
+        "PROMPT: 1girl, pink hair, standing under cherry blossom tree, medium shot, soft afternoon light, anime style\n"
+    )
+    tags, breakdown, nl, prompt_ir = main._parse_structured_output(output)
+    assert tags.startswith("1girl, pink hair"), tags
+    assert nl == "", nl
+    assert breakdown["scene"] == "cherry blossom tree", breakdown
+    assert prompt_ir and prompt_ir["subject"] == ["1girl"], prompt_ir
+
+
+def test_painter_tag_guard_preserves_woman_and_suppresses_unrequested_silhouette():
+    tags = main._prepare_painter_tags(
+        ["woman", "silhouette of a woman", "bedroom"],
+        {"subject": ["woman"]},
+        "女性裸体躺在卧室的床上",
+        [],
+    )
+    assert tags[0] == "1girl", tags
+    assert all("silhouette" not in tag for tag in tags), tags
+
+
+def test_painter_tag_guard_keeps_nsfw_body_framing_and_default_anime_style():
+    tags = main._prepare_painter_tags(
+        ["woman", "nude", "close-up", "painterly", "soft lighting"],
+        {"subject": ["woman"], "appearance": ["nude"]},
+        "女性裸体躺在卧室的床上",
+        [],
+    )
+    assert "1girl" in tags, tags
+    assert "close-up" not in tags and "painterly" not in tags, tags
+    assert "three-quarter view" in tags, tags
+
+
 def main_test():
     tests = [
         test_character_match,
@@ -129,6 +182,11 @@ def main_test():
         test_experiment_negative_override_is_opt_in,
         test_render_profile_inference,
         test_tag_first_profile_drops_nl,
+        test_prompt_ir_meta_is_additive,
+        test_reroll_uses_new_painter_plan_metadata,
+        test_painter_prompt_protocol_is_final_prompt,
+        test_painter_tag_guard_preserves_woman_and_suppresses_unrequested_silhouette,
+        test_painter_tag_guard_keeps_nsfw_body_framing_and_default_anime_style,
     ]
     for test in tests:
         test()

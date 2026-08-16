@@ -1,0 +1,87 @@
+# Phase 2.6 first-round human blind review.
+# blind_slots maps the displayed A/B/C positions to real arms using review_key.json.
+experiment: phase2_6_first_round
+blind_slots:
+  E1: {A: A2, B: A3, C: A1}
+  E2: {A: A1, B: A2, C: A3}
+  E3: {A: A2, B: A1, C: A3}
+  E4: {A: A3, B: A1, C: A2}
+  E5: {A: A1, B: A3, C: A2}
+  E6: {A: A3, B: A1, C: A2}
+  E7: {A: A3, B: A2, C: A1}
+cases:
+  E1:
+    slot_winner: tie
+    winning_arms: [A2, A3]
+    note: "盲位 A/B 都很好，各有特色；盲位 C 一眼 AI 画风。"
+  E2:
+    slot_winner: B
+    winning_arms: [A2]
+    note: "盲位 C 也不错，但盲位 B 的细节完胜。"
+  E3:
+    slot_winner: A
+    winning_arms: [A2]
+    note: "盲位 A 很好，另外两张平平无奇。"
+  E4:
+    slot_winner: A
+    winning_arms: [A3]
+    note: "盲位 A 胜出；盲位 C 整体不行；盲位 B 可看但女孩只有剪影轮廓，没有人物细节。"
+  E5:
+    slot_winner: B
+    winning_arms: [A3]
+    note: "盲位 B 胜出；盲位 A 变成只有眼睛的特写；盲位 C 有细节但 AI 画风明显。"
+  E6:
+    slot_winner: tie
+    winning_arms: [A3, A1]
+    note: "盲位 A/B 平局，色气程度不错；盲位 C 太一般，没有诱惑力。"
+  E7:
+    slot_winner: tie
+    winning_arms: [A3, A1]
+    note: "盲位 A/C 都很好；盲位 B 把画面缩在很小的空间内。"
+summary:
+  first_round_comparison:
+    A1: "E6/E7 与 A3 平局；E1 风格失败；E2/E3 普通；E4 人物细节不足；E5 构图失败。"
+    A2: "E2/E3 胜出；E1 与 A3 平局；E4/E5/E6/E7 未胜出。"
+    A3: "E4/E5 胜出；E1 与 A2 平局；E6/E7 与 A1 平局；E2/E3 未胜出。"
+  follow_up: "E1、E6、E7 为关键平局，按计划换 seed 补测后再应用判定矩阵。"
+tie_seed_follow_up:
+  seed_offset: 100
+  cases: [E1, E6, E7]
+  output: ".tools/eval_set/render_exp/output/phase26_tie_seed/"
+  blind_slots:
+    E1: {A: A2, B: A3, C: A1}
+    E6: {A: A1, B: A2, C: A3}
+    E7: {A: A2, B: A1, C: A3}
+  status: reviewed
+  cases:
+    E1:
+      slot_winner: tie
+      winning_arms: [A2, A3]
+      note: "盲位 A/B 都很好，各有特色。"
+    E6:
+      slot_winner: tie
+      winning_arms: [A1, A3]
+      note: "盲位 A/C 都很好；盲位 B 过于注重场景，没有画出人体。"
+    E7:
+      slot_winner: C
+      winning_arms: [A3]
+      note: "盲位 C 胜出；盲位 A 只有小部分画面承载内容、其余大片黑；盲位 B 纯场景描写，孤独场景也未成立。"
+  final_matrix:
+    A3_vs_A2: "A3 wins E4/E5/E6/E7, ties E1, loses E2/E3; A3 >= A2, production landing allowed."
+production_ab:
+  cases: [E1, E2, E4, E6, E7]
+  output: ".tools/eval_set/render_exp/output/production_ab_v5/"
+  blind_slots:
+    E1: {A: new, B: old}
+    E2: {A: old, B: new}
+    E4: {A: new, B: old}
+    E6: {A: old, B: new}
+    E7: {A: old, B: new}
+  status: reviewed
+  cases_result:
+    E1: {slot_winner: A, winning_arms: [new], note: "新画师协议胜出"}
+    E2: {slot_winner: B, winning_arms: [new], note: "新画师协议胜出"}
+    E4: {slot_winner: A, winning_arms: [new], note: "新画师协议胜出"}
+    E6: {slot_winner: tie, winning_arms: [old, new], note: "两者平局"}
+    E7: {slot_winner: tie, winning_arms: [old, new], note: "两者平局"}
+  conclusion: "production painter protocol: 3 wins, 2 ties, 0 losses; keep enhancement and freeze further expansion work."

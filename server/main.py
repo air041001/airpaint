@@ -312,6 +312,16 @@ SILICONFLOW_SYSTEM_PROMPT = (
     ""
     "You receive known tags (already-decided character/attribute tags) and remaining user input. Decompose the intent of ONLY the remaining input. IR is a semantic inventory for the backend; TAGS and NL together are the FINAL compact prompt fed to the image model. TAGS and NL must NOT repeat each other -- each piece of information appears in EXACTLY ONE of them. Do NOT repeat or rephrase known tags in TAGS or NL. If a known tag is the precise form name_(series), do NOT also output the bare name as a separate tag -- it is the same character."
     ""
+    "You are also a painter-style prompt planner. Do not stop at literal translation when the remaining input leaves ordinary visual decisions open. Add a small, coherent amount of drawable detail while preserving the user's explicit intent. Prioritize, in order: subject readability; action and body/pose clarity; concrete scene anchoring; composition and camera; restrained lighting, mood, material and anime style. This is additive completion, not an invitation to invent a new concept."
+    ""
+    "Painter completion rules:"
+    "- Lock every explicit subject, count, named character, object, action, location and constraint before adding detail."
+    "- If a person is explicit or naturally implied, reserve enough composition and pose information for the person to remain visually readable. Do not let scenery, black shadow or a tiny distant figure replace the subject unless the user asks for a silhouette or distant view."
+    "- For mood-only input, choose one concrete, plausible setting and a clear focal arrangement. A scene-only description must still communicate the requested mood; do not use vague atmosphere tags alone."
+    "- Add props conservatively: at most one or two supporting props when the setting requires them. Never add an unrelated character, weapon, named IP or new main action."
+    "- Prefer approximately 20 concrete elements or fewer. Remove decorative synonyms and competing camera directions."
+    "- Keep SFW and NSFW quality foundations the same: readable composition, lighting, atmosphere and material. For explicit NSFW input, diverge only through clothing state, body language, reveal pacing, gaze and facial tension; do not add age labels, extra people or a new sex act."
+    ""
     "Output EXACTLY these lines, nothing else (no markdown, no commentary, no extra text):\n"
     "IR: <one-line valid compact JSON object with exactly these 12 array fields: subject, appearance, clothing, action, pose, interaction, scene, composition, lighting, mood, style, constraints>\n"
     "TAGS: <discrete attribute tags ONLY -- count, appearance, clothing, pose, object, scene type, atmosphere. lowercase, comma-separated. Use (tag:weight) for emphasis.>\n"
@@ -362,12 +372,59 @@ SILICONFLOW_SYSTEM_PROMPT = (
     "TAGS: spring, cherry blossoms, petals falling, gentle breeze, warm sunlight, pastel colors, peaceful, garden, outdoors, anime style\n"
     "NL: A sense of gentle renewal pervades the scene.\n"
 )
+
+# Phase 2.6 production protocol. Keep the legacy prompt above as a parser-compatible
+# fallback reference, but make the final painter prompt a first-class output instead
+# of asking the model to satisfy the old TAGS/NL split and painter expansion at once.
+PAINTER_SYSTEM_PROMPT = (
+    "You are a professional painter-style prompt planner for the base Anima anime image model. "
+    "You receive known canonical tags and the remaining Chinese user idea. Preserve the known tags in the final prompt through the backend; "
+    "do not repeat known character or attribute tags in your PROMPT line.\n\n"
+    "Output EXACTLY these two lines, nothing else (no markdown, no explanation):\n"
+    "IR: <one-line valid compact JSON object with exactly these 12 array fields: subject, appearance, clothing, action, pose, interaction, scene, composition, lighting, mood, style, constraints>\n"
+    "PROMPT: <one compact comma-separated positive prompt in lowercase English>\n\n"
+    "Build the prompt in five layers, in this order:\n"
+    "1. Lock the explicit subject, count, named character, core object, action and location.\n"
+    "2. Add only coherent appearance, clothing, pose and body-language details that support the explicit idea.\n"
+    "3. Add a concrete scene anchor and at most one or two conservative supporting props.\n"
+    "4. Choose one readable camera/framing/composition; do not add competing camera directions.\n"
+    "5. Add restrained lighting, mood, material and anime line/shading details.\n\n"
+    "Hard rules:\n"
+    "- Use Danbooru-like lowercase tags plus short drawable English clauses. Keep PROMPT to about 20 concrete comma-separated elements or fewer.\n"
+    "- Preserve every explicit constraint. Never add an unrelated character, weapon, named IP, towel, accessory or new main action.\n"
+    "- If a person is explicit or naturally implied, make the person readable in the composition. Do not let scenery, black shadow, silhouette or a tiny distant figure replace the person unless the user explicitly asks for that.\n"
+    "- If the input names a girl or woman, do not invent a school uniform, see-through clothing or a different hairstyle. If a named character has known canonical tags, keep them unchanged.\n"
+    "- For mood-only input, choose one concrete setting and one clear focal anchor that actually communicates the mood. A bare empty street or vague atmosphere is not enough; if a person is added, do not make them tiny or hide them in black space.\n"
+    "- For explicit NSFW input, keep the human body and readable pose present. Prefer a medium/full-body or three-quarter composition over a default close-up unless the user asks for a close-up. Improve quality with gaze, facial expression, body language, fabric/skin material and reveal pacing. Do not add age labels, extra people or a new sex act.\n"
+    "- Do not output quality/score tags, negative tags, text/watermark, realistic/photorealistic/3d/render terms, or a TAGS/NL section.\n"
+)
+
 # LLM 结构化输出的字段 (顺序即展示顺序). TAGS 行单独解析为最终 tag.
 _STRUCTURED_FIELDS = ("scene", "composition", "mood", "lighting", "style")
 _IR_FIELDS = (
     "subject", "appearance", "clothing", "action", "pose", "interaction",
     "scene", "composition", "lighting", "mood", "style", "constraints",
 )
+
+
+def _prompt_ir_meta(mode: str, reroll: bool = False, prompt_ir: dict | None = None,
+                    char_tags: list[str] | None = None,
+                    attribute_tags: list[str] | None = None) -> dict:
+    """为 API 增加来源/补全元数据，不污染 12 字段 Prompt IR 结构。"""
+    expansion = mode == "painter_expansion"
+    return {
+        "mode": mode,
+        "source": {
+            "user_intent": "remaining_input",
+            "character_tags": "dictionary" if char_tags else None,
+            "attribute_tags": "dictionary" if attribute_tags else None,
+            "default_completion": "painter" if expansion else None,
+        },
+        "expansion_applied": expansion,
+        "reroll": bool(reroll),
+        "reroll_strategy": "new_painter_plan" if expansion and reroll else None,
+        "prompt_ir_available": prompt_ir is not None,
+    }
 
 # ③ 参考图理解: 视觉 LLM 从参考图提取内容 -> 结构化输出. 提取策略由用户文字驱动(非写死"只提氛围"). 见 D23.
 VISION_SYSTEM_PROMPT = (
@@ -457,10 +514,11 @@ def _breakdown_from_ir(prompt_ir: dict) -> dict:
 
 
 def _parse_structured_output(out: str) -> tuple[str, dict | None, str, dict | None]:
-    """解析 IR + TAGS + NL, 同时兼容旧 5 字段行协议.
-    返回 (tags, breakdown, nl, prompt_ir). 无 TAGS 行 -> 整体当 tags, 其余为空 (D18 降级)."""
+    """解析生产 IR + PROMPT 或旧 IR + TAGS + NL 协议.
+    返回 (tags, breakdown, nl, prompt_ir); PROMPT 是单一最终画师 Prompt，编译时视作 tags body。"""
     breakdown: dict = {}
     tags = ""
+    painter_prompt = ""
     nl = ""
     prompt_ir = None
     for line in out.splitlines():
@@ -474,6 +532,9 @@ def _parse_structured_output(out: str) -> tuple[str, dict | None, str, dict | No
         if low.startswith("tags:"):
             tags = line.split(":", 1)[1].strip()
             continue
+        if low.startswith("prompt:"):
+            painter_prompt = line.split(":", 1)[1].strip()
+            continue
         if low.startswith("nl:"):
             nl = line.split(":", 1)[1].strip()
             continue
@@ -484,12 +545,15 @@ def _parse_structured_output(out: str) -> tuple[str, dict | None, str, dict | No
     # 兼容模型把单行 JSON 错误地格式化成多行的情况; 失败仍走旧协议或 None.
     if prompt_ir is None:
         match = re.search(
-            r"^\s*ir:\s*(\{.*?\})(?=\s*(?:\n\s*(?:tags|nl):|\Z))",
+            r"^\s*ir:\s*(\{.*?\})(?=\s*(?:\n\s*(?:tags|prompt|nl):|\Z))",
             out,
             flags=re.IGNORECASE | re.MULTILINE | re.DOTALL,
         )
         if match:
             prompt_ir = _parse_prompt_ir(match.group(1))
+    if painter_prompt:
+        tags = painter_prompt
+        nl = ""
     if not tags:
         return out, None, "", None
     if prompt_ir is not None:
@@ -539,8 +603,9 @@ async def siliconflow_translate(context: str, reroll: bool = False) -> tuple[str
 
     # reroll: 高温 + 发散指令. /no_think 仍是 user 首token (thinking 开则不前置), nudge 跟在后面.
     temperature = float(CFG.get("reroll_temperature", 0.9)) if reroll else 0.4
-    nudge = ("Give a DIFFERENT, more creative interpretation than the obvious one. "
-             "Vary the scene, mood and lighting; pick an unexpected but coherent setting. "
+    nudge = ("Generate a DIFFERENT painter completion plan from the previous one. "
+             "Vary the composition, lighting, mood or concrete setting only when coherent; "
+             "keep every explicit subject, action, location and constraint, and preserve subject readability. "
              "Still follow the output format and the known-tags rule.\n\n") if reroll else ""
     user_content = ("/no_think " if not thinking else "") + nudge + context
 
@@ -550,7 +615,7 @@ async def siliconflow_translate(context: str, reroll: bool = False) -> tuple[str
         json={
             "model": model,
             "messages": [
-                {"role": "system", "content": SILICONFLOW_SYSTEM_PROMPT},
+                {"role": "system", "content": PAINTER_SYSTEM_PROMPT},
                 # /no_think: Qwen3 软开关, 强制不进思考模式 (思考会慢到 30s+ 且易复读). thinking 开则不前置.
                 {"role": "user", "content": user_content},
             ],
@@ -649,6 +714,46 @@ _COUNT_TAG_RE = re.compile(
 )
 
 
+def _prepare_painter_tags(tags: list[str], prompt_ir: dict | None,
+                          original_text: str, char_tags: list[str]) -> list[str]:
+    """给画师 Prompt 加最小代码护栏：主体计数和未请求的剪影抑制。"""
+    result = [tag.strip() for tag in tags if tag and tag.strip()]
+    if "剪影" not in original_text and "silhouette" not in original_text.lower():
+        result = [tag for tag in result if "silhouette" not in tag.lower()]
+    style_requested = any(term in original_text.lower()
+                          for term in ("风格", "水彩", "厚涂", "油画", "watercolor", "painting"))
+    if not style_requested:
+        result = [tag for tag in result
+                  if tag.lower() not in {"painterly", "lineart", "line art", "anime lineart"}]
+    ir_text = " ".join(
+        str(item).lower()
+        for field in ("appearance", "clothing", "action", "pose", "scene", "constraints")
+        for item in (prompt_ir or {}).get(field, [])
+    )
+    explicit = any(term in ir_text for term in ("nude", "naked", "explicit", "nipples", "sex"))
+    if explicit and "特写" not in original_text and "close-up" not in original_text.lower():
+        result = [tag for tag in result if tag.lower() not in {"close-up", "close up"}]
+        if not any(term in tag.lower()
+                   for term in ("full body", "three-quarter", "medium shot")
+                   for tag in result):
+            result.append("three-quarter view")
+    if any(_COUNT_TAG_RE.match(tag.lower()) for tag in result):
+        return result
+
+    subject = " ".join(str(item).lower() for item in (prompt_ir or {}).get("subject", []))
+    source = original_text.lower()
+    subject_words = set(re.findall(r"[a-z]+", subject))
+    if subject_words & {"boy", "boys", "male", "man", "men"} or any(
+        term in source for term in ("男孩", "男性", "男人")
+    ):
+        result.insert(0, "1boy")
+    elif char_tags or subject_words & {"girl", "girls", "woman", "women", "female", "person"} or any(
+        term in source for term in ("女孩", "少女", "女性", "女人", "女生", "巫女")
+    ):
+        result.insert(0, "1girl")
+    return result
+
+
 def normalize_tag_order(char_tags: list[str], other_tags: list[str]) -> str:
     """按 Anima 规范序拼接: count -> character -> general. 只重排不增删; 去重(保留首次出现, 见 D23)."""
     count, general = [], []
@@ -730,13 +835,20 @@ def compile_prompt(char_tags: list[str], other_tags: list[str], nl: str = "",
     return result or nl
 
 
-async def translate(text: str, reroll: bool = False, image_b64: str | None = None) -> tuple[str, dict | None, dict | None]:
+async def translate(text: str, reroll: bool = False, image_b64: str | None = None,
+                    include_meta: bool = False) -> tuple:
     """中文 -> danbooru tag. 三层: 角色匹配 -> 词典匹配 -> LLM 扩写(只处理未命中).
     返回 (prompt_en, breakdown, prompt_ir): breakdown 是既有 5 维展示结构,
     prompt_ir 是 12 字段语义计划; 快速路径或旧视觉协议时二者按实际情况为 None.
-    reroll=True: 只对 LLM 路径生效, 高温重出一版不同分解, 跳过缓存(探索性, 不污染正常缓存).
+    include_meta=True 时追加第四项 prompt_ir_meta，供 API additive 返回，不影响旧内部调用。
+    reroll=True: 只对 LLM 路径生效, 高温重出一版不同补全方案, 跳过缓存(探索性, 不污染正常缓存).
     image_b64: ③ 参考图 (data URI 或 base64). 有图走视觉 LLM 提氛围, 不走文本 LLM/快速路径. 见 D23."""
     backend = CFG.get("translate", "none")
+
+    def finish(prompt_en: str, breakdown: dict | None, prompt_ir: dict | None,
+               meta: dict):
+        result = (prompt_en, breakdown, prompt_ir)
+        return result + (meta,) if include_meta else result
 
     # Layer 0: 角色子串匹配 (移除角色名, 得到剩余文本)
     char_tags, remaining = match_characters(text)
@@ -762,23 +874,34 @@ async def translate(text: str, reroll: bool = False, image_b64: str | None = Non
             raise HTTPException(502, f"参考图理解失败, 请稍后重试 ({e})")
         new_list = [t.strip() for t in new_tags.split(",") if t.strip()]
         result = compile_prompt(char_tags, hits + new_list, nl, infer_render_profile(prompt_ir))
-        return result, breakdown, prompt_ir
+        return finish(
+            result, breakdown, prompt_ir,
+            _prompt_ir_meta("vision_reference", reroll, prompt_ir, char_tags, hits),
+        )
 
     # 全命中 (无 misses): 不调 LLM
     if not misses:
         # 裸角色名快速路径: 只有角色没别的描述 -> 补 1girl, solo
         # (LLM 对裸角色名会疯狂编场景/武器, 实测 7.9s + 噪声 tag, 见 D13)
         if char_tags and not hits:
-            return compile_prompt(char_tags, ["1girl", "solo"], profile="tag_first"), None, None
+            result = compile_prompt(char_tags, ["1girl", "solo"], profile="tag_first")
+            return finish(result, None, None,
+                          _prompt_ir_meta("canonical", reroll, char_tags=char_tags))
         all_tags = char_tags + hits
         if all_tags:
-            return compile_prompt(char_tags, hits, profile="tag_first"), None, None
+            result = compile_prompt(char_tags, hits, profile="tag_first")
+            return finish(result, None, None,
+                          _prompt_ir_meta("dictionary", reroll,
+                                          char_tags=char_tags, attribute_tags=hits))
         raise HTTPException(400, "提示词为空")
 
     # Layer 2: 有未命中 -> 后端处理
     if backend == "none":
         # 未翻译部分原样保留 (混输英文 tag 时合适)
-        return compile_prompt(char_tags, hits + misses, profile="tag_first"), None, None
+        result = compile_prompt(char_tags, hits + misses, profile="tag_first")
+        return finish(result, None, None,
+                      _prompt_ir_meta("faithful", reroll,
+                                      char_tags=char_tags, attribute_tags=hits))
 
     if backend == "siliconflow":
         # 构造上下文: 已知 tag 喂给 LLM, 只让它翻/扩 misses (不重复已知 tag)
@@ -792,27 +915,38 @@ async def translate(text: str, reroll: bool = False, image_b64: str | None = Non
 
         cache_key = context
         if not reroll and cache_key in _TRANSLATE_CACHE:
-            return _TRANSLATE_CACHE[cache_key]
+            cached_result, cached_breakdown, cached_ir = _TRANSLATE_CACHE[cache_key]
+            return finish(
+                cached_result, cached_breakdown, cached_ir,
+                _prompt_ir_meta("painter_expansion", reroll, cached_ir, char_tags, hits),
+            )
         try:
             new_tags, breakdown, nl, prompt_ir = await siliconflow_translate(context, reroll=reroll)
         except Exception as e:
             raise HTTPException(502, f"翻译失败, 请稍后重试 ({e})")
         # 编译: 已知 tag + LLM 新增 tag, 再按 Anima 规范序排并附加 NL.
         new_list = [t.strip() for t in new_tags.split(",") if t.strip()]
-        result = compile_prompt(char_tags, hits + new_list, nl, infer_render_profile(prompt_ir))
+        painter_tags = _prepare_painter_tags(hits + new_list, prompt_ir, text, char_tags)
+        result = compile_prompt(char_tags, painter_tags, nl, infer_render_profile(prompt_ir))
         # reroll 不写缓存: 探索性结果不应顶掉正常翻译的缓存原版 (见 D19)
         if not reroll:
             if len(_TRANSLATE_CACHE) >= _TRANSLATE_CACHE_MAX:
                 _TRANSLATE_CACHE.pop(next(iter(_TRANSLATE_CACHE)))
             _TRANSLATE_CACHE[cache_key] = (result, breakdown, prompt_ir)
-        return result, breakdown, prompt_ir
+        return finish(
+            result, breakdown, prompt_ir,
+            _prompt_ir_meta("painter_expansion", reroll, prompt_ir, char_tags, hits),
+        )
 
     if backend == "google":
         try:
             translated_missing = await google_translate_batch(misses)
         except Exception as e:
             raise HTTPException(502, f"翻译失败, 请稍后重试 ({e})")
-        return compile_prompt(char_tags, hits + translated_missing, profile="tag_first"), None, None
+        result = compile_prompt(char_tags, hits + translated_missing, profile="tag_first")
+        return finish(result, None, None,
+                      _prompt_ir_meta("translation", reroll,
+                                      char_tags=char_tags, attribute_tags=hits))
 
     raise HTTPException(500, f"未知的 translate 后端: {backend}")
 
@@ -1113,9 +1247,9 @@ async def refresh_loras(token: str = Depends(auth)):
 @app.post("/api/translate")
 async def translate_prompt(req: Request, token: str = Depends(verify_token)):
     """只翻译不排队: 中文 -> 英文 tag (角色->词典->LLM 三层 + 结构化扩写, LRU 缓存). 不计入 image 限额.
-    返回 {prompt_en, breakdown, prompt_ir}: breakdown 保持 5 维前端展示形状,
-    prompt_ir 是 12 字段语义计划; 快速路径时二者为 null.
-    body.reroll=true: LLM 高温重出一版不同分解 (抽卡再抽, 跳过缓存, 见 D19).
+    返回 {prompt_en, breakdown, prompt_ir, prompt_ir_meta}: breakdown 保持 5 维前端展示形状,
+    prompt_ir 是 12 字段语义计划; prompt_ir_meta additive 标注来源、补全模式和 reroll 方案.
+    body.reroll=true: LLM 高温重出一版不同画师补全方案 (抽卡再抽, 跳过缓存, 见 D19).
     body.image: 可选, 参考图 base64 (data URI). 有图走视觉 LLM 提氛围, 不走文本 LLM (③, 见 D23)."""
     body = await req.json()
     prompt = (body.get("prompt") or "").strip()
@@ -1129,9 +1263,16 @@ async def translate_prompt(req: Request, token: str = Depends(verify_token)):
     if prompt:
         check_banned(prompt)
     reroll = bool(body.get("reroll"))
-    prompt_en, breakdown, prompt_ir = await translate(prompt, reroll=reroll, image_b64=(image or None))
+    prompt_en, breakdown, prompt_ir, prompt_ir_meta = await translate(
+        prompt, reroll=reroll, image_b64=(image or None), include_meta=True
+    )
     check_banned(prompt_en)
-    return {"prompt_en": prompt_en, "breakdown": breakdown, "prompt_ir": prompt_ir}
+    return {
+        "prompt_en": prompt_en,
+        "breakdown": breakdown,
+        "prompt_ir": prompt_ir,
+        "prompt_ir_meta": prompt_ir_meta,
+    }
 
 
 async def _enqueue(token: str, wf_name: str, prompt_en: str, prompt_raw: str,

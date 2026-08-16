@@ -128,7 +128,7 @@ figcaption{text-align:center;font-weight:700;font-size:20px;padding:6px}
 img{display:block;width:100%;height:auto} .failed{padding:80px 10px;text-align:center;color:#f88}
 </style>
 <h1>Prompt Rendering Strategy Experiment</h1>
-<p>每组标签已随机化。请只记录每组你认为画面最符合输入意图的标签，不要猜变体名称。</p>
+<p>每组只有 A/B/C 三个盲位，标签已随机化。请记录胜出的盲位；如果两张都好，记录为 tie，tie 是评审结果，不是第四个图片分组。</p>
 """ + "\n".join(sections)
     (output_dir / "review.html").write_text(html_doc, encoding="utf-8")
 

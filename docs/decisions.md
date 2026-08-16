@@ -395,3 +395,57 @@
 6. 继续使用 failure taxonomy 分析 counting、binding、action/pose、interaction、spatial 和 anatomy，而不是把所有失败归因于 Prompt 长短。
 
 **相关文件**: `.tools/eval_set/render_exp/phase2_results.yaml`, `.tools/eval_set/nsfw/`, `server/main.py`, `.tools/eval_set/taxonomy.yaml`。
+
+## D37. Phase 2.5/2.6 Prompt Expansion 三路实验与生产落地（最终）
+
+**背景**：Phase 2 首轮验证了渲染 profile、Prompt 来源和失败类型，但没有回答 AirPaint 的核心问题：短中文输入是否能通过画师级补全变成更可靠的完整画面。上一轮 E1-E7 的 V1/V2 只形成了两路固定 Prompt 对照，尚未隔离“用户写得更详细”与“系统自动补全”的差异。
+
+**问题**：如果直接把更长 Prompt 视为改进，可能把无依据的服装、道具、场景或表情误加到用户意图中；如果只看结构完整，也会漏掉构图、光影、材质和 NSFW 表情张力的实际画面收益。
+
+**候选**：
+1. A1：短中文输入走当前生产翻译链路。
+2. A2：同一意图改写为由 agent 代写、用户执行前抽查的口语化中文长描述，再走当前生产翻译链路。
+3. A3：短中文输入走实验脚本内的画师补全协议，直接调用模型 API；不修改生产 system prompt。
+
+**决定（实验协议）**：
+1. 固定 base Anima、workflow、尺寸、seed 和默认负面；7 个 case 各生成 A1/A2/A3，共 21 张图。
+2. A3 只允许在实验脚本内执行五层补全：主体锁定、动作/姿态、场景与保守道具、构图/镜头、光影/氛围/材质/风格；使用 Danbooru 语系，约 20 个元素上限，不输出负面 Prompt。
+3. A3 的道具规则为保守添加，不新增无依据角色、武器或改变主体行为；明确 NSFW case 只分流服装状态、身体语言、揭示节奏和表情张力，不用年龄词堆叠质量。
+4. 人眼按 A1/A2/A3 盲评；平局换 seed 补测。单次手脚等随机伪影不判策略失败，换 seed 复现后才进入 taxonomy。
+5. 预先固定判定矩阵：A3 ≥ A2 才进入生产改造；A2 > A3 则转向辅助用户写详细中文；全平则终止并归档，不因 Prompt 更长而强行落地。
+
+**代价/边界**：本草案不修改 `SILICONFLOW_SYSTEM_PROMPT`、Prompt IR 生产协议或默认负面；在结果出来前不引入 `prompt_ir_meta`、reroll 补全语义或生产级画师协议。
+
+**验证**：21 张图已生成并完成第一轮盲评，关键平局换 seed 补测 9 张并完成第二轮评审；生产后 5 case 新旧 A/B 生成 10 张，用户确认 3 胜 2 平 0 负。15 个 Prompt 单测、30 条 SFW IR 回归、8 条 NSFW explicit safety 回归通过。
+
+**相关文件**：`.tools/eval_set/render_exp/expansion/phase26_cases.yaml`、`.tools/eval_set/render_exp/expansion/run_phase26.py`、`.tools/eval_set/taxonomy.yaml`、`.tools/eval_set/render_exp/labels.yaml`。
+
+### 第一轮人眼结果（2026-08-16）
+
+盲评页面每组只有 A/B/C 三个位置，`tie` 仅表示两张图并列，不是额外图片分组。review key 解码后的结果：
+
+| Case | 结果 | 胜出 arm | 主要观察 |
+|---|---|---|---|
+| E1 | tie | A2/A3 | 两者都好且各有特色；A1 明显 AI 画风 |
+| E2 | B | A2 | A3 也不错，但 A2 细节完胜 |
+| E3 | A | A2 | A1/A3 平平无奇 |
+| E4 | A | A3 | A2 整体不行；A1 可看但女孩只有剪影、无人物细节 |
+| E5 | B | A3 | A1 变成只有眼睛的特写；A2 有细节但 AI 画风明显 |
+| E6 | tie | A3/A1 | 两者色气程度都好；A2 一般且没有诱惑力 |
+| E7 | tie | A3/A1 | 两者都好；A2 把画面缩在很小空间 |
+
+**阶段判断**：第一轮 A2 在 E2/E3 胜出，A3 在 E4/E5 胜出，A1/A3 在 E6/E7 并列，E1 为 A2/A3 并列。第二轮换 seed 后，E1 A2/A3 继续并列，E6 A1/A3 并列且 A2 因缺少人体失败，E7 A3 胜出且 A2/A1 均失败。汇总 A3 对 A2 为 4 胜、1 平、2 负，满足预定 `A3 ≥ A2` 判定，允许进入生产改造。`style_artifact`、`lighting_style`、`spatial_composition`、`semantic_misread` 已用于对应失败记录。
+
+**生产改造边界**：只落地经过实验支持的画师补全协议；不把“更长 Prompt”本身作为目标。保留显式用户约束，补全聚焦主体可读性、动作/姿态、场景锚定、构图、光影、材质和 NSFW 表情/身体语言；生产回归失败则撤回本轮改造。
+
+**相关结果**：`.tools/eval_set/render_exp/expansion/phase26_results.yaml`、`.tools/eval_set/render_exp/labels.yaml`。
+
+### 生产改造后的新旧 A/B 验证
+
+生产画师协议落地后，复用 E1/E2/E4/E6/E7 的旧 A1 Prompt 与新 `translate()` 输出，固定原 seed/尺寸/workflow/默认负面生成 10 张图，结果全部成功。用户按 A/B 盲位评审后确认 E1/E2/E4 新协议胜出，E6/E7 平局，合计 3 胜 2 平 0 负。
+
+初版生产 A/B 使用旧 `IR + TAGS + NL` 协议叠加画师规则，实际新 Prompt 仍接近旧短翻译，且暴露主体计数、未请求剪影和 NSFW 景别护栏问题，不能作为生产收益证据。随后改为独立 `IR + PROMPT` 协议并增加代码护栏；v5 证实提示词增强保留，但 A2 的详细中文在部分 case 更强，自动扩写不替代用户具体视觉意图。
+
+### 收尾决定
+
+保留 v5 提示词增强、`prompt_ir_meta` 和 reroll 新补全语义；冻结继续增加自动扩写规则。自动增强负责通用可读性、构图、光影、材质和 NSFW 身体语言，不能凭空决定用户未表达的具体创意。Phase 2.6 完成后先观察真实使用反馈，不立即投入详细输入辅助 UX 或新的扩写实验。

@@ -51,7 +51,7 @@ ComfyUI  127.0.0.1:8188  (不对公网开放)
 2. **词典匹配** (`dict.yaml`, 当前约 1044 条): 剩余文本**子串匹配** (最长优先, len>=2), 分 hits / misses (见 D26)。
 3. 全命中 (无 misses): 裸角色名 (只有角色无描述) -> `tag, 1girl, solo` 跳过 LLM; 否则 `角色tag + 词典tag` 拼接。
 4. 有未命中 -> 按后端:
-    - `siliconflow`: 构造上下文 (Known character tags / Known attribute tags / Remaining misses) 送 DeepSeek-V4-Flash (config `siliconflow_model`)。LLM 输出单行 12 字段 `IR` + `TAGS` + `NL`；`_parse_structured_output` 解析并校验，5 个前端 breakdown 字段由 IR 派生。保留旧 5 字段行和无 TAGS 降级路径。**TAGS/NL 不重复**(HARD RULE: NL 不得复述 TAGS 已有 tag, 全是 tag 则留空); 隐喻落 mood(禁字面名词), 多角色空间布局落 NL, scene 强制具体。`compile_prompt` 统一做角色裸名清理、去重、count→character→general 排序和 NL 拼接；`build_prompt` 再负责 quality/safety/LoRA/workflow。`/no_think` + 顶层 `enable_thinking:False`(config `translate_enable_thinking` 可翻, 见 D18) 关思考, max_tokens 550 / temp 0.4, 失败抛 502。LRU 缓存 500 (key=上下文, 值为 `(prompt_en, breakdown, prompt_ir)`)。
+    - `siliconflow`: 构造上下文 (Known character tags / Known attribute tags / Remaining misses) 送 DeepSeek-V4-Flash (config `siliconflow_model`)。生产文本 LLM 输出单行 12 字段 `IR` + `PROMPT`，`PROMPT` 是约 20 个元素以内的紧凑最终画师 Prompt；`_parse_structured_output` 仍兼容旧 `IR + TAGS + NL` 和旧 5 字段协议。5 个前端 breakdown 字段由 IR 派生。画师协议优先保证主体可读性、动作/姿态、场景、构图、光影/材质，并由代码层补主体计数、抑制未请求剪影、默认风格污染和 NSFW close-up；`/api/translate` 以 additive `prompt_ir_meta` 标注补全来源；reroll 使用新的补全方案。`compile_prompt` 统一做角色裸名清理、去重、count→character→general 排序和 Prompt 拼接；`build_prompt` 再负责 quality/safety/LoRA/workflow。`/no_think` + 顶层 `enable_thinking:False`(config `translate_enable_thinking` 可翻, 见 D18) 关思考, max_tokens 550 / temp 0.4, 失败抛 502。LRU 缓存 500 (key=上下文, 值为 `(prompt_en, breakdown, prompt_ir)`)。
    - `google`: gtx 逐词翻 misses (本机需翻墙, 已弃用)。
    - `none`: misses 原样保留。
 
