@@ -1,6 +1,6 @@
 # PLAN-v5 — AirPaint Prompt Intelligence
 
-> 状态：正式路线（2026-08-15 修订，Phase 1.5 首轮实验完成）
+> 状态：正式路线（2026-08-16 修订，Phase 2.6 Prompt Expansion 已完成）
 > 取代 PLAN-v4（v4 保留作历史参考）
 > 实施计划批准文件：`.workbuddy/plans/electric-forging-babbage.md`
 >
@@ -272,7 +272,7 @@ LLM 不直接负责最终 Prompt。建议输出：
 
 当前阶段只落地了明确成人 NSFW 单主体的 `tag_first` profile、failure taxonomy 和首轮 Dictionary/LLM 对照；weighted NL、semantic negative、`girl/female` 词汇替换仍是未验证候选，不进入默认策略。
 
-### Phase 2.5: Prompt Expansion 实验（当前进行）
+### Phase 2.5/2.6: Prompt Expansion（已完成）
 
 Phase 2 首轮的 case 都是短句翻译或关系失败，没有验证 AirPaint 最初的核心价值：用户只给简单中文，系统能否像画师一样补全高质量画面。
 
@@ -357,7 +357,7 @@ Phase 2 首轮的 case 都是短句翻译或关系失败，没有验证 AirPaint
 | `server/char_dict.yaml` / `dict.yaml` | 知识库 | Phase 0 只修已知错误 |
 | `server/config.yaml` loras / `lora_cache.json` | LoRA registry | Phase 0 修 scan_loras |
 | `.tools/eval_set/`（新建） | Evaluation Set | Phase 0 建 |
-| `docs/ROADMAP.md` | 阶段规划 | Phase 0 同步指向 v5 |
+| `ROADMAP.md` | 阶段规划 | Phase 0 同步指向 v5 |
 
 ---
 
@@ -367,14 +367,14 @@ Phase 2 首轮的 case 都是短句翻译或关系失败，没有验证 AirPaint
 
 > **一个已经会用 ComfyUI 的人，觉得 AirPaint 比直接打开 ComfyUI 更适合写 Prompt、管理语义和迭代修改。**
 
-核心验证点（Phase 1.5 结束时回答）：
-- 简单内容是否 TAG 更强，复杂关系是否 NL/hybrid 更强？
-- 权重与空间锚点在 base Anima 上是否有效？
-- 语义负面是否能抑制姿态/场景干扰？
-- 成人 NSFW 与普通 Prompt 是否需要不同的渲染策略？
-- Evaluation Set 是否通过人眼结果证明抽象提升真的带来画面质量提升，而不只是代码变复杂？
+### 已完成的核心验证
 
-只有这个核心成立，才继续 Phase 2-8。
+- Phase 1.5/2 已确认：没有一个 TAG/NL/权重格式可全局套用；复杂关系保留用户 Prompt 编辑 fallback。
+- 明确成人 NSFW 单主体简单场景可使用 `tag_first`；普通 SFW 不全局删除 NL。
+- Phase 2.6 v5 生产画师协议相对旧翻译在 5 个固定 case 上取得 3 胜 2 平 0 负。
+- 人眼结果同时确认：自动补全能改善通用构图、光影、材质和可读性，但具体视觉意图仍受用户输入信息量限制。
+
+Phase 2.6 已完成。是否继续 Phase 3-8 不由结构回归自动触发，先根据真实使用反馈决定。
 
 ---
 

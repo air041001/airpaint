@@ -71,7 +71,7 @@ Authorization: Bearer <token>
 ```
 
 ### POST /api/translate
-只翻译不排队 (需鉴权, 不计入 image 限额): 中文 -> 英文 tag (角色->词典->LLM 三层 + Prompt IR 结构化扩写, LRU 缓存)。前端「先看翻译」和「生成」都先调它拿 prompt_en。
+只翻译不排队 (需鉴权, 不计入 image 限额): 中文 -> 英文 Prompt (角色->词典->画师 LLM 三层 + Prompt IR, LRU 缓存)。前端「先看翻译」和「生成」都先调它拿 prompt_en。
 
 请求体:
 ```json

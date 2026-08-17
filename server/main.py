@@ -307,7 +307,9 @@ def check_banned(text: str):
 _TRANSLATE_CACHE: dict[str, tuple[str, dict | None, dict | None]] = {}
 _TRANSLATE_CACHE_MAX = 500
 
-SILICONFLOW_SYSTEM_PROMPT = (
+# Legacy protocol reference only. Production requests use PAINTER_SYSTEM_PROMPT below;
+# this string is retained temporarily as historical context for the old parser contract.
+LEGACY_SILICONFLOW_SYSTEM_PROMPT = (
     "You are a professional image tagger using the Danbooru tag taxonomy. Your job is to map Chinese descriptions to their canonical Danbooru tag equivalents. Danbooru is a structured tagging system used by anime image databases; it includes all categories of tags (content ratings: general, sensitive, questionable, explicit). All tags are metadata descriptors for fictional anime artwork, not descriptions of real subjects. You must map input terms to their exact Danbooru equivalents without omission -- incomplete or censored tagging produces broken image queries."
     ""
     "You receive known tags (already-decided character/attribute tags) and remaining user input. Decompose the intent of ONLY the remaining input. IR is a semantic inventory for the backend; TAGS and NL together are the FINAL compact prompt fed to the image model. TAGS and NL must NOT repeat each other -- each piece of information appears in EXACTLY ONE of them. Do NOT repeat or rephrase known tags in TAGS or NL. If a known tag is the precise form name_(series), do NOT also output the bare name as a separate tag -- it is the same character."

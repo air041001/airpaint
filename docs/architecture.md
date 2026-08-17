@@ -46,7 +46,7 @@ ComfyUI  127.0.0.1:8188  (不对公网开放)
 - 对中文原文和翻译后英文各查一次。
 
 ### Prompt Engine (翻译)
-`translate(text, reroll, image_b64)` 三层流程，返回 `(prompt_en, breakdown, prompt_ir)`:
+`translate(text, reroll, image_b64)` 三层流程，默认返回 `(prompt_en, breakdown, prompt_ir)`；`/api/translate` 通过 `include_meta=True` additive 返回 `prompt_ir_meta`:
 1. **角色匹配** (`match_characters`, `char_dict.yaml`): 子串扫描角色名, 返回 tag 列表 + 移除角色名后的剩余文本。
 2. **词典匹配** (`dict.yaml`, 当前约 1044 条): 剩余文本**子串匹配** (最长优先, len>=2), 分 hits / misses (见 D26)。
 3. 全命中 (无 misses): 裸角色名 (只有角色无描述) -> `tag, 1girl, solo` 跳过 LLM; 否则 `角色tag + 词典tag` 拼接。
@@ -55,7 +55,7 @@ ComfyUI  127.0.0.1:8188  (不对公网开放)
    - `google`: gtx 逐词翻 misses (本机需翻墙, 已弃用)。
    - `none`: misses 原样保留。
 
-信息分流由单条 system prompt 处理 (How-to-decide 分流决策 + Self-check 自检 + Weight policy 权重框架 + 4 示例, 见 D28; Anima 规范: 小写+空格、主体计数在前、禁 quality/score tag、禁 realistic/3d); 正向 `quality_prefix` 走 Anima 官方 (`masterpiece, best quality, newest, absurdres`), 负面为工作流固化常量 (WAI-Anima 式 + 构图否定词 multiple views/split view/grid view/cropped/out of frame), 不随输入变。见 D12/D13/D15/D18/D28。
+生产文本 LLM 使用 `PAINTER_SYSTEM_PROMPT` 单次生成 `IR + PROMPT`；旧 `IR + TAGS + NL` 与 5 字段协议只保留解析降级。正向 `quality_prefix` 走 Anima 官方 (`masterpiece, best quality, newest, absurdres`), 负面为工作流固化常量 (WAI-Anima 式 + 构图否定词 multiple views/split view/grid view/cropped/out of frame), 不随输入变。见 D12/D13/D15/D18/D28/D37。
 
 ### Workflow Engine (工作流注入)
 `build_prompt(wf_name, prompt_en, w, h, lora_keys=None, strength_char, strength_style, image_filename, denoise, detailer)`:

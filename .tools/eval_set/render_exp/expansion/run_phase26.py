@@ -2,7 +2,7 @@
 """Phase 2.6 三路 Prompt Expansion 实验 runner.
 
 prepare 只调用翻译模型并保存固定 Prompt，不生成图片；用户审查 A2 后再执行 render。
-A3 的画师协议只存在本文件，不修改生产 SILICONFLOW_SYSTEM_PROMPT。
+A3 的画师协议只存在本文件；生产落地后的协议由 `server/main.py` 的 `PAINTER_SYSTEM_PROMPT` 独立负责。
 """
 import argparse
 import asyncio

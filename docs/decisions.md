@@ -414,7 +414,7 @@
 4. 人眼按 A1/A2/A3 盲评；平局换 seed 补测。单次手脚等随机伪影不判策略失败，换 seed 复现后才进入 taxonomy。
 5. 预先固定判定矩阵：A3 ≥ A2 才进入生产改造；A2 > A3 则转向辅助用户写详细中文；全平则终止并归档，不因 Prompt 更长而强行落地。
 
-**代价/边界**：本草案不修改 `SILICONFLOW_SYSTEM_PROMPT`、Prompt IR 生产协议或默认负面；在结果出来前不引入 `prompt_ir_meta`、reroll 补全语义或生产级画师协议。
+**代价/边界（实验前状态）**：本草案不修改旧生产 system prompt、Prompt IR 生产协议或默认负面；在结果出来前不引入 `prompt_ir_meta`、reroll 补全语义或生产级画师协议。
 
 **验证**：21 张图已生成并完成第一轮盲评，关键平局换 seed 补测 9 张并完成第二轮评审；生产后 5 case 新旧 A/B 生成 10 张，用户确认 3 胜 2 平 0 负。15 个 Prompt 单测、30 条 SFW IR 回归、8 条 NSFW explicit safety 回归通过。
 
