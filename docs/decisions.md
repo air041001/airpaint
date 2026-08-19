@@ -340,9 +340,9 @@
 
 **代价**: IR 当前不是最终 Prompt 的唯一来源; 视觉路径暂不产 IR; 文本 max_tokens 从 400 调至 550; `prompt_ir` 增加 API 返回体但保持旧字段兼容。固定生图验收同时固定 Prompt、seed、尺寸, 避免 LLM reroll 污染视觉回归。
 
-**验证**: 真实 `translate()` 评测两轮均 30/30 成功、30/30 IR 完整; `compare.py --require-ir` 通过; 7 个零依赖 Prompt 单测通过; 固定夹具 002/012/018 生图 3/3 通过内容验收。012 的锅柄与手连接仍需人眼复核, 不构成 Phase 1 阻塞。
+**验证**: 真实 `translate()` 评测两轮均 30/30 成功、30/30 IR 完整; `compare.py --require-ir` 通过; 7 个零依赖 Prompt 单测通过; 固定夹具 002/012/018 生图 3/3 通过内容验收。012 的锅柄与手连接仍需人眼复核, 不构成 Phase 1 阻塞。注：该 30 条 baseline 是未验证的 agent 产物，已于 2026-08-19 清理（见 DEVLOG 40），此处"30/30 IR"仅作历史记录，不再作为质量证据。
 
-**相关文件**: `server/main.py`, `.tools/eval_set/run_baseline.py`, `.tools/eval_set/compare.py`, `.tools/eval_set/image_cases.yaml`, `.tools/eval_set/run_gen_test.py`, `docs/api.md`, `docs/architecture.md`。
+**相关文件**: `server/main.py`, `.tools/eval_set/image_cases.yaml`, `.tools/eval_set/run_gen_test.py`, `docs/api.md`, `docs/architecture.md`。
 
 ## D35. Phase 1.5 首轮 Rendering Strategy 实验结果
 

@@ -18,7 +18,7 @@ Phase 2.6 已完成并 push，v5 提示词增强保留。当前开始 Phase 3 �
 - `compile_prompt()`：角色裸名清理、tag 去重、`count → character → general` 排序、NL 拼接。
 - `infer_render_profile()`：当前只对明确 NSFW、单主体、简单动作使用 `tag_first`；普通 SFW 保留 NL，复杂关系使用 `relation_hybrid`。
 - `/api/translate`：增加 `prompt_ir` 和 additive `prompt_ir_meta`，前端旧 `breakdown` 契约保持兼容。
-- 真实 Prompt Engine 回归链路：baseline runner 不再复刻局部逻辑，直接调用 `server.main.translate()`。
+- 结构性回归：由 23 个零依赖单测覆盖（char_dict 命中/裸名剥离/排序/safety marker/角色 lookup），不依赖 30 条未验证 baseline。
 - Failure taxonomy：已覆盖 counting、entity binding、action/pose、interaction、spatial、lighting、NSFW anatomy、model artifact、semantic misread 等类型。
 - NSFW 结构评测集：8 条明确成人内容，结构与 explicit safety 验证通过。
 - Rendering Strategy 实验工具：固定 Prompt、seed、尺寸、workflow，支持盲评页、manifest、variant 对照。
@@ -27,7 +27,7 @@ Phase 2.6 已完成并 push，v5 提示词增强保留。当前开始 Phase 3 �
 
 ### 已验证项
 
-- Phase 2 profile 收窄后，30 条真实链路回归：`30/30`，IR 完整 `30/30`。
+- Phase 2 profile 收窄后，结构回归由单测覆盖（历史 30/30 仅记录，baseline 已清理）。
 - Prompt 单测：最近一次为 `23` 个通过。
 - NSFW 结构验证：`8/8`，workflow safety 为 `explicit`。
 - Failure taxonomy 聚合：`17 pass / 18 fail`，主要失败类型为 `interaction_relation`、`model_artifact`、`action_pose`、`anatomy_nsfw`。
@@ -47,9 +47,9 @@ Phase 2.6 已完成并 push，v5 提示词增强保留。当前开始 Phase 3 �
 | 文件 | 当前作用 |
 |---|---|
 | `server/main.py` | Prompt IR 解析、`compile_prompt()`、`infer_render_profile()`、实验负面覆盖入口、原有 API/Workflow Engine |
-| `.tools/test_prompt_unit.py` | 22 个零依赖 Prompt/IR/profile/画师协议/角色 lookup/实验负面单测 |
-| `.tools/eval_set/run_baseline.py` | 直接调用真实 `translate()`，输出 candidate，不覆盖 `baseline.yaml` |
-| `.tools/eval_set/compare.py` | 比较结构不变量、IR 完整性、角色保护、count 排序、TAGS/NL 重叠告警 |
+| `.tools/test_prompt_unit.py` | 23 个零依赖 Prompt/IR/profile/画师协议/角色 lookup/实验负面单测 |
+| `.tools/eval_set/image_cases.yaml` | Phase 1 固定 Prompt+seed 视觉夹具（002/012/018，已人眼验证） |
+| `.tools/eval_set/run_gen_test.py` | 固定 Prompt+seed 生图测试 runner |
 | `.gitignore` | 忽略 candidate、NSFW candidate 和实验输出目录 |
 
 ### Phase 2 评测资产
@@ -130,7 +130,7 @@ Phase 2.6 已完成并 push，v5 提示词增强保留。当前开始 Phase 3 �
 ### 当前最近验证
 
 ```text
-python -m py_compile server/main.py .tools/test_prompt_unit.py .tools/eval_set/run_baseline.py .tools/eval_set/compare.py .tools/eval_set/nsfw/validate.py .tools/eval_set/render_exp/label.py .tools/eval_set/render_exp/run_experiment.py .tools/eval_set/render_exp/expansion/run_phase26.py .tools/eval_set/render_exp/expansion/run_production_ab.py
+python -m py_compile server/main.py .tools/test_prompt_unit.py .tools/eval_set/nsfw/validate.py .tools/eval_set/render_exp/label.py .tools/eval_set/render_exp/run_experiment.py .tools/eval_set/render_exp/expansion/run_phase26.py .tools/eval_set/render_exp/expansion/run_production_ab.py
 ```
 
 状态：通过。
@@ -139,19 +139,13 @@ python -m py_compile server/main.py .tools/test_prompt_unit.py .tools/eval_set/r
 python .tools/test_prompt_unit.py
 ```
 
-状态：`19 prompt unit tests passed`。
+状态：`23 prompt unit tests passed`。
 
 ```text
-python .tools/eval_set/compare.py --candidate .tools/eval_set/candidate_phase26_painter_final.yaml --require-ir
+python .tools/test_prompt_unit.py  # 含 test_painter_tag_guard_preserves_explicit_safety_marker
 ```
 
-状态：`30/30` case，IR `30/30`；TAGS/NL overlap 为 warning，不作硬失败。
-
-```text
-python .tools/eval_set/nsfw/validate.py .tools/eval_set/nsfw/candidate_phase26_painter_final.yaml
-```
-
-状态：8 case `PASS`，explicit safety 通过。
+状态：NSFW explicit safety marker 由确定性单测覆盖（`nsfw/validate.py` 作为工具保留，运行前需临时生成 8 条 candidate，candidate 是 gitignored 运行时产物）。
 
 ```text
 python .tools/eval_set/render_exp/label.py
@@ -185,7 +179,7 @@ python .tools/eval_set/render_exp/expansion/run_phase26.py --mode render
 - 但分页、黑线、第三主体、场景关系丢失等重复出现的问题要进入 failure taxonomy，不能用“随机”掩盖。
 - E6 不要强行写 `adult woman`/`female` 作为视觉正向描述；按用户确认使用自然 `woman/1girl`，同时保持成人内容和 safety 约束。
 - base Anima 是当前唯一 checkpoint；不要引用其他 merge 的 score/artist 经验直接写成官方规则。
-- `baseline.yaml` 是历史参考，不能覆盖；candidate 和实验 output 已忽略。
+- `baseline.yaml` / `cases.yaml` / `run_baseline.py` / `compare.py` 已删除（未验证的 agent 产物，曾误导注意力）；结构性不变量由单测覆盖，图像质量只由人眼确认。
 - 生产 API 端口可能仍运行旧后端进程，修改 `server/main.py` 后要重启后端再做在线 smoke。
 - 当前工作区未跟踪 `.opencode/`、`opencode.jsonc` 不要 stage；用户维护的 workflow 文档变更不要回滚。
 
@@ -197,10 +191,11 @@ python .tools/eval_set/render_exp/expansion/run_phase26.py --mode render
 2. `docs/BUILDHANDOFF.md`
 3. `docs/PLAN-v5 — AirPaint Prompt Intelligence.md`
 4. `ROADMAP.md`
-5. `docs/decisions.md`（重点 D34-D37）
-6. `docs/DEVLOG.md`（重点第 31-38 条）
+5. `docs/decisions.md`（重点 D34-D38）
+6. `docs/DEVLOG.md`（重点第 31-39 条）
 7. `docs/architecture.md`
 8. `docs/workflow-anatomy.md`
-9. `.tools/eval_set/baseline.yaml`
-10. `.tools/eval_set/render_exp/expansion/cases.yaml`
-11. `.tools/eval_set/render_exp/README.md`
+9. `.tools/eval_set/image_cases.yaml`
+10. `.tools/eval_set/nsfw/visual_results.yaml`
+11. `.tools/eval_set/render_exp/expansion/phase26_results.yaml`
+12. `.tools/eval_set/render_exp/README.md`

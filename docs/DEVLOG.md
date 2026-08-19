@@ -676,3 +676,13 @@ Phase 2.6 同时证明了两件事：自动画师协议相对旧翻译有稳定�
 长门有希与御坂美琴定向查询成功，分别得到 `nagato_yuki`（9254）和 `misaka_mikoto`（10778）并写入 auto cache；长门固定 Prompt 出图经用户确认，Phase 3 验收完成。
 
 进一步修正：LLM 对未知角色有时输出空格形式（`yukinoshita yukino`）有时下划线形式（`yukinoshita_yukino`），检测统一归一化为下划线 canonical 后查询。Danbooru 不可达时（代理未设/网络波动）降级使用归一化 LLM 候选补入本次 Prompt，不写 auto cache；确认了 Danbooru 是验证层（防止 OC/幻觉/拼错 tag 污染缓存），而不是 tag 生成层。
+
+## 第 40 条 2026-08-19 - 清理未验证的 baseline 回归资产
+
+### 背景
+
+`baseline.yaml` 是上个 agent 跑旧 `translate()` 生成的 30 条 TAGS/breakdown，未经过任何生图人眼验证，却在交接文件里被列为高优先"必过"项。Phase 2/3 反复以"30/30 IR 完整"作为质量门槛，实际上 IR 解析完整性并不等于图像质量；连本 agent 也在 Phase 3 跑了多次 30 条 batch 追结构目标，烧掉无谓的 API 调用。
+
+### 处置
+
+删除 `.tools/eval_set/` 下的 `baseline.yaml`、`cases.yaml`、`run_baseline.py`、`compare.py` 及本地 `candidate_*.yaml`。结构不变量（char 命中/裸名剥离/排序/safety marker/角色 lookup）改由 23 个零依赖单测确定性覆盖；图像质量只由人眼对生成图确认。NSFW safety 验证（`nsfw/validate.py` + 8 条 explicit）保留。AGENTS.md 增加"结构性测试 ≠ 质量结论"原则，防止后续 agent 重建批量结构门槛。

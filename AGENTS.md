@@ -266,7 +266,9 @@ node --check web/index.html            # 前端（如果改了前端）
 验证维度（按修改范围选）：
 - **Prompt Engine**：快速全命中 / LLM 路径 / known tags / unknown-miss / reroll / 角色识别 / TAG-NL / Prompt normalization
 - **Workflow**：txt2img / img2img / detailer / LoRA 路径
-- **多角色**：第一层 baseline + 第二层生图验收（避免 split view 等模型局限未发现）
+- **多角色**：固定 Prompt+seed 生图人眼验收（避免 split view 等模型局限未发现）
+
+> **结构性测试 ≠ 质量结论。** 单测（IR 解析、safety tag、不崩溃、char 命中）是廉价预检；图像质量只由人眼对生成图确认。不以"N/N IR 完整"或"结构通过"作为阶段验收门槛。历史未验证的 30 条 baseline 已清理（见 DEVLOG），不要重建"跑批量、比结构"作为质量门。
 
 **不要只"代码改成功"就视为完成。** 阶段完成 = 验证通过 + 文档同步 + push。
 

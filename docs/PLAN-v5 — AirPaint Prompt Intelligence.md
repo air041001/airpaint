@@ -224,7 +224,7 @@ LLM 不直接负责最终 Prompt。建议输出：
 
 ## 12. Phase 路线
 
-### Phase 0: Prompt Baseline（现在做）
+### Phase 0: Prompt Baseline（已完成，2026-08-19 清理）
 
 **目标**：建立回归基线，防止后续改 Prompt Engine 时凭感觉越改越差。
 
@@ -232,6 +232,8 @@ LLM 不直接负责最终 Prompt。建议输出：
 - **第一层（结构回归，不生图）**：每条记录 `中文输入 → prompt_en → breakdown`，验证 JSON 稳定 / IR 完整 / TAG-NL 分流 / 重复率 / canonical / 排序
 - **第二层（少量固定 seed 生图）**：选 5-10 条固定 seed 生图存档，只验证影响视觉的 case
 - 形式：`.tools/eval_set/` 目录，YAML 格式
+
+> 清理记录（2026-08-19）：`baseline.yaml` 是未验证的 agent 产物，Phase 2/3 被误当质量门槛。已删除 baseline/cases/run_baseline/compare，结构不变量改由单测覆盖（见 DEVLOG 40）。第二层固定生图夹具（`image_cases.yaml`、NSFW `visual_results.yaml`、Phase 2.6 盲评结果）保留，作为真正的人眼质量真值。
 
 基础维护顺手做（不阻塞主线）：
 - 修 scan_loras 三处问题（Civitai type 判定用 baseModel/model.type 而非 tags / 缓存 key 用完整文件名 / Wan 残留清理）

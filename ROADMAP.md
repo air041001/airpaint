@@ -10,9 +10,10 @@
 >
 > 下面 Phase 2-5 是 MVP 之后的工程化补强（多工作流/前端/持久化/高级工作流），与 Prompt Intelligence 主线并行但优先级低。
 
-### Phase 0: Prompt Baseline（已完成 2026-08-14）
+### Phase 0: Prompt Baseline（已完成 2026-08-14，2026-08-19 清理）
 - [x] 建 Evaluation Set 30 条（`.tools/eval_set/`，第一层结构回归 + 第二层生图验收）
 - [x] 基础维护顺手修：scan_loras 三处问题 / 文档模型名同步 DeepSeek-V4-Flash / 已知 char_dict 错误（amamiya_kokoro 已修）
+- [x] 2026-08-19：删除未验证的 `baseline.yaml`/`cases.yaml`/`run_baseline.py`/`compare.py`，结构回归改由单测覆盖，质量只由人眼确认
 
 ### Phase 1: Prompt IR + Compiler（代码实现完成 2026-08-15，视觉策略待实验）
 - [x] 定义 Prompt IR（12 字段 JSON：subject/appearance/clothing/action/pose/interaction/scene/composition/lighting/mood/style/constraints）
