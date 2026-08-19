@@ -286,6 +286,15 @@
 **收益**: 治本(代码兜底, LLM 再不听话也不出裸名); 防 IP logo 误触发(不只原神, 任何 `角色_(系列)` 的裸名都可能弱化精度)。
 **代价**: 裸名提取靠 `_(`/` (`分隔符, 极少数角色 tag 格式特殊可能漏(但 char_dict 都是标准 danbooru 精确 tag, 覆盖好)。
 
+## D31. 修: 暗房 redo 替换意图检测 (换成X时删旧角色名防 char_dict 双命中)
+
+**背景**: 用户暗房迭代"把图中人物换成天宫心", 结果 prompt_en 新旧角色并存(`ganyu_(genshin_impact)` + `amamiya_kokoro_(hololive)`) + 1boy 乱入, 出图仍是原神甘雨。根因: redo 实现(1162行)是"delta 累加到原 raw 末尾 + 整体重翻译", 把"换"语义当追加。累加后 raw 含两个角色名, `match_characters()` 双命中, 两个角色 tag 作为 known tags 喂 LLM, LLM 无法判断该删哪个, 全保留; 且 LLM 见两主体名误判双人加 1boy+1girl。tweak(img2img) 不受影响——denoise 默认 0.35 只微调(换姿势/去衣服), 用户不会用 tweak 换主体, 不触发双命中。
+
+**决定**: redo 分支(1162)累加前检测 delta 是否含替换意图词(`换成/替换/改成/换为/改为`), 命中则遍历 CHAR_DICT.items() 从 session["raw"] 删所有旧角色名, 清多余逗号/空格, 再 += delta 重翻译。这样 raw 只剩新角色名, char_dict 单命中, LLM 输出干净替换。
+
+**收益**: "换主体"语义正确执行(删旧加新); 防 char_dict 双命中导致的属性串色/IP logo; 不影响追加描述类 redo。
+**代价**: 意图词靠枚举(换成/替换/改成/换为/改为), 用户换种说法("变成长椅上坐着天宫心")可能漏检; tweak 未改(实际用法不触发)。
+
 ## D32. 工作流合并: txt2img/img2img/detailer/inpaint 一份 JSON + 后端删节点拼接
 
 **背景**: 原 3 个工作流 (anima 快速 / anima-detailer 精修 / anima-img2img 图生图) 每加功能要重新导出 API JSON, 排列组合爆炸。想用"一份全开工作流 + 运行时选功能"替代。
@@ -300,19 +309,22 @@
 5. **暗房**: tweak 的 `wf_name="anima-img2img"` 改 `"anima"` (img2img 由 image_filename 触发); 暗房加独立精修开关 (复用 detailerState)。
 
 **收益**: 一份 JSON 覆盖 txt2img/img2img/精修(可逐路开), 旧 3 工作流退役; 删节点真正省时 (快速不跑 detailer)。
-**注 (D33)**: inpaint 部分已撤销 (实测效果不达标, 见 DEVLOG 30); 保留的是精修合并。
+**注 (D33)**: inpaint 部分已撤销 (实测效果不达标, 见 DEVLOG 30 与 D33); 保留的是精修合并。
 **代价**: build_prompt 拼接逻辑依赖工作流拓扑 (detailer 链 27→28→29→30 顺序写死在 config detailer_nodes); inpaint 链用纯 KSampler (弃 AnimaLLLiteApply, 那是 kohya 包的 `_sdscripts` 节点, 工作流用的 `AnimaLLLiteApply` 带 mask 版本包未找到, 降级纯 KSampler inpaint)。
 
 **修复 inpaint mask 反转 (实测省时记结论)**: 该工作流 inpaint 采样器用**反转约定 (黑=重绘, 白=保留)**, 与标准 (白=重绘) 相反。前端 `getInpaintRGBA` 涂的区域 alpha=0 (重绘)、未涂 alpha=255 (保留)。另 inpaint denoise 0.9 (0.7 改不动色、1.0 叠角色; 0.9 单角色+改色+保留场景)。mask 尺寸必须与图对齐 (原先 ImageScaleToTotalPixels 把图缩到 1MP 但 mask 留原尺寸错位, 已去掉 resize 让二者同尺寸)。
 
-## D31. 修: 暗房 redo 替换意图检测 (换成X时删旧角色名防 char_dict 双命中)
+## D33. 撤销 inpaint 局部重绘 (实测效果不达标)
 
-**背景**: 用户暗房迭代"把图中人物换成天宫心", 结果 prompt_en 新旧角色并存(`ganyu_(genshin_impact)` + `amamiya_kokoro_(hololive)`) + 1boy 乱入, 出图仍是原神甘雨。根因: redo 实现(1162行)是"delta 累加到原 raw 末尾 + 整体重翻译", 把"换"语义当追加。累加后 raw 含两个角色名, `match_characters()` 双命中, 两个角色 tag 作为 known tags 喂 LLM, LLM 无法判断该删哪个, 全保留; 且 LLM 见两主体名误判双人加 1boy+1girl。tweak(img2img) 不受影响——denoise 默认 0.35 只微调(换姿势/去衣服), 用户不会用 tweak 换主体, 不触发双命中。
+**背景**: D32 在工作流合并时嫁接了 inpaint 链, 实测后效果不达标。
 
-**决定**: redo 分支(1162)累加前检测 delta 是否含替换意图词(`换成/替换/改成/换为/改为`), 命中则遍历 CHAR_DICT.items() 从 session["raw"] 删所有旧角色名, 清多余逗号/空格, 再 += delta 重翻译。这样 raw 只剩新角色名, char_dict 单命中, LLM 输出干净替换。
+**问题**: ①该工作流 inpaint 采样器用**反转 mask 约定 (黑=重绘)**, 与标准 (白=重绘) 相反, 前端需反转; ②改发色时 mask 稍大就整头重绘成新角色, 紧贴头发丝才保脸, 但用户上手难; ③用户自己不用 inpaint, 网站也没几个人用, 投入产出不值。
 
-**收益**: "换主体"语义正确执行(删旧加新); 防 char_dict 双命中导致的属性串色/IP logo; 不影响追加描述类 redo。
-**代价**: 意图词靠枚举(换成/替换/改成/换为/改为), 用户换种说法("变成长椅上坐着天宫心")可能漏检; tweak 未改(实际用法不触发)。
+**决定**: 撤销 inpaint。移除 AnimaFull.json 的 inpaint 节点 (200-206); build_prompt/page/链 inpaint 逻辑移除 (chain_source 固定主 VAEDecode 43); config 移除 inpaint_source/ksampler/denoise; 前端移除 inpaint 画布 (inpaint-section, getInpaintRGBA, 涂抹交互)。**保留**精修合并 (AnimaFull 一份 JSON 覆盖 txt2img/img2img/4路 detailer + 后端删节点拼接), 那是 D32 主成果。
+
+**教训 (inpaint mask, 记下避免再踩)**: ComfyUI 通用约定白=重绘, 但**有些工作流/采样器反转 (黑=重绘), 必须实测**。inpaint 是"区域重绘"不是"改色": 改属性 (发色) 要精准 mask 紧贴目标, 否则整区域重生。改发色保同脸: denoise 0.9 + 紧贴头发 mask (不碰脸) 可行, 但 UX 难 (无缩放/撤销)。
+
+**代价**: 局部重绘能力缺失; 需要局部修改时只能靠 img2img 低 denoise 或重新生成。见 DEVLOG 第 30 条。
 
 ## 待决策 / 方向
 - **Intent Engine**: 迈向「理解用户意图」核心目标。**构图/场景/情绪的结构化分解已实现** (D18: LLM 输出 scene/composition/mood/lighting/style + TAGS); **否定语义解析弃用** (D18: Anima 负面是常量, 不随输入变); 仍待做: 歧义消解、LoRA/工作流自动推荐。符合 CLAUDE.md 规则 6。
