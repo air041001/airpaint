@@ -460,6 +460,7 @@
 3. `likely_supported` 结果写入独立平铺 `server/knowledge_cache/characters_auto.yaml`，正式 `char_dict.yaml` 优先；`weak`/`absent` 只写 lookup JSON，`unavailable` 不缓存以便网络恢复后重试，不污染正式词典。
 4. 自动缓存复用现有 `match_characters()`、裸名保护和 dialog redo 删除逻辑；不改 HotDict 值结构，不迁移 156 条正式词典，不做全量人工审计。
 5. 自动缓存是运行时知识，不进 git；用户可以删除自动条目或复制到正式 `char_dict.yaml` 手动提升。
+6. Danbooru 不可达（`unavailable`）时降级：将 LLM 归一化后的候选 tag 补进本次 Prompt，但不写 auto cache、不缓存不可达状态，等待网络恢复后重试；`absent`（Danbooru 查不到/非角色 tag）不补 tag。
 
 **原因**：Danbooru 的 canonical tag 和 post_count 同时提供 tag 验证与当前 base Anima 可绘制性的低成本代理；对项目 owner，手动加一行仍是最快路径；自动缓存主要服务其他邀请用户，并避免未知角色每次重复查询。
 

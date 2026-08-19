@@ -209,6 +209,11 @@ def test_character_hint_ir_fallback():
         ["御坂美琴"],
         set(),
     ) == [{"name": "御坂美琴", "candidate_tag": "misaka_mikoto"}]
+    assert main._infer_character_hints_from_ir(
+        {"subject": ["yukinoshita yukino"]},
+        ["雪之下雪乃"],
+        set(),
+    ) == [{"name": "雪之下雪乃", "candidate_tag": "yukinoshita_yukino"}]
 
 
 def test_character_bare_name_space_variant_is_removed():
@@ -217,6 +222,11 @@ def test_character_bare_name_space_variant_is_removed():
         ["ai_hoshino_(oshi_no_ko)"],
     )
     assert result == ["stage"], result
+    result = main._strip_char_bare_names(
+        ["yukinoshita yukino", "long black hair"],
+        ["yukinoshita_yukino"],
+    )
+    assert result == ["long black hair"], result
 
 
 def test_danbooru_character_classification():
@@ -287,6 +297,44 @@ def test_unavailable_lookup_is_retryable():
         main._CHAR_LOOKUP_CACHE, main._CHAR_LOOKUP_CACHE_LOADED = old_cache, old_loaded
 
 
+def test_unknown_character_fallback_on_unavailable():
+    old_translate = main.siliconflow_translate
+    old_lookup = main.lookup_character
+    old_dict = main.match_dict_words
+    old_cache = dict(main._TRANSLATE_CACHE)
+
+    async def fake_translate(context, reroll=False):
+        out = (
+            'IR: {"subject":["yukinoshita yukino"],"appearance":[],"clothing":[],"action":[],"pose":[],"interaction":[],"scene":["classroom"],"composition":[],"lighting":[],"mood":[],"style":[],"constraints":[]}\n'
+            "PROMPT: yukinoshita yukino, classroom\n"
+        )
+        return main._parse_structured_output(out) + (main._parse_character_hints(out),)
+
+    async def fake_lookup(name, candidate):
+        return {"name": name, "candidate_tag": candidate, "canonical_tag": "",
+                "post_count": 0, "status": "unavailable", "source": "danbooru", "error": "mock down"}
+
+    def fake_dict(text):
+        return [], text
+
+    main.siliconflow_translate = fake_translate
+    main.lookup_character = fake_lookup
+    main.match_dict_words = fake_dict
+    main._TRANSLATE_CACHE = {}
+    try:
+        prompt, breakdown, ir, meta = asyncio.run(
+            main.translate("雪之下雪乃坐在教室里", include_meta=True)
+        )
+        assert "yukinoshita_yukino" in prompt, prompt
+        assert "yukinoshita yukino" not in prompt, prompt
+        assert meta["character_lookup"][0]["status"] == "unavailable", meta
+    finally:
+        main.siliconflow_translate = old_translate
+        main.lookup_character = old_lookup
+        main.match_dict_words = old_dict
+        main._TRANSLATE_CACHE = old_cache
+
+
 def main_test():
     tests = [
         test_character_match,
@@ -311,6 +359,7 @@ def main_test():
         test_danbooru_character_classification,
         test_auto_character_cache_write_and_match,
         test_unavailable_lookup_is_retryable,
+        test_unknown_character_fallback_on_unavailable,
     ]
     for test in tests:
         test()

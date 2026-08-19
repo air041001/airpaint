@@ -674,3 +674,5 @@ Phase 2.6 同时证明了两件事：自动画师协议相对旧翻译有稳定�
 补充修正：IR fallback 不再把已知角色命中后的剩余动作/场景短语当作人名；正式词典删除了未使用且会与“长门有希”冲突的 `长门: nagato_(azur_lane)` 条目。明确 NSFW 输入缺少 `nude` 时增加代码 safety marker，避免 workflow safety 误判为 safe。
 
 长门有希与御坂美琴定向查询成功，分别得到 `nagato_yuki`（9254）和 `misaka_mikoto`（10778）并写入 auto cache；长门固定 Prompt 出图经用户确认，Phase 3 验收完成。
+
+进一步修正：LLM 对未知角色有时输出空格形式（`yukinoshita yukino`）有时下划线形式（`yukinoshita_yukino`），检测统一归一化为下划线 canonical 后查询。Danbooru 不可达时（代理未设/网络波动）降级使用归一化 LLM 候选补入本次 Prompt，不写 auto cache；确认了 Danbooru 是验证层（防止 OC/幻觉/拼错 tag 污染缓存），而不是 tag 生成层。

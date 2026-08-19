@@ -28,7 +28,7 @@ Phase 2.6 已完成并 push，v5 提示词增强保留。当前开始 Phase 3 �
 ### 已验证项
 
 - Phase 2 profile 收窄后，30 条真实链路回归：`30/30`，IR 完整 `30/30`。
-- Prompt 单测：最近一次为 `22` 个通过。
+- Prompt 单测：最近一次为 `23` 个通过。
 - NSFW 结构验证：`8/8`，workflow safety 为 `explicit`。
 - Failure taxonomy 聚合：`17 pass / 18 fail`，主要失败类型为 `interaction_relation`、`model_artifact`、`action_pose`、`anatomy_nsfw`。
 - Phase 1.5 首轮：30 张图生成成功，用户完成盲评。
@@ -99,7 +99,7 @@ Phase 2.6 已完成并 push，v5 提示词增强保留。当前开始 Phase 3 �
 ### 立即下一步
 
 1. Phase 3 已完成，push 后先观察真实使用反馈。
-2. 已完成 22 单测、30 条 SFW/8 条 NSFW smoke 和 3 个角色场景实测。
+2. 已完成 23 单测、30 条 SFW/8 条 NSFW smoke 和 3 个角色场景实测；Danbooru 不可达时降级使用 LLM 归一化候选。
 3. Phase 3 文档同步后 commit/push；Phase 4 继续延后到暗房真实使用数据触发。
 
 ### 条件性未完成项

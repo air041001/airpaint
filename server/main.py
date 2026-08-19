@@ -562,17 +562,27 @@ def _parse_character_hints(out: str) -> list[dict]:
     return hints
 
 
+def _normalize_character_candidate(item: str) -> str | None:
+    """把 subject 里的候选归一化成 Danbooru 下划线 canonical 形式；非角色名返回 None."""
+    s = str(item).strip()
+    if not s:
+        return None
+    if "_(" in s or " (" in s:
+        return s
+    if re.fullmatch(r"[a-z][a-z0-9]*(?:[ _][a-z][a-z0-9]*)+", s):
+        return s.replace(" ", "_")
+    return None
+
+
 def _infer_character_hints_from_ir(prompt_ir: dict | None, misses: list[str],
                                    known_names: set[str], known_tags: list[str] | None = None) -> list[dict]:
-    """CHAR 行缺失时，从 IR 的 series 角色 tag 和唯一剩余中文名做保守兜底."""
+    """CHAR 行缺失时，从 IR.subject 归一化出候选角色 tag，配唯一剩余中文名做保守兜底."""
     known_tags = set(known_tags or [])
-    candidates = [
-        str(item).strip() for item in (prompt_ir or {}).get("subject", [])
-        if (
-            ("_(" in str(item) or re.fullmatch(r"[a-z][a-z0-9]+_[a-z0-9_]+", str(item)))
-            and str(item).strip() not in known_tags
-        )
-    ]
+    candidates = []
+    for item in (prompt_ir or {}).get("subject", []):
+        norm = _normalize_character_candidate(item)
+        if norm and norm not in known_tags and norm not in candidates:
+            candidates.append(norm)
     names = [miss for miss in misses if len(miss) >= 2 and miss not in known_names]
     if len(candidates) == 1 and len(names) == 1:
         return [{"name": names[0], "candidate_tag": candidates[0]}]
@@ -960,6 +970,11 @@ def _strip_char_bare_names(new_list: list[str], char_tags: list[str]) -> list[st
                 name = ct.split(sep, 1)[0].strip().lower()
                 bare.update({name, name.replace("_", " "), name.replace(" ", "_")})
                 break
+        else:
+            # 无系列后缀的精确 tag（如 yukinoshita_yukino）：把空格/下划线变体视作同义去重
+            tag = ct.strip().lower()
+            bare.add(tag.replace("_", " "))
+            bare.add(tag.replace(" ", "_"))
     if not bare:
         return new_list
     return [t for t in new_list if t.strip().lower() not in bare]
@@ -1118,13 +1133,17 @@ async def translate(text: str, reroll: bool = False, image_b64: str | None = Non
             )
         for hint in character_hints:
             name = hint["name"]
-            if name in known_names or hint["candidate_tag"] in char_tags:
+            candidate = _normalize_character_candidate(hint["candidate_tag"]) or hint["candidate_tag"]
+            if name in known_names or candidate in char_tags:
                 continue
-            lookup = await lookup_character(name, hint["candidate_tag"])
+            lookup = await lookup_character(name, candidate)
             lookup_results.append(lookup)
             canonical = lookup.get("canonical_tag")
             if lookup.get("status") == "likely_supported" and canonical not in resolved_char_tags:
                 resolved_char_tags.append(canonical)
+            elif lookup.get("status") == "unavailable" and candidate not in resolved_char_tags:
+                # 兜底: Danbooru 不可达时用 LLM 候选（已归一化），不写 auto cache，只服务本次 Prompt
+                resolved_char_tags.append(candidate)
         # 编译: 已知/自动确认角色 tag + LLM Prompt, 再按 Anima 规范序排。
         new_list = [t.strip() for t in new_tags.split(",") if t.strip()]
         painter_tags = _prepare_painter_tags(hits + new_list, prompt_ir, text, resolved_char_tags)

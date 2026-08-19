@@ -121,7 +121,7 @@ Authorization: Bearer <token>
 - `breakdown`: 供前端预览展示「AI 理解」的 5 个维度 (scene/composition/mood/lighting/style)。文本 LLM 路径由 `prompt_ir` 派生；旧协议/快速路径没有时为 `null`。
 - `prompt_ir`: 12 字段 Prompt IR。每个字段都是字符串数组；文本 LLM 成功解析时返回，快速路径和当前视觉 LLM 旧协议路径为 `null`。IR 是语义计划，不是可直接注入工作流的文件名、节点 ID 或数值。
 - `prompt_ir_meta`: additive 来源与补全元数据。`mode=painter_expansion` 表示当前文本 LLM 使用画师级默认补全；`source` 区分用户剩余输入、词典命中和默认补全；`reroll_strategy=new_painter_plan` 表示 reroll 会换一套补全方案。旧客户端可忽略此字段。
-- `character_lookup`: 本次文本翻译触发的未知角色查询结果；`likely_supported` 才会进入独立 auto cache，`weak`/`absent`/`unavailable` 不会污染正式 `char_dict.yaml`。
+- `character_lookup`: 本次文本翻译触发的未知角色查询结果；`likely_supported` 才会进入独立 auto cache，`weak`/`absent`/`unavailable` 不会污染正式 `char_dict.yaml`。Danbooru 不可达时（`unavailable`）会将 LLM 归一化候选 tag 补进本次 `prompt_en`，但不会写入任何缓存。
 
 文本 LLM 当前生产输出协议为 `IR + PROMPT`；旧 `IR + TAGS + NL` 和旧 5 字段响应仍保留解析降级，但不再与画师协议同时要求模型输出两套最终 Prompt。
 
