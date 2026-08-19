@@ -8,9 +8,9 @@
 
 ### 当前阶段
 
-项目处于 **Phase 2.6：Prompt Expansion 已完成，v5 增强已定稿并推送**。
+项目处于 **Phase 3：Character Knowledge 精简实现已完成并待推送**。
 
-Phase 2.6 已完成并 push。当前保留 v5 提示词增强，冻结继续扩写规则，先观察真实使用反馈。
+Phase 2.6 已完成并 push，v5 提示词增强保留。当前开始 Phase 3 精简角色知识自动缓存，不做结构化 char_dict 迁移。
 
 ### 已完成模块
 
@@ -28,7 +28,7 @@ Phase 2.6 已完成并 push。当前保留 v5 提示词增强，冻结继续扩�
 ### 已验证项
 
 - Phase 2 profile 收窄后，30 条真实链路回归：`30/30`，IR 完整 `30/30`。
-- Prompt 单测：最近一次为 `15` 个通过。
+- Prompt 单测：最近一次为 `22` 个通过。
 - NSFW 结构验证：`8/8`，workflow safety 为 `explicit`。
 - Failure taxonomy 聚合：`17 pass / 18 fail`，主要失败类型为 `interaction_relation`、`model_artifact`、`action_pose`、`anatomy_nsfw`。
 - Phase 1.5 首轮：30 张图生成成功，用户完成盲评。
@@ -38,6 +38,7 @@ Phase 2.6 已完成并 push。当前保留 v5 提示词增强，冻结继续扩�
 - Phase 2 W6 girl/female：4 张图生成成功，用户认为无明显差异。
 - Phase 2.5 E1-E7 扩写实验：14 张图生成成功，用户已完成详细评审。
 - Phase 2.6 A1/A2/A3 三路实验：21 张图和 E1/E6/E7 换 seed 的 9 张补测图均生成成功；用户已完成两轮 A/B/C 盲评，A3 对 A2 为 4 胜、1 平、2 负；初版生产 A/B 被判定为协议退化，已改为独立 `IR + PROMPT` 画师协议并修复护栏；v5 新旧 A/B 为 3 胜 2 平 0 负，提示词增强保留。
+- Phase 3 Danbooru 角色查询：主 API exact lookup 与 `name_matches` 连通；长门有希/御坂美琴已分别写入 `nagato_yuki`/`misaka_mikoto` auto cache，长门固定 Prompt 已生图并经用户确认。
 
 ## 2. 修改/新增文件清单
 
@@ -46,7 +47,7 @@ Phase 2.6 已完成并 push。当前保留 v5 提示词增强，冻结继续扩�
 | 文件 | 当前作用 |
 |---|---|
 | `server/main.py` | Prompt IR 解析、`compile_prompt()`、`infer_render_profile()`、实验负面覆盖入口、原有 API/Workflow Engine |
-| `.tools/test_prompt_unit.py` | 15 个零依赖 Prompt/IR/profile/画师协议/实验负面单测 |
+| `.tools/test_prompt_unit.py` | 22 个零依赖 Prompt/IR/profile/画师协议/角色 lookup/实验负面单测 |
 | `.tools/eval_set/run_baseline.py` | 直接调用真实 `translate()`，输出 candidate，不覆盖 `baseline.yaml` |
 | `.tools/eval_set/compare.py` | 比较结构不变量、IR 完整性、角色保护、count 排序、TAGS/NL 重叠告警 |
 | `.gitignore` | 忽略 candidate、NSFW candidate 和实验输出目录 |
@@ -79,10 +80,10 @@ Phase 2.6 已完成并 push。当前保留 v5 提示词增强，冻结继续扩�
 
 | 文件 | 当前作用 |
 |---|---|
-| `docs/PLAN-v5 — AirPaint Prompt Intelligence.md` | Phase 2.6 最终结论与当前路线 |
-| `ROADMAP.md` | Phase 2.6 完成，下一步观察真实使用反馈 |
-| `docs/DEVLOG.md` | 第 31-38 条记录 Phase 1、Phase 1.5、Phase 2 和 Phase 2.6 收尾 |
-| `docs/decisions.md` | D34 IR、D35 Rendering Strategy、D36 Phase 2、D37 Phase 2.6 最终结论 |
+| `docs/PLAN-v5 — AirPaint Prompt Intelligence.md` | Phase 2.6 最终结论与 Phase 3 精简路线 |
+| `ROADMAP.md` | Phase 3 角色知识自动缓存进行中，Phase 4 延后 |
+| `docs/DEVLOG.md` | 第 31-39 条记录 Phase 1、Phase 1.5、Phase 2、Phase 2.6 和 Phase 3 启动 |
+| `docs/decisions.md` | D34-D37 历史结论、D38 Phase 3 精简决定 |
 | `docs/architecture.md` | 当前 Prompt IR/Compiler、R4 多角色限制和手动 Prompt fallback |
 | `docs/api.md` | `/api/translate` 的 `prompt_ir`/`prompt_ir_meta` 契约 |
 | `docs/workflow-anatomy.md` | 用户维护的 AnimaFull 权威节点解剖；当前 HEAD 中已单独提交，后续必须优先参考 |
@@ -97,13 +98,13 @@ Phase 2.6 已完成并 push。当前保留 v5 提示词增强，冻结继续扩�
 
 ### 立即下一步
 
-1. Phase 2.6 已完成：保留提示词增强，冻结继续扩写规则。
-2. 已完成 15 单测、30 条 SFW/8 条 NSFW 回归和 v5 新旧 A/B 人眼确认。
-3. 后续先观察真实使用反馈，不立即建设详细输入辅助 UX 或新的扩写实验。
+1. Phase 3 已完成，push 后先观察真实使用反馈。
+2. 已完成 22 单测、30 条 SFW/8 条 NSFW smoke 和 3 个角色场景实测。
+3. Phase 3 文档同步后 commit/push；Phase 4 继续延后到暗房真实使用数据触发。
 
 ### 条件性未完成项
 
-- 无当前阻塞开发项。
+- 不做结构化 char_dict 迁移、156 条全量审计或复杂审批后台。
 
 ### 已明确跳过
 
@@ -138,7 +139,7 @@ python -m py_compile server/main.py .tools/test_prompt_unit.py .tools/eval_set/r
 python .tools/test_prompt_unit.py
 ```
 
-状态：`15 prompt unit tests passed`。
+状态：`19 prompt unit tests passed`。
 
 ```text
 python .tools/eval_set/compare.py --candidate .tools/eval_set/candidate_phase26_painter_final.yaml --require-ir

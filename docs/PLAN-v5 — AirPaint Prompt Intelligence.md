@@ -293,17 +293,21 @@ Phase 2 首轮的 case 都是短句翻译或关系失败，没有验证 AirPaint
 
 ### Phase 3: Character Knowledge（Phase 2 后）
 
-- char_dict 错误清理（按优先级：实际用的/明显错误/高频）
-- 联网查询未知角色 canonical tag
-- `knowledge_cache/` candidate → verified → promote 正式 char_dict
-- 结构化 char_dict（aliases/series/canonical_tag/source/confidence）— 需改 HotDict L48，影响 match_characters 全局
+- 目标：未知角色名首次出现时，自动提出 Danbooru canonical tag，并用 tag category + `post_count` 判断 base Anima 是否值得裸名触发。
+- 生产 `char_dict.yaml` 保持用户维护的平铺格式，不做结构化迁移和全量审计；正式词典优先于自动缓存。
+- 文本画师协议在 `IR.subject` 中给出未知角色候选 tag（解析器兼容可选 `CHAR` 行但不强制增加输出行）；代码查询 Danbooru `tags.json` exact name，角色 category=4 且 `post_count >= character_auto_min_posts` 才写入 `server/knowledge_cache/characters_auto.yaml`。
+- weak/absent/unavailable 结果只写 lookup cache，不污染正式词典；自动缓存仍为平铺 `中文名: canonical_tag`，可手动删除或复制到正式词典。
+- 自动角色匹配复用现有 `match_characters()` / 裸名保护 / dialog redo 删除逻辑，不改 `HotDict` 值结构。
+- 验收：自动缓存命中、正式词典优先、Danbooru 分类门槛、unavailable 可重试、未知角色不阻断翻译、明确 NSFW safety marker、30 条 SFW 与 8 条 NSFW 回归；真实角色 smoke 使用长门有希和御坂美琴。
 
-### Phase 4: PromptState + Incremental Editing（Phase 3 后）
+### Phase 4: PromptState + Incremental Editing（延后，使用数据触发）
 
 - PromptState（semantic_ir/compiled_prompt/locked_fields/user_overrides/history/knowledge_used）
 - 字段级修改（"换衣服"只动 clothing）
 - 重构 dialog_turn redo/tweak/vibe 从字符串累加 → 结构化 state
 - 破坏性冲突：影响三分支 + 前端暗房 + SESSIONS；D31 字符串级替换意图检测会与新 state 冲突
+
+Phase 4 不永久取消，但在暗房使用数据证明 redo/tweak 高频，或再次出现 D31 类字符串累加问题前不启动。当前先观察真实使用，不提前做 PromptState 设计或 dialog 重构。
 
 ### Phase 5: LoRA Context（Phase 4 后）
 

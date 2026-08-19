@@ -23,6 +23,9 @@ BASE = Path(__file__).parent
 CFG = yaml.safe_load((BASE / "config.yaml").read_text(encoding="utf-8"))
 DICT_PATH = BASE / "dict.yaml"
 CHAR_DICT_PATH = BASE / "char_dict.yaml"
+KNOWLEDGE_CACHE_DIR = BASE / "knowledge_cache"
+CHAR_AUTO_PATH = KNOWLEDGE_CACHE_DIR / "characters_auto.yaml"
+CHAR_LOOKUP_PATH = KNOWLEDGE_CACHE_DIR / "characters_lookup.json"
 
 
 class HotDict:
@@ -64,6 +67,11 @@ DICT = HotDict(DICT_PATH, key_fn=str.lower)
 # 角色词典: 中文名 -> danbooru 精确 tag. LLM 认不准角色 tag (字面翻译/编造/漏认),
 # 故角色走词典可靠命中, 命中后把 tag 作为上下文喂给 LLM (见 decisions.md D12). key 不小写 (中文无大小写).
 CHAR_DICT = HotDict(CHAR_DICT_PATH, key_fn=lambda s: s)
+# 自动角色缓存保持与正式词典同样的平铺格式；正式 CHAR_DICT 优先。
+CHAR_AUTO = HotDict(CHAR_AUTO_PATH, key_fn=lambda s: s)
+_CHAR_LOOKUP_CACHE: dict[str, dict] = {}
+_CHAR_LOOKUP_CACHE_LOADED = False
+CHARACTER_AUTO_MIN_POSTS = int(CFG.get("character_auto_min_posts", 100))
 
 COMFY = CFG["comfy_url"].rstrip("/")
 TOKENS = set(CFG.get("tokens", []))
@@ -395,7 +403,7 @@ PAINTER_SYSTEM_PROMPT = (
     "- Use Danbooru-like lowercase tags plus short drawable English clauses. Keep PROMPT to about 20 concrete comma-separated elements or fewer.\n"
     "- Preserve every explicit constraint. Never add an unrelated character, weapon, named IP, towel, accessory or new main action.\n"
     "- If a person is explicit or naturally implied, make the person readable in the composition. Do not let scenery, black shadow, silhouette or a tiny distant figure replace the person unless the user explicitly asks for that.\n"
-    "- If the input names a girl or woman, do not invent a school uniform, see-through clothing or a different hairstyle. If a named character has known canonical tags, keep them unchanged.\n"
+    "- If the input names a girl or woman, do not invent a school uniform, see-through clothing or a different hairstyle. If a named character has known canonical tags, keep them unchanged. For an unknown named character, put the best candidate tag in IR.subject so the backend can verify it.\n"
     "- For mood-only input, choose one concrete setting and one clear focal anchor that actually communicates the mood. A bare empty street or vague atmosphere is not enough; if a person is added, do not make them tiny or hide them in black space.\n"
     "- For explicit NSFW input, keep the human body and readable pose present. Prefer a medium/full-body or three-quarter composition over a default close-up unless the user asks for a close-up. Improve quality with gaze, facial expression, body language, fabric/skin material and reveal pacing. Do not add age labels, extra people or a new sex act.\n"
     "- Do not output quality/score tags, negative tags, text/watermark, realistic/photorealistic/3d/render terms, or a TAGS/NL section.\n"
@@ -411,7 +419,8 @@ _IR_FIELDS = (
 
 def _prompt_ir_meta(mode: str, reroll: bool = False, prompt_ir: dict | None = None,
                     char_tags: list[str] | None = None,
-                    attribute_tags: list[str] | None = None) -> dict:
+                    attribute_tags: list[str] | None = None,
+                    character_lookup: list[dict] | None = None) -> dict:
     """为 API 增加来源/补全元数据，不污染 12 字段 Prompt IR 结构。"""
     expansion = mode == "painter_expansion"
     return {
@@ -426,6 +435,7 @@ def _prompt_ir_meta(mode: str, reroll: bool = False, prompt_ir: dict | None = No
         "reroll": bool(reroll),
         "reroll_strategy": "new_painter_plan" if expansion and reroll else None,
         "prompt_ir_available": prompt_ir is not None,
+        "character_lookup": character_lookup or [],
     }
 
 # ③ 参考图理解: 视觉 LLM 从参考图提取内容 -> 结构化输出. 提取策略由用户文字驱动(非写死"只提氛围"). 见 D23.
@@ -515,6 +525,162 @@ def _breakdown_from_ir(prompt_ir: dict) -> dict:
     return {field: ", ".join(prompt_ir.get(field, [])) for field in _STRUCTURED_FIELDS}
 
 
+def _character_items():
+    """正式角色词典优先，其次是联网确认过的自动缓存。"""
+    formal = list(CHAR_DICT.items())
+    auto = list(CHAR_AUTO.items())
+    formal_names = {name for name, _ in formal}
+    items = formal + [(name, tag) for name, tag in auto if name not in formal_names]
+    for name, tag in sorted(items, key=lambda item: len(item[0]), reverse=True):
+        yield name, tag
+
+
+def _character_names():
+    return [name for name, _ in _character_items()]
+
+
+def _parse_character_hints(out: str) -> list[dict]:
+    """解析画师协议的 CHAR 行: 用户名 => LLM 提议的 Danbooru 候选 tag."""
+    hints = []
+    for line in out.splitlines():
+        line = line.strip()
+        if not line.lower().startswith("char:"):
+            continue
+        payload = line.split(":", 1)[1].strip()
+        if not payload or payload.lower() in {"none", "null", "empty", "无"}:
+            continue
+        for item in payload.split(";"):
+            item = item.strip()
+            if not item:
+                continue
+            if "=>" in item:
+                name, candidate = (part.strip() for part in item.split("=>", 1))
+            else:
+                name, candidate = item, ""
+            if name and name.lower() not in {"none", "null", "无"}:
+                hints.append({"name": name, "candidate_tag": candidate})
+    return hints
+
+
+def _infer_character_hints_from_ir(prompt_ir: dict | None, misses: list[str],
+                                   known_names: set[str], known_tags: list[str] | None = None) -> list[dict]:
+    """CHAR 行缺失时，从 IR 的 series 角色 tag 和唯一剩余中文名做保守兜底."""
+    known_tags = set(known_tags or [])
+    candidates = [
+        str(item).strip() for item in (prompt_ir or {}).get("subject", [])
+        if (
+            ("_(" in str(item) or re.fullmatch(r"[a-z][a-z0-9]+_[a-z0-9_]+", str(item)))
+            and str(item).strip() not in known_tags
+        )
+    ]
+    names = [miss for miss in misses if len(miss) >= 2 and miss not in known_names]
+    if len(candidates) == 1 and len(names) == 1:
+        return [{"name": names[0], "candidate_tag": candidates[0]}]
+    return []
+
+
+def _classify_danbooru_rows(rows: list[dict], candidate_tag: str,
+                            min_posts: int = CHARACTER_AUTO_MIN_POSTS) -> dict:
+    """用 exact canonical tag、角色分类和 post_count 判断是否值得自动缓存."""
+    exact = next((row for row in rows if row.get("name") == candidate_tag), None)
+    if not exact or exact.get("is_deprecated") or exact.get("category") != 4:
+        return {"status": "absent", "canonical_tag": "", "post_count": 0}
+    post_count = int(exact.get("post_count") or 0)
+    return {
+        "status": "likely_supported" if post_count >= min_posts else "weak",
+        "canonical_tag": candidate_tag,
+        "post_count": post_count,
+    }
+
+
+def _load_character_lookup_cache() -> None:
+    global _CHAR_LOOKUP_CACHE_LOADED, _CHAR_LOOKUP_CACHE
+    if _CHAR_LOOKUP_CACHE_LOADED:
+        return
+    _CHAR_LOOKUP_CACHE_LOADED = True
+    if not CHAR_LOOKUP_PATH.exists():
+        return
+    try:
+        data = json.loads(CHAR_LOOKUP_PATH.read_text(encoding="utf-8"))
+        if isinstance(data, dict):
+            _CHAR_LOOKUP_CACHE = data
+    except Exception as exc:
+        print(f"[character lookup] cache load failed: {exc}", flush=True)
+
+
+def _save_character_lookup_cache() -> None:
+    KNOWLEDGE_CACHE_DIR.mkdir(parents=True, exist_ok=True)
+    CHAR_LOOKUP_PATH.write_text(
+        json.dumps(_CHAR_LOOKUP_CACHE, ensure_ascii=False, indent=2), encoding="utf-8"
+    )
+
+
+def _record_auto_character(name: str, canonical_tag: str) -> None:
+    """只写入独立 auto cache，不覆盖正式 char_dict.yaml。"""
+    if CHAR_DICT.get(name):
+        return
+    KNOWLEDGE_CACHE_DIR.mkdir(parents=True, exist_ok=True)
+    data = {}
+    if CHAR_AUTO_PATH.exists():
+        try:
+            data = yaml.safe_load(CHAR_AUTO_PATH.read_text(encoding="utf-8")) or {}
+        except Exception as exc:
+            print(f"[character lookup] auto cache load failed: {exc}", flush=True)
+    data[name] = canonical_tag
+    CHAR_AUTO_PATH.write_text(
+        yaml.safe_dump(data, allow_unicode=True, sort_keys=False), encoding="utf-8"
+    )
+
+
+async def lookup_character(name: str, candidate_tag: str) -> dict:
+    """验证新角色候选；失败只返回状态，不阻断主 Prompt 流程."""
+    _load_character_lookup_cache()
+    key = f"{name}|{candidate_tag}"
+    if key in _CHAR_LOOKUP_CACHE:
+        return _CHAR_LOOKUP_CACHE[key]
+    result = {
+        "name": name,
+        "candidate_tag": candidate_tag,
+        "canonical_tag": "",
+        "post_count": 0,
+        "status": "absent",
+        "source": "danbooru",
+        "error": "",
+    }
+    if not re.fullmatch(r"[A-Za-z0-9_():+'\-]+", candidate_tag or ""):
+        result["error"] = "invalid candidate tag"
+    else:
+        try:
+            response = await CLIENT.get(
+                "https://danbooru.donmai.us/tags.json",
+                params={
+                    "search[name_matches]": candidate_tag,
+                    "search[order]": "post_count",
+                    "limit": 20,
+                },
+                headers={"User-Agent": "AirPaint-character-lookup/1.0"},
+                timeout=12,
+            )
+            if response.status_code != 200:
+                result["status"] = "unavailable"
+                result["error"] = f"HTTP {response.status_code}"
+            else:
+                result.update(_classify_danbooru_rows(response.json(), candidate_tag))
+        except Exception as exc:
+            result["status"] = "unavailable"
+            result["error"] = str(exc)
+    # Network failures are transient; do not poison the cache permanently.
+    if result["status"] != "unavailable":
+        _CHAR_LOOKUP_CACHE[key] = result
+        try:
+            _save_character_lookup_cache()
+        except Exception as exc:
+            print(f"[character lookup] cache save failed: {exc}", flush=True)
+    if result["status"] == "likely_supported":
+        _record_auto_character(name, result["canonical_tag"])
+    return result
+
+
 def _parse_structured_output(out: str) -> tuple[str, dict | None, str, dict | None]:
     """解析生产 IR + PROMPT 或旧 IR + TAGS + NL 协议.
     返回 (tags, breakdown, nl, prompt_ir); PROMPT 是单一最终画师 Prompt，编译时视作 tags body。"""
@@ -564,10 +730,10 @@ def _parse_structured_output(out: str) -> tuple[str, dict | None, str, dict | No
 
 
 def match_characters(text: str) -> tuple[list[str], str]:
-    """子串匹配角色名. 返回 (角色 tag 列表, 移除角色名后的剩余文本)."""
+    """子串匹配正式/自动确认角色名. 正式词典优先, 返回 canonical tag 列表和剩余文本."""
     found_tags: list[str] = []
     remaining = text
-    for name, tag in CHAR_DICT.items():
+    for name, tag in _character_items():
         if name in text:
             found_tags.append(tag)
             remaining = remaining.replace(name, "")
@@ -589,7 +755,7 @@ def match_dict_words(text: str) -> tuple[list[str], str]:
     return hits, remaining
 
 
-async def siliconflow_translate(context: str, reroll: bool = False) -> tuple[str, dict | None, str, dict | None]:
+async def siliconflow_translate(context: str, reroll: bool = False) -> tuple[str, dict | None, str, dict | None, list[dict]]:
     """走硅基流动 Qwen 翻译/扩写. context 是结构化上下文 (Known tags + Remaining).
     返回 (LLM 新增 tag, 结构化拆解 dict). tag 不含已知 tag (由 translate 拼接).
     breakdown 供前端预览展示 AI 理解, prompt_ir 保存 12 字段语义计划. 失败抛异常 (上层转 HTTPException).
@@ -611,35 +777,45 @@ async def siliconflow_translate(context: str, reroll: bool = False) -> tuple[str
              "Still follow the output format and the known-tags rule.\n\n") if reroll else ""
     user_content = ("/no_think " if not thinking else "") + nudge + context
 
-    r = await CLIENT.post(
-        "https://api.siliconflow.cn/v1/chat/completions",
-        headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
-        json={
-            "model": model,
-            "messages": [
-                {"role": "system", "content": PAINTER_SYSTEM_PROMPT},
-                # /no_think: Qwen3 软开关, 强制不进思考模式 (思考会慢到 30s+ 且易复读). thinking 开则不前置.
-                {"role": "user", "content": user_content},
-            ],
-            "temperature": temperature,
-            "max_tokens": 550,
-            # ★ 关键: enable_thinking 必须放顶层, 放 extra_body 里硅基流动不认 -> 思考没关掉. (见 D2)
-            "enable_thinking": thinking,
-        },
-        timeout=40,
-    )
-    if r.status_code != 200:
-        raise RuntimeError(f"翻译服务返回 {r.status_code}: {r.text[:200]}")
-    data = r.json()
-    out = data["choices"][0]["message"]["content"].strip()
-    # 极端情况下模型可能仍带 <think>, 清一下
-    if "</think>" in out:
-        out = out.split("</think>", 1)[1].strip()
-    if not out:
-        raise RuntimeError("翻译服务返回空内容")
+    out = ""
+    tags, breakdown, nl, prompt_ir = "", None, "", None
+    for attempt in range(2):
+        repair = "" if attempt == 0 else (
+            "\nFORMAT REPAIR: Your previous response was missing a valid IR JSON. "
+            "Return exactly one compact valid IR JSON line with all 12 array fields, "
+            "followed by PROMPT. Do not omit IR.\n"
+        )
+        r = await CLIENT.post(
+            "https://api.siliconflow.cn/v1/chat/completions",
+            headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
+            json={
+                "model": model,
+                "messages": [
+                    {"role": "system", "content": PAINTER_SYSTEM_PROMPT},
+                    # /no_think: Qwen3 软开关, 强制不进思考模式 (思考会慢到 30s+ 且易复读). thinking 开则不前置.
+                    {"role": "user", "content": user_content + repair},
+                ],
+                "temperature": temperature,
+                "max_tokens": 550,
+                # ★ 关键: enable_thinking 必须放顶层, 放 extra_body 里硅基流动不认 -> 思考没关掉. (见 D2)
+                "enable_thinking": thinking,
+            },
+            timeout=40,
+        )
+        if r.status_code != 200:
+            raise RuntimeError(f"翻译服务返回 {r.status_code}: {r.text[:200]}")
+        data = r.json()
+        out = data["choices"][0]["message"]["content"].strip()
+        # 极端情况下模型可能仍带 <think>, 清一下
+        if "</think>" in out:
+            out = out.split("</think>", 1)[1].strip()
+        if not out:
+            raise RuntimeError("翻译服务返回空内容")
 
-    # 解析结构化输出: IR + TAGS + NL. 旧 5 字段和无 TAGS 降级仍由解析器兼容.
-    tags, breakdown, nl, prompt_ir = _parse_structured_output(out)
+        # 解析结构化输出: IR + PROMPT. 旧协议仍由解析器兼容.
+        tags, breakdown, nl, prompt_ir = _parse_structured_output(out)
+        if prompt_ir is not None or attempt == 1:
+            break
 
     # 兜底: 检测重复 tag (模型复读), 出现3次以上相同 tag 说明输出异常
     tag_list = [t.strip() for t in tags.split(",")]
@@ -648,7 +824,7 @@ async def siliconflow_translate(context: str, reroll: bool = False) -> tuple[str
     if dupes:
         raise RuntimeError(f"翻译输出异常(重复tag: {dupes[0]}), 请重试")
 
-    return tags, breakdown, nl, prompt_ir
+    return tags, breakdown, nl, prompt_ir, _parse_character_hints(out)
 
 
 async def siliconflow_vision_translate(image_b64: str, context: str, reroll: bool = False, mode: str = "reference") -> tuple[str, dict | None, str, dict | None]:
@@ -732,7 +908,11 @@ def _prepare_painter_tags(tags: list[str], prompt_ir: dict | None,
         for field in ("appearance", "clothing", "action", "pose", "scene", "constraints")
         for item in (prompt_ir or {}).get(field, [])
     )
-    explicit = any(term in ir_text for term in ("nude", "naked", "explicit", "nipples", "sex"))
+    explicit = any(term in ir_text for term in ("nude", "naked", "explicit", "nipples", "sex")) or any(
+        term in original_text.lower() for term in ("裸体", "裸露", "explicit", "nsfw")
+    )
+    if explicit and not any(term in tag.lower() for term in ("nude", "naked", "explicit", "nipples", "sex") for tag in result):
+        result.insert(0, "nude")
     if explicit and "特写" not in original_text and "close-up" not in original_text.lower():
         result = [tag for tag in result if tag.lower() not in {"close-up", "close up"}]
         if not any(term in tag.lower()
@@ -777,7 +957,8 @@ def _strip_char_bare_names(new_list: list[str], char_tags: list[str]) -> list[st
     for ct in char_tags:
         for sep in ("_(", " ("):
             if sep in ct:
-                bare.add(ct.split(sep, 1)[0].strip().lower())
+                name = ct.split(sep, 1)[0].strip().lower()
+                bare.update({name, name.replace("_", " "), name.replace(" ", "_")})
                 break
     if not bare:
         return new_list
@@ -923,13 +1104,31 @@ async def translate(text: str, reroll: bool = False, image_b64: str | None = Non
                 _prompt_ir_meta("painter_expansion", reroll, cached_ir, char_tags, hits),
             )
         try:
-            new_tags, breakdown, nl, prompt_ir = await siliconflow_translate(context, reroll=reroll)
+            new_tags, breakdown, nl, prompt_ir, character_hints = await siliconflow_translate(
+                context, reroll=reroll
+            )
         except Exception as e:
             raise HTTPException(502, f"翻译失败, 请稍后重试 ({e})")
-        # 编译: 已知 tag + LLM 新增 tag, 再按 Anima 规范序排并附加 NL.
+        lookup_results = []
+        resolved_char_tags = list(char_tags)
+        known_names = set(_character_names())
+        if not character_hints:
+            character_hints = _infer_character_hints_from_ir(
+                prompt_ir, misses, known_names, char_tags
+            )
+        for hint in character_hints:
+            name = hint["name"]
+            if name in known_names or hint["candidate_tag"] in char_tags:
+                continue
+            lookup = await lookup_character(name, hint["candidate_tag"])
+            lookup_results.append(lookup)
+            canonical = lookup.get("canonical_tag")
+            if lookup.get("status") == "likely_supported" and canonical not in resolved_char_tags:
+                resolved_char_tags.append(canonical)
+        # 编译: 已知/自动确认角色 tag + LLM Prompt, 再按 Anima 规范序排。
         new_list = [t.strip() for t in new_tags.split(",") if t.strip()]
-        painter_tags = _prepare_painter_tags(hits + new_list, prompt_ir, text, char_tags)
-        result = compile_prompt(char_tags, painter_tags, nl, infer_render_profile(prompt_ir))
+        painter_tags = _prepare_painter_tags(hits + new_list, prompt_ir, text, resolved_char_tags)
+        result = compile_prompt(resolved_char_tags, painter_tags, nl, infer_render_profile(prompt_ir))
         # reroll 不写缓存: 探索性结果不应顶掉正常翻译的缓存原版 (见 D19)
         if not reroll:
             if len(_TRANSLATE_CACHE) >= _TRANSLATE_CACHE_MAX:
@@ -937,7 +1136,8 @@ async def translate(text: str, reroll: bool = False, image_b64: str | None = Non
             _TRANSLATE_CACHE[cache_key] = (result, breakdown, prompt_ir)
         return finish(
             result, breakdown, prompt_ir,
-            _prompt_ir_meta("painter_expansion", reroll, prompt_ir, char_tags, hits),
+            _prompt_ir_meta("painter_expansion", reroll, prompt_ir,
+                            resolved_char_tags, hits, lookup_results),
         )
 
     if backend == "google":
@@ -1454,7 +1654,7 @@ async def dialog_turn(req: Request, token: str = Depends(auth)):
                 # (redo 累加重翻译时, "换成X"会让旧角色+新角色同时被 char_dict 命中,
                 #  LLM 全保留导致新旧角色并存+1boy乱入; 见 D31)
                 if any(kw in delta for kw in ("换成", "替换", "改成", "换为", "改为")):
-                    for name, _ in CHAR_DICT.items():
+                    for name in _character_names():
                         if name in session["raw"]:
                             session["raw"] = session["raw"].replace(name, "")
                     session["raw"] = re.sub(r"[,，\s]+", " ", session["raw"]).strip()

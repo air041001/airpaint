@@ -48,7 +48,22 @@
 
 Phase 2.6 收尾后不开新扩写子阶段；下一步由真实使用反馈决定，不立即建设详细输入辅助功能。
 
-### Phase 3-8: 见 PLAN-v5
+### Phase 3: Character Knowledge（精简版，进行中）
+- [x] Danbooru 主 API 连通性验证，确认 exact tag/category/post_count 可用
+- [x] `CHAR` 候选协议、post_count 分类和独立 auto cache 基础实现
+- [x] 未知角色运行时联调：likely_supported 自动缓存，weak/absent/unavailable 不污染正式词典
+- [x] 长门有希/御坂美琴查询：分别得到 `nagato_yuki`/`misaka_mikoto`，post_count 9254/10778
+- [x] 30 条 SFW / 8 条 NSFW 结构与 safety smoke
+- [x] 长门固定 Prompt 图片人眼确认，Phase 3 ready to push
+- [ ] D38/DEVLOG/PLAN-v5/BUILDHANDOFF 定稿并 push
+
+Phase 3 不做结构化 char_dict 迁移、156 条全量审计或复杂审批后台；正式 `char_dict.yaml` 继续支持用户手动加一行即时生效。
+
+### Phase 4: PromptState + Incremental Editing（延后，使用数据触发）
+- [ ] 观察暗房 redo/tweak 使用频率和 D31 类字符串累加问题
+- [ ] 只有真实迭代痛点成立后才启动 PromptState 设计
+
+### Phase 5-8: 见 PLAN-v5
 Character Knowledge → PromptState → LoRA Context → Trigger Engine → LoRA Composition → Workflow Intelligence
 
 ---

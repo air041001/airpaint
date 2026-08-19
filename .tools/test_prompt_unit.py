@@ -2,6 +2,7 @@
 """零依赖 Prompt Engine 纯函数回归检查。"""
 import asyncio
 import sys
+import tempfile
 from pathlib import Path
 
 
@@ -170,6 +171,122 @@ def test_painter_tag_guard_keeps_nsfw_body_framing_and_default_anime_style():
     assert "three-quarter view" in tags, tags
 
 
+def test_painter_tag_guard_preserves_explicit_safety_marker():
+    tags = main._prepare_painter_tags(
+        ["1girl", "black lace lingerie", "seductive"],
+        {"subject": ["1girl"], "constraints": ["nsfw"]},
+        "成年女性裸体穿着黑色蕾丝内衣",
+        [],
+    )
+    assert "nude" in tags, tags
+
+
+def test_character_hint_protocol_parser():
+    hints = main._parse_character_hints(
+        "CHAR: 帕姆 => pom_pom_(honkai:_star_rail); 未知角色 => unknown_tag"
+    )
+    assert hints == [
+        {"name": "帕姆", "candidate_tag": "pom_pom_(honkai:_star_rail)"},
+        {"name": "未知角色", "candidate_tag": "unknown_tag"},
+    ], hints
+
+
+def test_character_hint_ir_fallback():
+    hints = main._infer_character_hints_from_ir(
+        {"subject": ["hakurei_reimu_(touhou)"], "appearance": []},
+        ["博丽灵梦"],
+        set(),
+    )
+    assert hints == [{"name": "博丽灵梦", "candidate_tag": "hakurei_reimu_(touhou)"}], hints
+    assert main._infer_character_hints_from_ir(
+        {"subject": ["ganyu_(genshin_impact)"]},
+        ["站在望舒客栈的阳台上"],
+        set(),
+        ["ganyu_(genshin_impact)"],
+    ) == []
+    assert main._infer_character_hints_from_ir(
+        {"subject": ["misaka_mikoto"]},
+        ["御坂美琴"],
+        set(),
+    ) == [{"name": "御坂美琴", "candidate_tag": "misaka_mikoto"}]
+
+
+def test_character_bare_name_space_variant_is_removed():
+    result = main._strip_char_bare_names(
+        ["ai hoshino", "ai_hoshino", "stage"],
+        ["ai_hoshino_(oshi_no_ko)"],
+    )
+    assert result == ["stage"], result
+
+
+def test_danbooru_character_classification():
+    likely_supported = main._classify_danbooru_rows(
+        [{"name": "known_char", "category": 4, "post_count": 100,
+          "is_deprecated": False}],
+        "known_char",
+    )
+    weak = main._classify_danbooru_rows(
+        [{"name": "rare_char", "category": 4, "post_count": 2,
+          "is_deprecated": False}],
+        "rare_char",
+    )
+    artist = main._classify_danbooru_rows(
+        [{"name": "artist_name", "category": 1, "post_count": 10000,
+          "is_deprecated": False}],
+        "artist_name",
+    )
+    assert likely_supported["status"] == "likely_supported", likely_supported
+    assert weak["status"] == "weak", weak
+    assert artist["status"] == "absent", artist
+
+
+def test_auto_character_cache_write_and_match():
+    with tempfile.TemporaryDirectory() as temp:
+        old_dir, old_path, old_auto = main.KNOWLEDGE_CACHE_DIR, main.CHAR_AUTO_PATH, main.CHAR_AUTO
+        try:
+            cache_dir = Path(temp)
+            main.KNOWLEDGE_CACHE_DIR = cache_dir
+            main.CHAR_AUTO_PATH = cache_dir / "characters_auto.yaml"
+            main.CHAR_AUTO = main.HotDict(main.CHAR_AUTO_PATH, key_fn=lambda s: s)
+            main._record_auto_character("测试角色", "test_character_(series)")
+            tags, remaining = main.match_characters("测试角色站在街上")
+            assert tags == ["test_character_(series)"], tags
+            assert remaining == "站在街上", repr(remaining)
+        finally:
+            main.KNOWLEDGE_CACHE_DIR, main.CHAR_AUTO_PATH, main.CHAR_AUTO = old_dir, old_path, old_auto
+
+
+def test_unavailable_lookup_is_retryable():
+    class FakeResponse:
+        status_code = 503
+        text = "temporary"
+
+        def json(self):
+            return {}
+
+    calls = 0
+
+    async def fake_get(*args, **kwargs):
+        nonlocal calls
+        calls += 1
+        return FakeResponse()
+
+    old_get = main.CLIENT.get
+    old_cache, old_loaded = main._CHAR_LOOKUP_CACHE, main._CHAR_LOOKUP_CACHE_LOADED
+    try:
+        main.CLIENT.get = fake_get
+        main._CHAR_LOOKUP_CACHE = {}
+        main._CHAR_LOOKUP_CACHE_LOADED = True
+        first = asyncio.run(main.lookup_character("临时角色", "temporary_character"))
+        second = asyncio.run(main.lookup_character("临时角色", "temporary_character"))
+        assert first["status"] == second["status"] == "unavailable"
+        assert calls == 2, calls
+        assert "临时角色|temporary_character" not in main._CHAR_LOOKUP_CACHE
+    finally:
+        main.CLIENT.get = old_get
+        main._CHAR_LOOKUP_CACHE, main._CHAR_LOOKUP_CACHE_LOADED = old_cache, old_loaded
+
+
 def main_test():
     tests = [
         test_character_match,
@@ -187,6 +304,13 @@ def main_test():
         test_painter_prompt_protocol_is_final_prompt,
         test_painter_tag_guard_preserves_woman_and_suppresses_unrequested_silhouette,
         test_painter_tag_guard_keeps_nsfw_body_framing_and_default_anime_style,
+        test_painter_tag_guard_preserves_explicit_safety_marker,
+        test_character_hint_protocol_parser,
+        test_character_hint_ir_fallback,
+        test_character_bare_name_space_variant_is_removed,
+        test_danbooru_character_classification,
+        test_auto_character_cache_write_and_match,
+        test_unavailable_lookup_is_retryable,
     ]
     for test in tests:
         test()

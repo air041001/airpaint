@@ -449,3 +449,22 @@
 ### 收尾决定
 
 保留 v5 提示词增强、`prompt_ir_meta` 和 reroll 新补全语义；冻结继续增加自动扩写规则。自动增强负责通用可读性、构图、光影、材质和 NSFW 身体语言，不能凭空决定用户未表达的具体创意。Phase 2.6 完成后先观察真实使用反馈，不立即投入详细输入辅助 UX 或新的扩写实验。
+
+## D38. Phase 3 Character Knowledge：平铺自动缓存 + Danbooru 可绘制性门槛
+
+**背景**：正式 `char_dict.yaml` 目前有 156 条平铺角色映射，用户自己新增一行即可通过 HotDict 热更新生效。为此重构结构化 `char_dict` 或全量审计的成本高于收益；真正未解决的问题是未知角色名会落入普通 LLM misses，可能产生字面翻译、假 tag 或裸名。
+
+**决定**：
+1. 生产画师协议的 `IR.subject` 记录未知角色的候选 Danbooru tag；解析器兼容可选 `CHAR: 用户名 => 候选 tag` 行，但不强制增加第三输出行。
+2. 后端查询 Danbooru `tags.json` exact tag；要求 `category=4`、非 deprecated，并以 `post_count >= character_auto_min_posts`（默认 100）判定 `likely_supported`。这是训练覆盖度代理，不等于 Anima 已完成人眼验证。
+3. `likely_supported` 结果写入独立平铺 `server/knowledge_cache/characters_auto.yaml`，正式 `char_dict.yaml` 优先；`weak`/`absent` 只写 lookup JSON，`unavailable` 不缓存以便网络恢复后重试，不污染正式词典。
+4. 自动缓存复用现有 `match_characters()`、裸名保护和 dialog redo 删除逻辑；不改 HotDict 值结构，不迁移 156 条正式词典，不做全量人工审计。
+5. 自动缓存是运行时知识，不进 git；用户可以删除自动条目或复制到正式 `char_dict.yaml` 手动提升。
+
+**原因**：Danbooru 的 canonical tag 和 post_count 同时提供 tag 验证与当前 base Anima 可绘制性的低成本代理；对项目 owner，手动加一行仍是最快路径；自动缓存主要服务其他邀请用户，并避免未知角色每次重复查询。
+
+**边界**：Danbooru 查询失败不阻断翻译；不自动覆盖正式词典；不存在可验证 tag 时不伪造 canonical tag。Phase 4 PromptState 继续延后到暗房真实使用证明字符串状态不足。
+
+**验证**：Danbooru 主 API exact lookup 与 `name_matches` 已从本机连通；代理波动时查询正确返回 `unavailable`，且不会永久缓存。角色 hint 解析、category/post_count 分类、auto cache、最长优先和 safety marker 的 22 个 Prompt 单测通过。长门有希→`nagato_yuki`（9254）、御坂美琴→`misaka_mikoto`（10778）均已写入 auto cache；长门固定 Prompt 已成功生图并经用户确认。
+
+**相关文件**：`server/main.py`、`.tools/test_prompt_unit.py`、`.gitignore`、`server/knowledge_cache/`、`docs/PLAN-v5 — AirPaint Prompt Intelligence.md`。

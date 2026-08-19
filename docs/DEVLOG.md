@@ -660,3 +660,17 @@ Phase 2 首轮主要验证 TAG/NL 摆法、失败分类和来源对照，输入�
 ### 产品结论
 
 Phase 2.6 同时证明了两件事：自动画师协议相对旧翻译有稳定增益；但 A2 的详细中文在部分 case 仍更强，说明高质量具体视觉意图不能凭空生成。后续不继续堆自动扩写规则，也不立即建设详细输入辅助功能，先观察真实使用反馈。
+
+## 第 39 条 2026-08-18 - Phase 3 Character Knowledge 精简实现启动
+
+### 取舍
+
+否决结构化 `char_dict` 迁移和全量审计。当前正式词典只有 156 条，HotDict 热更新让用户自己加一行的成本极低；Phase 3 真正要解决的是未知角色名第一次出现时的 canonical tag 与可绘制性判断。
+
+### 实现方向
+
+生产画师协议使用 `IR.subject` 记录未知角色候选 tag，解析器兼容可选 `CHAR: 用户名 => 候选 tag` 行但不强制增加输出行；后端查询 Danbooru `tags.json` exact tag，使用角色分类和 `post_count` 判断 `likely_supported/weak/absent`。只有 likely_supported 写入独立平铺 `characters_auto.yaml`，正式 `char_dict.yaml` 优先；lookup 失败或低覆盖只缓存结果，不阻断翻译、不污染正式知识库。网络 unavailable 不缓存，等待代理恢复后重试。
+
+补充修正：IR fallback 不再把已知角色命中后的剩余动作/场景短语当作人名；正式词典删除了未使用且会与“长门有希”冲突的 `长门: nagato_(azur_lane)` 条目。明确 NSFW 输入缺少 `nude` 时增加代码 safety marker，避免 workflow safety 误判为 safe。
+
+长门有希与御坂美琴定向查询成功，分别得到 `nagato_yuki`（9254）和 `misaka_mikoto`（10778）并写入 auto cache；长门固定 Prompt 出图经用户确认，Phase 3 验收完成。
