@@ -333,8 +333,8 @@ push
 | `docs/decisions.md` | 为什么这么设计。格式建议见 §17 |
 | `docs/DEVLOG.md` | 项目如何演变。一条记录一个有意义的开发事件/阶段 |
 | `ROADMAP.md` | 未来准备做什么。只保留当前仍有效的路线 |
-| `docs/PLAN-v5.md` | 长期实施路线（取代 PLAN-v4） |
-| `docs/inspiration.md` | 外部项目/调研/灵感 |
+| `docs/PLAN-v5.md` | 长期实施路线（唯一现行计划，取代已删除的 PLAN-v4） |
+| `docs/PLAN-LORA.md` | LoRA Context 工程最终任务计划 |
 | `docs/workflow-anatomy.md` | ComfyUI / workflow 底层技术知识与踩坑记录 |
 | `README.md` | 给开发者/使用者看的项目入口 |
 

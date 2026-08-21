@@ -16,4 +16,4 @@
 
 ---
 
-**如果你是接手的新 Agent**：直接读 `AGENTS.md` + `docs/PLAN-v5 — AirPaint Prompt Intelligence.md` 即可对齐项目方向、当前主线（Prompt Intelligence）、具体阶段任务（Phase 0 已完成 baseline + 生图验收，Phase 1 准备改 Prompt IR）。
+**如果你是接手的新 Agent**：直接读 `AGENTS.md` + `docs/PLAN-v5 — AirPaint Prompt Intelligence.md` + `docs/BUILDHANDOFF.md` 即可对齐项目方向、当前状态和下一步。当前主线已完成 Phase 2.6（Prompt Expansion 生产协议）与 Phase 3（Character Knowledge 自动缓存），最终任务为 `docs/PLAN-LORA.md`（LoRA Context 工程）。

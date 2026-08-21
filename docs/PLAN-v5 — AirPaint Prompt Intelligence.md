@@ -1,7 +1,7 @@
 # PLAN-v5 — AirPaint Prompt Intelligence
 
 > 状态：正式路线（2026-08-16 修订，Phase 2.6 Prompt Expansion 已完成）
-> 取代 PLAN-v4（v4 保留作历史参考）
+> 取代 PLAN-v4（v4 已于 2026-08-19 删除，本文件为唯一现行路线）
 > 实施计划批准文件：`.workbuddy/plans/electric-forging-babbage.md`
 >
 > **核心原则**：

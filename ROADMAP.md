@@ -4,7 +4,7 @@
 
 ## 当前主线: Prompt Intelligence (PLAN-v5)
 
-> 2026-08-13 确立的新主线。完整路线见 [`docs/PLAN-v5 — AirPaint Prompt Intelligence.md`](PLAN-v5%20—%20AirPaint%20Prompt%20Intelligence.md)（取代 PLAN-v4）。
+> 2026-08-13 确立的新主线。完整路线见 [`docs/PLAN-v5 — AirPaint Prompt Intelligence.md`](PLAN-v5%20—%20AirPaint%20Prompt%20Intelligence.md)（取代已删除的 PLAN-v4）。
 >
 > **核心**：NSFW-first + Prompt-first，LoRA 后置。首要目标是把成人虚构内容的 Prompt 与出图质量做到最好，普通绘图能力顺带做强；LLM 是大脑（意图/语义），代码是脊髓（canonical tag/知识库/数值/workflow）。IR 不规定固定最终 Prompt 格式，渲染策略必须用固定变量的人眼实验验证。
 >
@@ -140,9 +140,9 @@ Character Knowledge → PromptState → LoRA Context → Trigger Engine → LoRA
 
 ---
 
-## Phase 5: 理解用户意图 (inspiration 调研方向)
+## Phase 5: 理解用户意图（历史调研方向，已基本落地）
 
-> 2026-07-29 联网调研 Anima 生态同类项目后梳理的新方向 (见 `docs/inspiration.md`), 比"工程化晚期镀金"(多工作流/Docker/WebSocket) 更贴核心目标。按 价值/功夫 排序。
+> 2026-07-29 联网调研 Anima 生态同类项目后梳理的新方向，比"工程化晚期镀金"(多工作流/Docker/WebSocket) 更贴核心目标。按 价值/功夫 排序。原调研文档 `docs/inspiration.md` 已删除，以下为落地记录。
 
 - [x] ① 抽卡 re-roll (同一句中文高温重出不同分解, 「🎲 再来一版」) - 2026-07-29, 见 DEVLOG 第16条 / D19
 - [x] ⑥ 规范化 Anima tag 顺序 (count -> character -> general) - 2026-07-29, 见 DEVLOG 第16条 / D20
