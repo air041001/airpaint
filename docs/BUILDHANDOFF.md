@@ -1,16 +1,16 @@
 # AirPaint Build Handoff
 
-> 交接日期：2026-08-19
+> 交接日期：2026-08-22
 > 当前分支：`main`
-> 远程已推送到：`fbe3cee chore: remove obsolete PLAN-v4 and inspiration docs`
+> 远程状态：PLAN-LORA v2 规划更新应与 `origin/main` 同步；实际提交以 `git log` 为准
 
 ## 1. 当前阶段与进度
 
 ### 当前阶段
 
-项目处于 **最终任务：LoRA Context 工程（`docs/PLAN-LORA.md`）待执行**。
+项目处于 **最终任务：LoRA Context / Binding 工程（`docs/PLAN-LORA.md` v2）待执行**。
 
-Phase 2.6（Prompt Expansion 生产协议）、Phase 3（Character Knowledge 自动缓存）均已完成并 push。Phase 4 PromptState 继续延后。当前唯一主线是 PLAN-LORA（合并原 Phase 5/6/7 的 LoRA Context + Trigger Engine + LoRA Composition），按 PLAN-LORA 的 Step 0-8 顺序执行。
+Phase 2.6（Prompt Expansion 生产协议）、Phase 3（Character Knowledge 自动缓存）均已完成并 push。Phase 4 PromptState 继续延后。当前唯一主线是 PLAN-LORA v2：选中的 LoRA/Profile 在翻译前进入模型上下文，LLM 负责语义选择，代码通过 Binding Compiler 确定性编译 exact trigger；按 Step 0-10 顺序执行。
 
 ### 已完成模块
 
@@ -40,7 +40,7 @@ Phase 2.6（Prompt Expansion 生产协议）、Phase 3（Character Knowledge 自
 - Phase 2.6 A1/A2/A3 三路实验：21 张图和 E1/E6/E7 换 seed 的 9 张补测图均生成成功；用户已完成两轮 A/B/C 盲评，A3 对 A2 为 4 胜、1 平、2 负；初版生产 A/B 被判定为协议退化，已改为独立 `IR + PROMPT` 画师协议并修复护栏；v5 新旧 A/B 为 3 胜 2 平 0 负，提示词增强保留。
 - Phase 3 Danbooru 角色查询：主 API exact lookup 与 `name_matches` 连通；长门有希/御坂美琴已分别写入 `nagato_yuki`/`misaka_mikoto` auto cache，长门固定 Prompt 已生图并经用户确认。
 - 未验证的 baseline 回归资产已清理（删除 `baseline.yaml`/`cases.yaml`/`run_baseline.py`/`compare.py`，DEVLOG 40）；结构不变量由 23 个单测确定性覆盖。
-- 最终任务规划已定稿：`docs/PLAN-LORA.md`（LoRA Context 工程，含 registry schema / onboarding 脚本 / LLM 上下文 / 触发词格式校验 / 前端适配 / 验证计划）。
+- 最终任务规划已按用户确认重写为 v2：`docs/PLAN-LORA.md`（LoRA Asset/Profile、versioned registry、Binding Compiler、LoRA-aware text/vision、binding revision、前端/暗房状态与真实 A/B）；D39 记录“LLM 选语义、代码编译 exact trigger”。
 
 ## 2. 修改/新增文件清单
 
@@ -83,17 +83,17 @@ Phase 2.6（Prompt Expansion 生产协议）、Phase 3（Character Knowledge 自
 | 文件 | 当前作用 |
 |---|---|
 | `docs/PLAN-v5 — AirPaint Prompt Intelligence.md` | 长期实施路线（唯一现行计划，取代已删除的 PLAN-v4） |
-| `docs/PLAN-LORA.md` | **最终任务执行蓝本**：LoRA Context 工程（Step 0-8） |
+| `docs/PLAN-LORA.md` | **最终任务执行蓝本 v2**：LoRA Context / Binding 工程（Step 0-10） |
 | `ROADMAP.md` | Phase 2.6/3 完成，Phase 4 延后，最终任务为 LoRA 工程 |
-| `docs/DEVLOG.md` | 第 31-40 条记录 Phase 1 至 Phase 3、baseline 清理 |
-| `docs/decisions.md` | D30-D33 已重排补全，D34-D38 历史结论 |
+| `docs/DEVLOG.md` | 第 31-41 条记录 Phase 1 至 Phase 3、baseline 清理与 PLAN-LORA v2 |
+| `docs/decisions.md` | D30-D33 已重排补全，D34-D38 历史结论，D39 为当前 LoRA Binding 决策 |
 | `docs/architecture.md` | 当前 Prompt IR/Compiler、R4 多角色限制和手动 Prompt fallback |
 | `docs/api.md` | `/api/translate` 的 `prompt_ir`/`prompt_ir_meta` 契约 |
 | `docs/workflow-anatomy.md` | 用户维护的 AnimaFull 权威节点解剖；当前 HEAD 中已单独提交，后续必须优先参考 |
 
 ### 当前工作区
 
-- Phase 2.6、Phase 3、baseline 清理、D33 重排补全、PLAN-LORA 规划均已提交并推送。
+- Phase 2.6、Phase 3、baseline 清理、D33 重排补全均已提交并推送；PLAN-LORA v2、D39 与本次文档同步组成独立 planning commit，交接时应已 push。
 - `docs/PLAN-v4` 与 `docs/inspiration.md` 已删除（历史参考不再保留）；`web/index.html.bak2` 已删（web/ 子仓库）。
 - `.tools/eval_set/render_exp/output/`、`.tools/eval_set/nsfw/output/`：实验生成物，已被 gitignore，不能当源码提交。
 - `.opencode/`、`opencode.jsonc`：环境未跟踪文件，未修改、不可纳入提交。
@@ -102,13 +102,13 @@ Phase 2.6（Prompt Expansion 生产协议）、Phase 3（Character Knowledge 自
 
 ### 立即下一步
 
-1. 按 `docs/PLAN-LORA.md` 的 Step 0 开始：扫描过滤 wan_/detailz 非 LoRA 文件；诊断 `deepseek_maid_outfit_illustrious_v10.safetensors` 未注册原因。
-2. 依次执行 Step 1-8（onboarding 脚本 → registry → translate lora_context → system prompt 规则 → build_prompt 校验 → 前端 → 验证 → 文档 push）。
-3. 用户已确认：先选 LoRA 再翻译（LLM 知道 LoRA 上下文）才是正确工作流；prompt 空间平衡（人物 tag 少量、场景光影留足）是核心痛点。
+1. 按 `docs/PLAN-LORA.md` Step 0 开始资产/cache 审计和迁移映射；不要再把 deepseek_maid 误判为“未扫描”，实际是 cache 中 `type=unknown` 后被 API 隐藏。
+2. 依次执行 Step 1-10：Registry/loader → scanner → legacy adapter → Binding Compiler → LoRA-aware text/vision → API/session → 前端 → onboarding → 真实 A/B → 文档 push。
+3. 用户已确认核心硬约束：选中的 LoRA 必须在翻译前进入模型上下文，Prompt 与 LoRA 不割裂、不串人物/服装/风格；exact trigger、文件和权重由代码确定。
 
 ### 条件性未完成项
 
-- 无当前阻塞开发项；PLAN-LORA 全部决策已在文件中定稿，无遗留决策点。
+- 无当前阻塞开发项；PLAN-LORA v2 核心边界已确认。实现细节如函数命名可按代码调整，但不得退回“LLM 复制 trigger”或“生成时盲拼”的旧边界。
 
 ### 已明确跳过
 
@@ -117,7 +117,7 @@ Phase 2.6（Prompt Expansion 生产协议）、Phase 3（Character Knowledge 自
 - semantic negative 不进入默认策略。
 - girl/female 不改 canonical，当前 W6 无明显差异。
 - 不写 PLAN-v6；Phase 4 PromptState 继续延后（暗房使用数据触发）。
-- PLAN-LORA 明确不做：自动解析 HTML description / LoRA 冲突 ML 检测 / trigger 权重自动优化 / Phase 8 Workflow Intelligence。
+- PLAN-LORA 明确不做：自动解析 HTML description / LoRA 冲突 ML 检测 / LLM 决定 trigger 权重 / Phase 8 Workflow Intelligence；无真实多人资产前不宣称完成 LoRA composition。
 
 ## 4. 当前上下文遗留问题
 
@@ -129,7 +129,7 @@ Phase 2.6（Prompt Expansion 生产协议）、Phase 3（Character Knowledge 自
 - NSFW 目标是“高质量二次元插画的色气感”，不是裸体 tag 堆砌；统一补全底层应使用构图、光影、氛围、材质，NSFW 只在服装状态、身体语言、揭示节奏上分流。
 - R4 的失败不是当前 Phase 2 主线 blocker，但应继续作为 failure taxonomy 的 `interaction_relation` + `spatial_composition` + `model_artifact` 样本。
 - `docs/decisions.md` 历史 D1-D38 必须保持完整（D30-D33 已重排、D33 已补全）；编辑只能追加 ADR，不能用 Add File 替换已有文件。
-- LoRA 工程的核心痛点（PLAN-LORA §0）：全触发词盲拼导致 prompt 空间被人物细节占满 → Anima dropout 只画好人物、场景崩坏；解决方向是 LLM 精选 quick_use + 给场景/光影留空间。
+- LoRA 工程的核心痛点（PLAN-LORA §0）：全 trigger 盲拼导致 Prompt 与 LoRA 语义割裂并挤压场景空间。v2 解法是 LLM 看见 `provides/Profile` 后规划剩余画面，代码用 Binding Compiler 编译 registry 中的 minimal exact tags。
 
 ## 5. 验证命令与状态
 
@@ -176,10 +176,10 @@ python .tools/eval_set/render_exp/expansion/run_phase26.py --mode render
 
 ## 6. 注意事项/禁区
 
-- 修改前必须先读 `AGENTS.md`、本文件、`docs/PLAN-LORA.md`、最新 PLAN-v5、D34-D38 和 `docs/workflow-anatomy.md`。
+- 修改前必须先读 `AGENTS.md`、本文件、`docs/PLAN-LORA.md`、最新 PLAN-v5、D34-D39 和 `docs/workflow-anatomy.md`。
 - `docs/workflow-anatomy.md` 是当前 AnimaFull 节点权威参考；节点 4 是负向 `ImpactWildcardProcessor`，节点 55 是负向 CLIP 编码，不要再按旧节点猜。
 - 不要把实验用 `negative_text_node` / 节点 4 覆盖能力当成生产默认负面；config 默认没有 `negative_text_node`，D6 固定负面策略保持不变。
-- **LoRA context 是当前最终任务目标，不是禁区**（旧 handoff 的"不要提前合并 LoRA context"已作废）。按 PLAN-LORA 实现 `translate(lora_context=...)`、registry 三层合并、触发词格式校验和前端调用顺序调整。
+- **LoRA Context / Binding 是当前最终任务目标，不是禁区**。按 PLAN-LORA v2 实现 versioned Registry/Profile、LoRA-aware text/vision、确定性 Binding Compiler 和 translate/jobs/dialog binding snapshot；不要退回让 LLM 逐字复制 trigger 的旧计划。
 - 不要把 weighted NL、semantic negative、girl/female 替换、R4 特判、PromptState、自动优化 Agent 提前合并。
 - 不要把“Prompt 更长”“IR 字段更满”“结构解析通过”当成图像质量证明；人眼是最终语义验收。
 - 单张图的手脚/武器偶发错误先视为随机因素；只有换 seed 后仍重复才归入策略失败。
@@ -199,8 +199,8 @@ python .tools/eval_set/render_exp/expansion/run_phase26.py --mode render
 3. `docs/PLAN-LORA.md`（最终任务执行蓝本）
 4. `docs/PLAN-v5 — AirPaint Prompt Intelligence.md`
 5. `ROADMAP.md`
-6. `docs/decisions.md`（重点 D34-D38）
-7. `docs/DEVLOG.md`（重点第 31-40 条）
+6. `docs/decisions.md`（重点 D34-D39；当前工程先看 D39）
+7. `docs/DEVLOG.md`（重点第 31-41 条；当前工程先看第 41 条）
 8. `docs/architecture.md`
 9. `docs/workflow-anatomy.md`
 10. `.tools/eval_set/image_cases.yaml`

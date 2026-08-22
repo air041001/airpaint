@@ -481,3 +481,33 @@
 **验证**：Danbooru 主 API exact lookup 与 `name_matches` 已从本机连通；代理波动时查询正确返回 `unavailable`，且不会永久缓存。角色 hint 解析、category/post_count 分类、auto cache、最长优先和 safety marker 的 22 个 Prompt 单测通过。长门有希→`nagato_yuki`（9254）、御坂美琴→`misaka_mikoto`（10778）均已写入 auto cache；长门固定 Prompt 已成功生图并经用户确认。
 
 **相关文件**：`server/main.py`、`.tools/test_prompt_unit.py`、`.gitignore`、`server/knowledge_cache/`、`docs/PLAN-v5 — AirPaint Prompt Intelligence.md`。
+
+## D39. LoRA Context / Binding：LLM 选语义，代码编译 exact trigger
+
+**背景**：现有链路先由 `translate()` 生成完全不知道 LoRA 的 Prompt，再由 `build_prompt()` 全量 prepend config/Civitai trigger。实测会让人物细节挤压场景、构图和光影，也可能让普通 Prompt 与实际加载的 LoRA 表达两套冲突语义。2026-08-19 版 PLAN-LORA 试图让 LLM 逐字复制 quick-use，再由代码替换转义错误；但裸角色/词典全命中/vision 等路径会绕过文本 LLM，translate 与 jobs 之间也没有信息能区分“已 LoRA-aware”与旧 Prompt。
+
+**问题**：如何让模型在规划 Prompt 时真正知道用户选中的 LoRA，同时保持 trigger、文件名和强度确定、可验证、可兼容旧调用？
+
+**候选**：
+1. 继续在 `build_prompt()` 盲拼所有 trigger；简单但继续割裂。
+2. 让 LLM 输出完整 exact trigger，代码做字符串校验/替换；能看上下文，但格式脆弱且把 canonical 数据交给模型。
+3. LoRA Asset + Semantic Profile；LLM 只选择 registry 候选 ID，代码用 Binding Compiler 编译 exact trigger，并让 translate/jobs/dialog 共用 binding snapshot。
+
+**决定**：采用候选 3。
+
+1. 人工知识进入 versioned `server/lora_registry.yaml`，按 Asset/Profile 保存 `provides/required_tags/default_tags/optional_tags/source/verified`；自动 `lora_cache.json` 继续 gitignore。
+2. 新增保留嵌套结构的 `HotLoraRegistry`，不复用会执行 `str(v).strip()` 的 `HotDict`。
+3. active LoRA/Profile 在翻译前进入 Reasoning/Vision Model 上下文；有 LoRA 时文本快速路径也必须进入 LoRA-aware painter 规划。
+4. explicit Profile 由用户锁定；auto 只能从提供的 profile ID 中选择。没有匹配时只允许 registry 明确的 default，不取数组第一项。
+5. LLM 不输出文件名、强度或 exact trigger；Binding Compiler 从 registry 确定性、幂等地合入 required/default tags。
+6. `/api/translate` 返回 final `prompt_en + lora_bindings + registry_revision + warnings`；jobs/dialog 使用同一 binding/revision，避免预览与实际生成错位。
+7. 翻译缓存 key 纳入 selection/profile/registry revision；LoRA alias 与 Character Knowledge 去重，避免同一角色重复 Danbooru lookup。
+8. 旧 `loras`/`lora` key 通过 legacy adapter 兼容；真实 A/B 通过后才将 aware 链设为默认。
+
+**原因**：语义匹配属于 LLM，canonical trigger、文件、权重、版本与 workflow 注入属于代码；该边界同时解决 Prompt/LoRA 割裂、转义脆弱、快速路径绕过、缓存串线和暗房状态漂移。
+
+**代价**：API 需要新增 selection/binding/revision 契约；前端要支持多 Profile 与 stale Prompt；dialog/JOBS 需保存 binding snapshot；registry/loader/scanner/onboarding 都要成套实现，工程量高于字符串拼接。
+
+**验证**：本 ADR 先确认设计。实现后需补 nested loader、legacy adapter、binding 幂等、cache 隔离、text/vision/dialog 贯通单测，并用 deepseek_maid、denia、BlueArchiveStyleB1 做 fixed-condition A/B 人眼验收。没有真实多人 LoRA 资产前，不把多人 composition 计为完成。
+
+**相关文件**：`docs/PLAN-LORA.md`、`docs/PLAN-v5 — AirPaint Prompt Intelligence.md`、`ROADMAP.md`、`docs/BUILDHANDOFF.md`。实现阶段将涉及 `server/main.py`、`server/lora_registry.yaml`、`.tools/register_lora.py`、`.tools/test_prompt_unit.py`、`web/index.html`、`docs/api.md`、`docs/architecture.md`。

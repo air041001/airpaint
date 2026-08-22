@@ -311,20 +311,17 @@ Phase 2 首轮的 case 都是短句翻译或关系失败，没有验证 AirPaint
 
 Phase 4 不永久取消，但在暗房使用数据证明 redo/tweak 高频，或再次出现 D31 类字符串累加问题前不启动。当前先观察真实使用，不提前做 PromptState 设计或 dialog 重构。
 
-### Phase 5: LoRA Context（Phase 4 后）
+### Phase 5-7: LoRA Context / Binding（当前最终大工程）
 
-- `translate(text, lora_context=...)` 签名加参数
-- LoRA context（type/name/description/known_concepts/trigger_candidates）传 LLM，**不伪装 known tags**
-- 调用顺序调整：create_job/dialog_turn 把 LoRA 选择前移到 translate 前
+已合并为 [`PLAN-LORA.md`](PLAN-LORA.md) v2，并由 D39 修订原设想：
 
-### Phase 6: Trigger Engine（Phase 5 后，LoRA 数量增长后）
+- 选中的 LoRA/Profile 在翻译前进入 Reasoning/Vision Model 上下文，避免 Prompt 与权重语义割裂
+- LLM 只做 Profile/可选概念的语义选择，不复制 exact trigger，不决定文件名或权重
+- 代码通过 versioned Registry + LoRA Binding Compiler 确定性编译 required/default tags，并让 translate/jobs/dialog 使用同一 binding snapshot
+- 多 Profile schema 首版支持；没有真实资产和人眼验证前，不宣称完成多人 LoRA composition
+- 少量真实 LoRA 做 fixed-condition A/B，不搞 ML 系统或批量结构门槛
 
-- Trigger Profile（full/minimal/semantic/manual）
-- 少量实际 LoRA 做 A/B 测试，不搞 ML 系统
-
-### Phase 7: LoRA Composition（最后）
-
-### Phase 8: Workflow Intelligence（最后）
+### Phase 8: Workflow Intelligence（长期保留，不纳入当前最终大工程）
 
 ---
 

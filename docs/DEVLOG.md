@@ -686,3 +686,17 @@ Phase 2.6 同时证明了两件事：自动画师协议相对旧翻译有稳定�
 ### 处置
 
 删除 `.tools/eval_set/` 下的 `baseline.yaml`、`cases.yaml`、`run_baseline.py`、`compare.py` 及本地 `candidate_*.yaml`。结构不变量（char 命中/裸名剥离/排序/safety marker/角色 lookup）改由 23 个零依赖单测确定性覆盖；图像质量只由人眼对生成图确认。NSFW safety 验证（`nsfw/validate.py` + 8 条 explicit）保留。AGENTS.md 增加"结构性测试 ≠ 质量结论"原则，防止后续 agent 重建批量结构门槛。
+
+## 第 41 条 2026-08-22 - PLAN-LORA v2：语义选择与 exact trigger 解耦
+
+### 复核发现
+
+重新读取 BUILDHANDOFF、旧 PLAN-LORA、当前 LoRA config/cache、`server/main.py`、API/前端数据流和 `workflow-anatomy.md` 后，确认旧计划抓住了“先选 LoRA 再翻译”的方向，但不能原样实现：嵌套 registry 无法复用 HotDict；LLM 逐字复制 trigger 既脆弱又会被快速路径绕过；translate/jobs 没有 binding 握手；deepseek_maid 实际已在 cache，只因 type=unknown 被 `/api/loras` 隐藏。
+
+### 新决定
+
+用户确认采用 D39：LoRA Asset + Semantic Profile；选中的 LoRA/Profile 在翻译前进入 Reasoning/Vision Model 上下文，LLM 只选择允许的 profile ID，代码通过 Binding Compiler 编译 exact trigger。translate/jobs/dialog 共用 binding snapshot 与 registry revision，避免 Prompt、用户预览和实际 workflow 权重来自不同语义或不同版本。
+
+### 计划边界
+
+`PLAN-LORA.md` 已重写为 Step 0-10：先做 registry/loader/scanner/legacy adapter，再做 Binding Compiler、LLM context、API/session、前端、onboarding 和真实 A/B。registry 人工知识纳入版本控制，自动 cache 继续忽略。没有真实多人 LoRA 文件与人眼验证前，只让 schema 支持多 Profile，不宣称完成多人 composition；不引入 PromptState、Workflow Intelligence 或新的 Phase 2 批量结构门槛。

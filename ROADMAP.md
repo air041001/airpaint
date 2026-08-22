@@ -49,7 +49,7 @@
 
 Phase 2.6 收尾后不开新扩写子阶段；下一步由真实使用反馈决定，不立即建设详细输入辅助功能。
 
-### Phase 3: Character Knowledge（精简版，进行中）
+### Phase 3: Character Knowledge（精简版，已完成 2026-08-18）
 - [x] Danbooru 主 API 连通性验证，确认 exact tag/category/post_count 可用
 - [x] `CHAR` 候选协议、post_count 分类和独立 auto cache 基础实现
 - [x] 未知角色运行时联调：likely_supported 自动缓存，weak/absent/unavailable 不污染正式词典
@@ -64,8 +64,10 @@ Phase 3 不做结构化 char_dict 迁移、156 条全量审计或复杂审批后
 - [ ] 观察暗房 redo/tweak 使用频率和 D31 类字符串累加问题
 - [ ] 只有真实迭代痛点成立后才启动 PromptState 设计
 
-### Phase 5-8: 见 PLAN-v5
-Character Knowledge → PromptState → LoRA Context → Trigger Engine → LoRA Composition → Workflow Intelligence
+### Phase 5-7: LoRA Context / Binding（最终大工程，v2 计划已确认）
+- [ ] 见 `docs/PLAN-LORA.md`：LoRA-aware Painter + versioned Registry/Profile + 确定性 Binding Compiler
+- [ ] 核心验收：选中的 LoRA、Prompt、exact trigger 与 workflow 权重语义一致，不串人物/服装/风格
+- [ ] 多人 composition 只有在真实资产 + 人眼验证后才算完成；Phase 8 Workflow Intelligence 不纳入本工程
 
 ---
 
