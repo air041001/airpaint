@@ -8,9 +8,9 @@
 
 ### 当前阶段
 
-项目的 **最终大工程：LoRA Context / Binding（`docs/PLAN-LORA.md` v2）首版已完成并通过用户人眼验收**。
+项目的 **最终大工程：LoRA Context / Binding（`docs/PLAN-LORA.md` v2）已在首版定义边界内全部完成并通过用户人眼验收**。
 
-Phase 2.6（Prompt Expansion）、Phase 3（Character Knowledge）与 PLAN-LORA Step 0-10 均已完成。Phase 4 PromptState 继续由真实暗房使用触发；Phase 8 Workflow Intelligence 长期保留但不自动启动。当前没有新的大阶段被授权，后续优先观察真实使用与小范围修复。
+Phase 2.6（Prompt Expansion）、Phase 3（Character Knowledge）与 PLAN-LORA Step 0-10 均已完成。Phase 4 PromptState 继续由真实暗房使用触发；Phase 8 Workflow Intelligence 长期保留但不自动启动。下一项工作由用户指定为网站 MVP 细节优化，开始生产修改前先做只读 UI/交互审计并确认验收范围。
 
 ### 已完成模块
 
@@ -45,6 +45,7 @@ Phase 2.6（Prompt Expansion）、Phase 3（Character Knowledge）与 PLAN-LORA 
 - Phase 3 Danbooru 角色查询：主 API exact lookup 与 `name_matches` 连通；长门有希/御坂美琴已分别写入 `nagato_yuki`/`misaka_mikoto` auto cache，长门固定 Prompt 已生图并经用户确认。
 - 未验证的 baseline 回归资产已清理（DEVLOG 40）；结构不变量由确定性单测覆盖。
 - PLAN-LORA v2 已落地并通过用户验收：5 组真实 A/B 为 aware 1 胜 4 平 0 负；DeepSeek 换 Anima 后图书馆 pair 平局且用户认为优于旧 IL；Blue Archive 午后光线补测正常。
+- Remielle Dan（base/白/黑/泳装）、Dolphro-kun 风格与无 trigger Light 风格均由用户确认生效并通过验收，Registry 已提升为 verified。LoRA 显示名来自 `server/lora_registry.yaml` 的 Asset/Profile `name`，不要在前端按 key 硬编码别名。
 
 ## 2. 修改/新增文件清单
 
@@ -95,7 +96,7 @@ Phase 2.6（Prompt Expansion）、Phase 3（Character Knowledge）与 PLAN-LORA 
 | `docs/PLAN-v5 — AirPaint Prompt Intelligence.md` | 长期实施路线（唯一现行计划，取代已删除的 PLAN-v4） |
 | `docs/PLAN-LORA.md` | 最终任务 v2 设计、Step 0-10 与最终验收结果 |
 | `ROADMAP.md` | Phase 2.6/3/LoRA Context 首版完成；Phase 4/8 与多人 composition 条件触发 |
-| `docs/DEVLOG.md` | 第 31-42 条记录 Phase 1 至 LoRA Context 首版完成 |
+| `docs/DEVLOG.md` | 第 31-44 条记录 Phase 1、LoRA Context、入库 Agent 与最终收口 |
 | `docs/decisions.md` | D39 为已实现并验证的 LoRA Binding 决策 |
 | `docs/architecture.md` | 当前 Prompt/LoRA Registry/Binding/Workflow/Frontend 架构与边界 |
 | `docs/api.md` | translate/jobs/dialog 的 selection/binding/revision 契约 |

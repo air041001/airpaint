@@ -68,7 +68,10 @@ Phase 3 不做结构化 char_dict 迁移、156 条全量审计或复杂审批后
 - [x] `docs/PLAN-LORA.md`：LoRA-aware Painter + versioned Registry/Profile + 确定性 Binding Compiler
 - [x] translate/jobs/dialog 共用 binding snapshot/revision；前端支持 Profile auto/锁定和 stale Prompt 防串线
 - [x] 41 个确定性单测、前端 smoke 与 5 组真实 A/B：aware 1 胜 4 平 0 负
+- [x] 本地入库 Agent；Remielle Dan / Dolphro-kun / Light 三项新增资产生效并完成人工验收
 - [ ] 跨文件多人 composition 仅在真实资产 + 人眼验证后启动；Phase 8 Workflow Intelligence 不纳入本工程
+
+LoRA 工程在上述边界内关闭。下一项工作为网站 MVP 细节优化；先做只读 UI/交互审计、确定优先级与验收方式，再进行生产修改。
 
 ---
 

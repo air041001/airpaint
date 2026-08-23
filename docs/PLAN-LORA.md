@@ -1,6 +1,6 @@
 # PLAN-LORA — LoRA Context / Binding 工程（项目最终大工程）
 
-> 状态：首版已完成并通过用户人眼验收（2026-08-23）
+> 状态：工程已在下述首版定义边界内全部完成并通过用户人眼验收（2026-08-23）
 > 本计划取代 2026-08-19 版本。合并 PLAN-v5 的 Phase 5（LoRA Context）/ Phase 6（Trigger Engine）/ Phase 7（LoRA Composition），但仍按验证门逐步落地，不因“最终工程”而一次性铺开未验证能力。
 > 核心决定见 D39：**LLM 选择 LoRA 语义/Profile，代码确定性编译 exact trigger。**
 >
@@ -318,13 +318,13 @@ PROMPT: ...
 2. **参考图 + Active LoRA**：vision context 同样加入 `provides/profile`；视觉模型描述参考图时不得重新引入冲突主体/风格，之后仍走 Binding Compiler。
 3. **reroll**：只能改变场景/构图/光影等可变部分；explicit binding 保持锁定。
 4. **暗房 redo/tweak/vibe**：session 保存 binding snapshot；重翻译复用，不从当前页面临时选择重新猜。
-5. **无 LLM/服务失败降级**：仍可确定性注入 binding，但返回 `lora_context_degraded` warning；不得伪装为完成了语义冲突检查。
+5. **无 LLM 后端配置**：`none/google` 降级路径仍可确定性注入 binding，并返回“未执行语义冲突检查”warning。SiliconFlow/Vision 服务实际调用失败时 fail closed 返回 502，不在缺少 LoRA-aware 规划的情况下继续生成。
 
 ### 4.4 Character Knowledge 协同
 
 - LoRA Profile alias 命中后，该人物由 LoRA knowledge 提供，不再把同一名字当未知角色送 Danbooru 查询。
 - char_dict 已命中且与 LoRA Profile 是同一人物时，Compiler 去重并保留精确 binding。
-- char_dict 人物与 active character LoRA 明显不同：LLM 返回 conflict warning，不静默加入两个身份。
+- char_dict 人物与 active character LoRA 明显不同时，LoRA context 要求 LLM 不得加入冲突身份；首版不实现独立的结构化 semantic conflict 检测器或 conflict warning 字段。
 - 代码只处理可验证的 tag 去重/显式 conflict 列表；开放语义冲突仍由 LLM 判断并在 `lora_warnings` 暴露。
 
 ### 4.5 缓存
@@ -357,7 +357,7 @@ compile_lora_bindings(prompt_en, resolved_bindings, user_intent=None)
 1. 校验 key/profile/type/组合限制；
 2. 从 registry 取 exact `required_tags + default_tags`；
 3. 对 optional tags 只接受 registry 白名单中的语义选择；
-4. 删除 LLM 对 provided tags 的重复/近似复述；
+4. 删除与 exact LoRA tags 规范化后相同的重复；`provides` 的语义近似复述由 LoRA-aware LLM 协议抑制，首版不做启发式语义删除；
 5. 按确定性顺序将 LoRA tags 合入最终 Prompt；
 6. 幂等：同一 binding 编译两次结果不重复；
 7. 返回 `lora_bindings/lora_warnings`，不靠最终字符串保存状态；
@@ -429,7 +429,7 @@ python .tools/register_lora.py --civitai <url>
 - 角色 LoRA ×1 + 风格 LoRA ×1 的现有限制先保留。
 - 单 Profile LoRA：直接选择。
 - 多 Profile LoRA：显示二级选择；默认可为 `自动判断`，专家用户可明确锁定 Profile。
-- 卡片显示 `provides`、minimal tags 摘要、verified 状态；无 trigger 标注“权重生效，无需触发词”。
+- 卡片显示 `provides`、Profile、verified 状态；无 trigger 标注“权重生效，无需触发词”。首版不向普通用户额外展开 exact/minimal tags。
 - unknown/incomplete 显示但禁用生成，提供“待注册”说明。
 
 ### 7.2 调用顺序
@@ -524,7 +524,7 @@ Step 0-10 已于 2026-08-23 完成。最终实现包含 versioned Registry/热�
 | 1 | Registry schema + validator + HotLoraRegistry | nested/热更新/失败保旧/版本 hash 单测通过 |
 | 2 | Scanner/inventory 修复 | 非图片预过滤、失败可重试、unknown 可见 |
 | 3 | config 迁移 + legacy adapter | 现有 LoRA 列表和旧 key 零破坏 |
-| 4 | Selection resolver + Binding Compiler | exact/幂等/无默认第一项/冲突 warning 单测通过 |
+| 4 | Selection resolver + Binding Compiler | exact/幂等/无默认第一项/默认与降级 warning 单测通过 |
 | 5 | LoRA-aware text/vision 协议 + cache | 所有翻译路径知道 selection；cache 不串 |
 | 6 | API/jobs/dialog binding snapshot | translate→job→workflow 使用同一 binding/revision |
 | 7 | 前端 Profile/auto/stale UX | 直接/预览/reroll/参考图/暗房完整 smoke |
@@ -540,6 +540,8 @@ Step 0-10 已于 2026-08-23 完成。最终实现包含 versioned Registry/热�
 - DeepSeek：旧 Illustrious 资产换为 Anima 专用 LoRA；同作者身份/女仆装语义以 0.85 绑定，图书馆 aware/legacy 两张均被用户接受，且 Anima 整体优于原 IL 版本。作者水下花园 Prompt 只作 LoRA 控制组，不参与图书馆语义胜负。
 - 光影反馈：`明亮午后` 从旧的 golden/lazy 午后词条中分离为 clear daylight/high sun/crisp shadows；Blue Archive 两张复测光线均正常。
 - 边界：多 Profile schema 已验证，角色×1 + 风格×1 可组合；没有真实多人 LoRA 资产，因此跨文件多角色 composition 仍留待未来证据触发。
+- 最终一致性审计（2026-08-23）：SiliconFlow/Vision 调用失败为 502 fail-closed；首版没有独立 semantic conflict detector；前端展示 provides/Profile/verified 而不展开 minimal tags。以上已按真实代码修正文案，不是遗留实现任务。
+- 新增 Remielle Dan（base/白/黑/泳装）、Dolphro-kun 风格与无 trigger 的 Light 风格后，用户确认三项 LoRA 均生效并通过验收；Registry 状态已由 candidate 提升为 verified。
 
 开发时可用内部 feature flag/实验参数保留 `legacy` 与 `aware` 两条链，A/B 通过后再把 `aware` 设为生产默认；验证失败不 push 失败状态。
 

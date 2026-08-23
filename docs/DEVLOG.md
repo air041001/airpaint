@@ -729,3 +729,11 @@ Phase 2.6 同时证明了两件事：自动画师协议相对旧翻译有稳定�
 真实 Remi description dry-run 暴露并修复了三类不能只靠模型保证的问题：明确推荐 0.7 被过度保守退回 1.0、逗号 tag 被合并、转义括号被改写。最终由代码提取作者明确单值强度、拆分 tag、恢复 exact trigger，并过滤可能因普通颜色描述误选 Profile 的裸 `white/black/白/黑` alias。Civitai URL 候选分支原有不可达缩进错误同时修复。
 
 新增 `remielle_dan` candidate（base/white/black/swim，默认 0.7）、`dolphro_kun_style` candidate（`@dropkun`）与无 trigger 的 `light_style` candidate。两个无作者视觉说明的风格只写保守 provides，不虚构特征；所有新项等待真实生图验收。
+
+## 第 44 条 2026-08-23 - PLAN-LORA 最终一致性审计与验收关闭
+
+用户确认 Remielle Dan、Dolphro-kun 与 Light 三项新增 LoRA 均实际生效并通过验收，Registry 中相应 Profile/Asset 从 candidate 提升为 verified。默认 strength 只负责初始化网站滑块，用户调整值仍优先，不作为工程验收门槛。
+
+逐项复核 PLAN-LORA 与代码后确认 Step 0-10 和核心成功标准已完成；同时修正文档中三处过度表述：SiliconFlow/Vision 调用失败实际为 502 fail closed；首版通过 LoRA context 抑制冲突但没有独立 semantic conflict detector；前端展示 provides/Profile/verified，不额外展开 minimal tags。三项均不是未完成开发任务，跨文件多人 composition 继续属于明确排除的证据触发边界。
+
+LoRA 显示名称的单一真相为 `server/lora_registry.yaml` 的 Asset/Profile `name`，前端只渲染 `/api/loras` 返回值，不按 key 硬编码中文别名。LoRA 工程至此关闭，下一项工作转向网站 MVP 细节优化。

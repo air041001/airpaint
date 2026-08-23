@@ -534,3 +534,17 @@
 **验证**：9 个确定性测试覆盖 fenced JSON、Remi base/white/black/swim Profile、单值强度硬事实、范围不折叠、exact trigger 转义恢复、泛化 alias 过滤、无 trigger/required 风格和 Civitai URL 分支。使用真实 Remi 作者说明进行了多轮 dry-run，Registry 均在取消后保持不变；最终规则得到 base + 三形态、0.7/0.7 与作者 exact trigger。三个新资产以 candidate 注册，等待真实生图验收。
 
 **相关文件**：`.tools/register_lora.py`、`.tools/start_lora_onboard_agent.bat`、`.tools/test_lora_onboard_agent.py`、`server/lora_registry.yaml`、`docs/architecture.md`、`docs/BUILDHANDOFF.md`。
+
+## D41. PLAN-LORA 最终关闭：fail closed、无独立冲突检测、显示名归 Registry
+
+**背景**：用户确认新增 Remielle Dan、Dolphro-kun 与 Light LoRA 均实际生效，并要求核对 PLAN-LORA 是否全部完成、后续如何修改用户可见名称。
+
+**复核**：Step 0-10 与核心目标均已实现并经过人眼验收，但计划正文有三处比代码更宽：SiliconFlow 服务失败降级继续生成、结构化 semantic conflict warning、前端 minimal tags 摘要。实际代码分别为 502 fail closed、LoRA context 协议抑制冲突、前端只展示 provides/Profile/verified。
+
+**决定**：LoRA 工程按真实首版边界关闭，不为逐字满足旧计划临时增加未经验证的故障生成或冲突启发式。`none/google` 配置降级仍注入 binding 并 warning；SiliconFlow/Vision 真故障 fail closed。跨文件多人 composition 继续等待真实资产，不计入本工程未完成项。
+
+LoRA 用户可见名称以 versioned `server/lora_registry.yaml` 为单一真相：Asset `name` 控制选择器与总览名称，Profile `name` 控制二级形态按钮。前端只负责渲染 `/api/loras`，不得按 key 硬编码中文名；Registry 修改经热加载后刷新网页即可生效。
+
+**验证**：用户确认三项新增资产生效；Registry 提升为 verified。代码审计确认 `/api/loras → l.name/profile.name → web` 数据流、显式 Profile UI、stale binding、warnings 与 502 失败路径。
+
+**相关文件**：`server/lora_registry.yaml`、`server/main.py`、`web/index.html`、`docs/PLAN-LORA.md`、`docs/architecture.md`。

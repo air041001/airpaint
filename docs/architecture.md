@@ -66,8 +66,9 @@ Active LoRA 时，文本快速路径也强制进入 LoRA-aware painter；Reasoni
 - `resolve_lora_selections()` 只接受 registry key/Profile/optional ID；explicit 锁定，auto 由 LLM 在候选 ID 中选择，失败只可使用显式 default。返回 immutable-style `lora_bindings + warnings + revision`。
 - `compile_lora_bindings()` 将 registry exact tags 幂等合入 Prompt；客户端回传的文件名、tags 或强度不作为真相。`jobs` 根据 key/profile/optional 重新解析，并在 revision 变化时返回 409。
 - text、vision、reroll、jobs、dialog redo/tweak/vibe 与 `start-image` 都携带同一 binding snapshot。角色别名同时进入 Character Knowledge 去重，避免 LoRA 人物又被当未知角色查询。
+- SiliconFlow/Vision 实际调用失败时请求以 502 fail closed，不使用缺少 LoRA-aware 语义规划的 Prompt 继续生成；`none/google` 配置降级路径只注入确定性 binding 并向前端显示 warning。首版通过 context 约束避免身份/服装/风格冲突，不实现独立 semantic conflict detector。
 - 本地 onboarding 入口为 `.tools/start_lora_onboard_agent.bat`（或 `python .tools/register_lora.py --agent`）：先尝试刷新 LoRA Manager 增量索引，再让维护者粘贴作者说明。Reasoning Model 只生成候选 Profile/provides；代码固定本地文件名、candidate 状态，从原文恢复 exact trigger 转义并提取明确的单一推荐强度。候选支持自然语言修订，只有双重确认后才原子写 Registry。
-- onboarding Agent 只从 gitignored `config.yaml` 读取现有 `siliconflow_api_key/model`，不复制或打印 key；作者说明按不可信输入处理。它不自动把 Civitai/trainedWords 提升为正式知识，真实出图前保持 `verified: candidate`。
+- onboarding Agent 只从 gitignored `config.yaml` 读取现有 `siliconflow_api_key/model`，不复制或打印 key；作者说明按不可信输入处理。它不自动把 Civitai/trainedWords 提升为正式知识，真实出图前保持 `verified: candidate`，用户验收后再提升。
 
 ### Workflow Engine (工作流注入)
 `build_prompt(wf_name, prompt_en, w, h, lora_keys=None, ..., lora_bindings=None, registry_revision=None)`:

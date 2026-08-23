@@ -211,8 +211,8 @@ loras:
         default_tags: []
         optional_tags: {}
         source: "user-provided author description"
-        verified: candidate
-        notes: "作者说明 remielle_dan 可单独触发；尚未进行真实出图验证。"
+        verified: verified
+        notes: "作者说明 remielle_dan 可单独触发；用户于 2026-08-23 确认 LoRA 生效并通过验收。"
       white:
         name: "Remielle Dan（白）"
         aliases: ["Remielle Dan white", "Remielle Dan 白", "白 Remielle Dan"]
@@ -221,8 +221,8 @@ loras:
         default_tags: ["a white halter top with tassels", "white headband", "stars hair ornament"]
         optional_tags: {}
         source: "user-provided author description"
-        verified: candidate
-        notes: "作者 quick-use 候选；尚未进行真实出图验证。"
+        verified: verified
+        notes: "作者 quick-use；用户于 2026-08-23 确认 LoRA 生效并通过验收。"
       black:
         name: "Remielle Dan（黑）"
         aliases: ["Remielle Dan black", "Remielle Dan 黑", "黑 Remielle Dan"]
@@ -231,8 +231,8 @@ loras:
         default_tags: ["wearing a dark high-collared top with silver ornaments and cross straps", "star hair ornament"]
         optional_tags: {}
         source: "user-provided author description"
-        verified: candidate
-        notes: "作者完整说明含 x_hair_ornament，但 quick-use 未包含，因此保留为 provides、不默认注入；尚未进行真实出图验证。"
+        verified: verified
+        notes: "作者完整说明含 x_hair_ornament，但 quick-use 未包含，因此保留为 provides、不默认注入；用户于 2026-08-23 确认 LoRA 生效并通过验收。"
       swim:
         name: "Remielle Dan（泳装）"
         aliases: ["Remielle Dan swim", "Remielle Dan 泳装", "Remielle Dan swimsuit"]
@@ -241,8 +241,8 @@ loras:
         default_tags: ["wearing a white sleeveless top with purple ruffles", "shell headband"]
         optional_tags: {}
         source: "user-provided author description"
-        verified: candidate
-        notes: "作者 quick-use 候选；尚未进行真实出图验证。"
+        verified: verified
+        notes: "作者 quick-use；用户于 2026-08-23 确认 LoRA 生效并通过验收。"
     legacy_keys: {}
 
   dolphro_kun_style:
@@ -254,7 +254,7 @@ loras:
     provides: ["Dolphro-kun illustration style"]
     default_strength: {model: 1.0, clip: 1.0}
     source: "user-provided trigger information"
-    verified: candidate
+    verified: verified
     legacy_keys: []
 
   light_style:
@@ -266,5 +266,5 @@ loras:
     provides: ["Light LoRA illustration style"]
     default_strength: {model: 1.0, clip: 1.0}
     source: "user-provided no-trigger information"
-    verified: candidate
+    verified: verified
     legacy_keys: []
