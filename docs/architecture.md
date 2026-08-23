@@ -101,9 +101,9 @@ Active LoRA 时，文本快速路径也强制进入 LoRA-aware painter；Reasoni
 ## 前端 (web/index.html)
 
 单文件 SPA, 无框架。localStorage 存邀请码；线上使用 `https://api.airpaint.xyz`，localhost/127.0.0.1 自动使用当前 origin 便于本机 smoke。
-三屏: 登录(邀请码) / 工坊(主界面) / 暗房(对话迭代)。深色暖调(安灯琥珀), 无框架。
+三屏: 登录(邀请码) / 工坊(主界面) / 暗房(对话迭代)。深色暖调(安灯琥珀), 无框架。桌面工坊使用画布优先的一屏布局：主画布 + 窄 AI 理解栏 + 参数栏，紧凑指令条和接触印样式历史带把垂直空间让给成像结果；移动端恢复纵向滚动。
 出图两步走 (翻译与生成解耦, 见 D17): 中文 + `lora_selections` -> `/api/translate` 拿 prompt_en/breakdown/prompt_ir + binding/revision -> (可选预览/编辑) -> `/api/jobs` 回传 binding/revision。切换 LoRA/Profile 会使当前翻译过期，确认生成前必须重新翻译，避免 Prompt 与实际权重串线。
-右侧参数: 工作流 / 尺寸 / LoRA(角色+风格分组、Profile 自动判断/显式锁定、各自默认强度与滑块、provides/verified 展示、待注册禁用) / 参考图上传。
+右侧参数: 工作流 / 尺寸 / LoRA(角色+风格分组、Profile 自动判断/显式锁定、各自默认强度与滑块、provides/verified 展示、待注册禁用) / 参考图上传。尺寸为点击展开的画幅选择器，标准档与高分辨率实验档分组；选择后自动收起。当前开放标准 `832x1216 / 896x1152 / 1024x1024 / 1344x768`，高分辨率 `1024x1536 / 1536x864`。
 轮询 `/api/jobs/{id}` 每 2s, 完成后展示图 + 入历史画廊(localStorage 缩略图, 最近 12 张)。出图后「继续迭代」进暗房: 换一版(txt2img 重抽, D31 替换意图) / 微调(img2img, 低 denoise)。
 
 > `web/` 是独立 git 仓库 → `air041001/air`。但域名迁移后已**不再依赖 GitHub Pages**
@@ -114,6 +114,7 @@ Active LoRA 时，文本快速路径也强制进入 LoRA-aware painter；Reasoni
 关键字段: `comfy_url` `comfy_dir` `host/port` `allow_origins` `tokens` `daily_limit`
 `timeout_seconds` `banned_words` `translate` `siliconflow_api_key` `siliconflow_model` `siliconflow_vision_model` `reroll_temperature`
 `workflows.anima.{file,prompt_node,seed_node,size_node,lora_node,image_node,switch_node,denoise_node,detailer_nodes,sizes,quality_prefix}`;
+`submit_and_wait()` 以 `timeout_seconds` 为约 1MP 基准，并按请求像素面积放宽高分辨率 deadline（上限 900 秒），避免 ComfyUI 已完成但网站先误报超时。
 人工 LoRA 真相在 `server/lora_registry.yaml`；`config.yaml` 顶层 `loras` 只作未迁移 legacy 兼容。未注册文件进入 gitignored `server/lora_cache.json` inventory，本地 `.metadata.json`/`.civitai.info` 优先，Civitai hash lookup 次之。
 
 ## 尚未实现 / 已知限制

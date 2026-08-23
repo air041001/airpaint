@@ -10,7 +10,7 @@
 
 项目的 **最终大工程：LoRA Context / Binding（`docs/PLAN-LORA.md` v2）已在首版定义边界内全部完成并通过用户人眼验收**。
 
-Phase 2.6（Prompt Expansion）、Phase 3（Character Knowledge）与 PLAN-LORA Step 0-10 均已完成。Phase 4 PromptState 继续由真实暗房使用触发；Phase 8 Workflow Intelligence 长期保留但不自动启动。下一项工作由用户指定为网站 MVP 细节优化，开始生产修改前先做只读 UI/交互审计并确认验收范围。
+Phase 2.6（Prompt Expansion）、Phase 3（Character Knowledge）与 PLAN-LORA Step 0-10 均已完成。网站 MVP 细节优化第一批也已完成：画布优先布局、紧凑输入、接触印样历史带和分组尺寸选择器。Phase 4 PromptState 继续由真实暗房使用触发；Phase 8 Workflow Intelligence 长期保留但不自动启动。
 
 ### 已完成模块
 
@@ -18,7 +18,7 @@ Phase 2.6（Prompt Expansion）、Phase 3（Character Knowledge）与 PLAN-LORA 
 - `compile_prompt()`：角色裸名清理、tag 去重、`count → character → general` 排序、NL 拼接。
 - `infer_render_profile()`：当前只对明确 NSFW、单主体、简单动作使用 `tag_first`；普通 SFW 保留 NL，复杂关系使用 `relation_hybrid`。
 - `/api/translate`：增加 `prompt_ir` 和 additive `prompt_ir_meta`，前端旧 `breakdown` 契约保持兼容。
-- 结构性回归：由 41 个零依赖单测覆盖 Prompt/角色知识与 LoRA Registry/Binding，不依赖未验证 baseline。
+- 结构性回归：由 42 个零依赖单测覆盖 Prompt/角色知识、LoRA Registry/Binding 与高分辨率 timeout，不依赖未验证 baseline。
 - Failure taxonomy：已覆盖 counting、entity binding、action/pose、interaction、spatial、lighting、NSFW anatomy、model artifact、semantic misread 等类型。
 - NSFW 结构评测集：8 条明确成人内容，结构与 explicit safety 验证通过。
 - Rendering Strategy 实验工具：固定 Prompt、seed、尺寸、workflow，支持盲评页、manifest、variant 对照。
@@ -46,6 +46,7 @@ Phase 2.6（Prompt Expansion）、Phase 3（Character Knowledge）与 PLAN-LORA 
 - 未验证的 baseline 回归资产已清理（DEVLOG 40）；结构不变量由确定性单测覆盖。
 - PLAN-LORA v2 已落地并通过用户验收：5 组真实 A/B 为 aware 1 胜 4 平 0 负；DeepSeek 换 Anima 后图书馆 pair 平局且用户认为优于旧 IL；Blue Archive 午后光线补测正常。
 - Remielle Dan（base/白/黑/泳装）、Dolphro-kun 风格与无 trigger Light 风格均由用户确认生效并通过验收，Registry 已提升为 verified。LoRA 显示名来自 `server/lora_registry.yaml` 的 Asset/Profile `name`，不要在前端按 key 硬编码别名。
+- 前端布局已按用户 1920×950 截图重排；`1024x1536` 在 RTX 4060 Laptop 8GB、无 detailer 下真实成功，峰值约 7.75GB，耗时略超旧 300 秒。后端现按像素面积将该档 timeout 放宽为 450 秒，前端提示 2～5 分钟。
 
 ## 2. 修改/新增文件清单
 
@@ -55,7 +56,7 @@ Phase 2.6（Prompt Expansion）、Phase 3（Character Knowledge）与 PLAN-LORA 
 |---|---|
 | `server/main.py` | Prompt/Intent/Workflow Engine + LoRA Registry/Scanner/Resolver/Binding/API/session |
 | `server/lora_registry.yaml` | versioned LoRA Asset/Profile/trigger/provides/default strength 人工知识 |
-| `.tools/test_prompt_unit.py` | 41 个零依赖 Prompt/角色知识/LoRA Registry/Binding/API/session 单测 |
+| `.tools/test_prompt_unit.py` | 42 个零依赖 Prompt/角色知识/LoRA Registry/Binding/API/session/timeout 单测 |
 | `.tools/register_lora.py` | LoRA sidecar inspection、Registry validate 与原子 onboarding |
 | `.tools/start_lora_onboard_agent.bat` | 双击启动本地 LoRA 入库 Agent；API key 只从 gitignored config 读取 |
 | `.tools/test_lora_onboard_agent.py` | onboarding JSON/schema/exact trigger/strength/Civitai 分支确定性测试 |
@@ -96,7 +97,7 @@ Phase 2.6（Prompt Expansion）、Phase 3（Character Knowledge）与 PLAN-LORA 
 | `docs/PLAN-v5 — AirPaint Prompt Intelligence.md` | 长期实施路线（唯一现行计划，取代已删除的 PLAN-v4） |
 | `docs/PLAN-LORA.md` | 最终任务 v2 设计、Step 0-10 与最终验收结果 |
 | `ROADMAP.md` | Phase 2.6/3/LoRA Context 首版完成；Phase 4/8 与多人 composition 条件触发 |
-| `docs/DEVLOG.md` | 第 31-44 条记录 Phase 1、LoRA Context、入库 Agent 与最终收口 |
+| `docs/DEVLOG.md` | 第 31-45 条记录 Phase 1、LoRA Context、入库 Agent、最终收口与首批 UI 优化 |
 | `docs/decisions.md` | D39 为已实现并验证的 LoRA Binding 决策 |
 | `docs/architecture.md` | 当前 Prompt/LoRA Registry/Binding/Workflow/Frontend 架构与边界 |
 | `docs/api.md` | translate/jobs/dialog 的 selection/binding/revision 契约 |
@@ -113,7 +114,7 @@ Phase 2.6（Prompt Expansion）、Phase 3（Character Knowledge）与 PLAN-LORA 
 
 ### 立即下一步
 
-1. 没有自动开启的新大阶段；先观察真实用户在 LoRA Profile、暗房 redo/tweak 和手动 Prompt 编辑中的反馈。
+1. 没有自动开启的新大阶段；网站细节后续优先观察 LoRA 中文摘要、空/错状态、暗房 redo/tweak、历史作品与手动 Prompt 编辑反馈。
 2. 新下载 LoRA 推荐双击 `.tools/start_lora_onboard_agent.bat`：它会尝试调用 LoRA Manager 增量 scan、列出未注册文件、接收多行作者说明并展示候选；输入 `revise` 可自然语言修订，只有 `write` + 最终 `y` 才写 Registry。仍需检查 exact tags/强度，并在真实生图后再提升 verified。
 3. 若 ComfyUI 未运行，Agent 会安全跳过 Manager scan；启动 ComfyUI 后重新运行即可。增量 scan 仍找不到文件时才调用 `?full_rebuild=true`，不要日常全量哈希。
 
@@ -156,7 +157,7 @@ python -m py_compile server/main.py .tools/register_lora.py .tools/test_lora_onb
 python .tools/test_prompt_unit.py
 ```
 
-状态：`41 prompt unit tests passed`。
+状态：`42 prompt unit tests passed`。
 
 ```text
 python .tools/test_lora_onboard_agent.py
@@ -165,7 +166,9 @@ python .tools/register_lora.py --validate
 
 状态：`9 lora onboarding agent tests passed`；`registry valid: 9 assets`。
 
-前端：提取两个内联 script 后 `node --check -` 通过；81 个 `$()` 元素引用全部存在。
+前端：两个内联 script 语法通过；103 个 DOM id 无重复，全部 `$()` 引用存在；浏览器完成 1920×950、1280×720、390×844 响应式与尺寸展开/收起验证。
+
+高分辨率：`1024x1536` 无 detailer 真实工作流成功输出 `anima_20260823_00014_.png`；旧 300 秒 deadline 先误报超时，像素面积 timeout 修正后该档为 450 秒。
 
 真实 LoRA：5 组 fixed-condition A/B 均完成用户人眼验收，aware 1 胜 4 平 0 负；DeepSeek Anima 最终 3/3 生成，图书馆 A/C 平局。
 

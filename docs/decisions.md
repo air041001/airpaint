@@ -548,3 +548,26 @@ LoRA 用户可见名称以 versioned `server/lora_registry.yaml` 为单一真相
 **验证**：用户确认三项新增资产生效；Registry 提升为 verified。代码审计确认 `/api/loras → l.name/profile.name → web` 数据流、显式 Profile UI、stale binding、warnings 与 502 失败路径。
 
 **相关文件**：`server/lora_registry.yaml`、`server/main.py`、`web/index.html`、`docs/PLAN-LORA.md`、`docs/architecture.md`。
+
+## D42. 网站第一批细化：画布优先布局与分级画幅
+
+**背景**：1920×950 实际工作台中，竖图显示高度只有约 418px；横跨主区域的输入框与 112px 历史缩略图占用大量垂直空间。尺寸只有三个平铺按钮，且 `1216x832` 不在用户当前 Anima workflow note 的推荐画幅中。
+
+**问题**：如何在不推翻既有暗房视觉和 Prompt/LoRA 工作流的前提下，让成图成为真正的视觉中心，并向 8GB RTX 4060 开放有边界的高分辨率？
+
+**候选**：
+1. 只扩大画布宽度；竖图受高度限制，收益很小。
+2. 桌面锁定一屏高度，压缩输入/历史、收窄 AI 理解栏；尺寸改为分组画幅选择器。
+3. 默认全屏看图、其余控制隐藏；成图最大，但会破坏当前可同时检查 Prompt 和参数的工作方式。
+
+**决定**：采用候选 2。桌面工坊使用确定的一屏高度，紧凑“拍摄指令条”与接触印样历史带把空间还给画布；移动端继续纵向排列。尺寸选择器点击展开、选择即收起，用画幅轮廓、方向和 MP 辅助识别。
+
+标准档为 `832x1216 / 896x1152 / 1024x1024 / 1344x768`；高分辨率实验档为 `1024x1536 / 1536x864`，显式提示更慢和显存压力。删除 `1216x832`，暂不开放 `1152x1536 / 1536x1536`。`timeout_seconds` 继续作为约 1MP 基准，`generation_timeout_seconds()` 按像素面积放宽、上限 900 秒；前端高分辨率状态显示 2～5 分钟。
+
+**原因**：这套改动解决的是竖图的高度瓶颈，而不是表面加宽；尺寸分级让用户仍可试高分辨率，但不会把接近显存上限的选项伪装成默认安全档。保留画布、AI 理解和参数同时可见，符合 AirPaint 面向懂 Prompt/ComfyUI 用户的定位。
+
+**代价**：高分辨率显著更慢；8GB 显存下不承诺 detailer 组合。桌面使用一屏工作台，极低高度窗口需要依赖面板内部滚动；移动端尺寸菜单必须使用文档流展开，避免被参数卡片裁切。
+
+**验证**：浏览器验证 1920×950、1280×720、390×844；宽屏画布高度约从 418px 增至 538px，输入区约从 222px 降至 155px。`1024x1536` 无 detailer 在 RTX 4060 Laptop 8GB 上真实成功，峰值显存约 7.75GB，输出 `anima_20260823_00014_.png`；旧 300 秒 deadline 先于 ComfyUI 完成误报超时，因此修正为 450 秒。42 个确定性单测、Python/内联 JS/DOM 引用检查通过。
+
+**相关文件**：`web/index.html`、`server/main.py`、`server/config.example.yaml`、`.tools/test_prompt_unit.py`、`docs/api.md`、`docs/architecture.md`。

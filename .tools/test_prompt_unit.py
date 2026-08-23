@@ -98,6 +98,13 @@ def test_experiment_negative_override_is_opt_in():
             workflow["negative_text_node"] = previous
 
 
+def test_generation_timeout_scales_with_pixel_area():
+    base = int(main.CFG.get("timeout_seconds", 300))
+    assert main.generation_timeout_seconds(832, 1216) == base
+    assert main.generation_timeout_seconds(1024, 1536) == round(base * 1.5)
+    assert main.generation_timeout_seconds(4096, 4096) == 900
+
+
 def test_render_profile_inference():
     simple = {"subject": ["1girl"], "action": ["standing"], "pose": [], "interaction": []}
     nsfw_simple = {"subject": ["1girl"], "appearance": ["adult", "nude"],
@@ -703,6 +710,7 @@ def main_test():
         test_character_bare_name_is_removed,
         test_compile_prompt_merges_tags_and_nl,
         test_experiment_negative_override_is_opt_in,
+        test_generation_timeout_scales_with_pixel_area,
         test_render_profile_inference,
         test_tag_first_profile_drops_nl,
         test_prompt_ir_meta_is_additive,

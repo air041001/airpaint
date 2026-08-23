@@ -51,7 +51,7 @@ workflows:
       nsfw: "28"
       face: "29"
       eyes: "30"
-    sizes: ["832x1216", "1216x832", "1024x1024"]
+    sizes: ["832x1216", "896x1152", "1024x1024", "1344x768", "1024x1536", "1536x864"]
     quality_prefix: "masterpiece, best quality, newest, absurdres, "
 
 # ---- LoRA 配置 ----

@@ -1958,6 +1958,15 @@ async def upload_image_to_comfy(image_bytes: bytes) -> str:
     return r.json()["name"]
 
 
+def generation_timeout_seconds(width: int | None, height: int | None) -> int:
+    """按像素面积放宽高分辨率任务超时，标准约 1MP 仍沿用配置值。"""
+    base_timeout = max(1, int(CFG.get("timeout_seconds", 300)))
+    if not width or not height:
+        return base_timeout
+    scale = max(1.0, (int(width) * int(height)) / (1024 * 1024))
+    return min(900, max(base_timeout, round(base_timeout * scale)))
+
+
 async def submit_and_wait(wf_name: str, prompt_en: str, width, height, lora_keys: list[str] | None = None,
                           strength_char: float | None = None, strength_style: float | None = None,
                           image_filename: str | None = None, denoise: float | None = None,
@@ -1977,7 +1986,7 @@ async def submit_and_wait(wf_name: str, prompt_en: str, width, height, lora_keys
         raise RuntimeError(f"ComfyUI 拒绝: {r.text[:200]}")
     pid = r.json()["prompt_id"]
 
-    deadline = time.time() + int(CFG.get("timeout_seconds", 300))
+    deadline = time.time() + generation_timeout_seconds(width, height)
     while time.time() < deadline:
         await asyncio.sleep(2)
         h = (await CLIENT.get(f"{COMFY}/history/{pid}")).json()
