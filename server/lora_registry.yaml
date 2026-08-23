@@ -192,3 +192,79 @@ loras:
     source: "manual config"
     verified: curated
     legacy_keys: ["blue_archive_style"]
+
+  remielle_dan:
+    name: "Remielle Dan"
+    type: character
+    file: "remi_lora-000003.safetensors"
+    trigger_policy: profile
+    default_strength: {model: 0.7, clip: 0.7}
+    selection:
+      default_profile: base
+      allow_multiple_profiles: false
+    profiles:
+      base:
+        name: "Remielle Dan（基础）"
+        aliases: ["Remielle Dan", "remielle_dan"]
+        provides: ["Remielle Dan character identity"]
+        required_tags: ["remielle_dan"]
+        default_tags: []
+        optional_tags: {}
+        source: "user-provided author description"
+        verified: candidate
+        notes: "作者说明 remielle_dan 可单独触发；尚未进行真实出图验证。"
+      white:
+        name: "Remielle Dan（白）"
+        aliases: ["Remielle Dan white", "Remielle Dan 白", "白 Remielle Dan"]
+        provides: ["Remielle Dan white-form identity", "white halter top with tassels", "white headband", "star hair ornaments"]
+        required_tags: ["remielle_dan \\(white\\)"]
+        default_tags: ["a white halter top with tassels", "white headband", "stars hair ornament"]
+        optional_tags: {}
+        source: "user-provided author description"
+        verified: candidate
+        notes: "作者 quick-use 候选；尚未进行真实出图验证。"
+      black:
+        name: "Remielle Dan（黑）"
+        aliases: ["Remielle Dan black", "Remielle Dan 黑", "黑 Remielle Dan"]
+        provides: ["Remielle Dan black-form identity", "dark high-collared top with silver ornaments and cross straps", "star hair ornament", "x hair ornament"]
+        required_tags: ["remielle_dan \\(black\\)"]
+        default_tags: ["wearing a dark high-collared top with silver ornaments and cross straps", "star hair ornament"]
+        optional_tags: {}
+        source: "user-provided author description"
+        verified: candidate
+        notes: "作者完整说明含 x_hair_ornament，但 quick-use 未包含，因此保留为 provides、不默认注入；尚未进行真实出图验证。"
+      swim:
+        name: "Remielle Dan（泳装）"
+        aliases: ["Remielle Dan swim", "Remielle Dan 泳装", "Remielle Dan swimsuit"]
+        provides: ["Remielle Dan swimsuit-form identity", "white sleeveless top with purple ruffles", "shell headband"]
+        required_tags: ["remielle_dan \\(swim\\)"]
+        default_tags: ["wearing a white sleeveless top with purple ruffles", "shell headband"]
+        optional_tags: {}
+        source: "user-provided author description"
+        verified: candidate
+        notes: "作者 quick-use 候选；尚未进行真实出图验证。"
+    legacy_keys: {}
+
+  dolphro_kun_style:
+    name: "Dolphro-kun 画风"
+    type: style
+    file: "dolphro-kun_v1_step400.safetensors"
+    trigger_policy: required
+    required_tags: ["@dropkun"]
+    provides: ["Dolphro-kun illustration style"]
+    default_strength: {model: 1.0, clip: 1.0}
+    source: "user-provided trigger information"
+    verified: candidate
+    legacy_keys: []
+
+  light_style:
+    name: "Light 画风"
+    type: style
+    file: "light_lora-000006.safetensors"
+    trigger_policy: none
+    required_tags: []
+    provides: ["Light LoRA illustration style"]
+    default_strength: {model: 1.0, clip: 1.0}
+    source: "user-provided no-trigger information"
+    verified: candidate
+    legacy_keys: []

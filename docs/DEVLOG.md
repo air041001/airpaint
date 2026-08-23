@@ -721,3 +721,11 @@ Phase 2.6 同时证明了两件事：自动画师协议相对旧翻译有稳定�
 ### 边界
 
 首版完成的是 LoRA Context、Profile/Trigger Binding 与角色×1 + 风格×1 的状态一致性。没有真实跨文件多人 LoRA 资产，不宣称完成自由多人 composition；不启动 PromptState、Workflow Intelligence 或推荐系统。
+
+## 第 43 条 2026-08-23 - 本地 LoRA 入库 Agent 与三项候选资产
+
+为避免每次新增复杂 LoRA 都占用主开发对话上下文，`register_lora.py` 增加 `--agent` 与双击启动入口。工具复用 `config.yaml` 中现有 Reasoning Model/API key，自动尝试刷新 LoRA Manager 增量索引，接收多行作者说明并生成可自然语言修订的 Registry 候选；只有 `write` + 最终确认才原子写入。
+
+真实 Remi description dry-run 暴露并修复了三类不能只靠模型保证的问题：明确推荐 0.7 被过度保守退回 1.0、逗号 tag 被合并、转义括号被改写。最终由代码提取作者明确单值强度、拆分 tag、恢复 exact trigger，并过滤可能因普通颜色描述误选 Profile 的裸 `white/black/白/黑` alias。Civitai URL 候选分支原有不可达缩进错误同时修复。
+
+新增 `remielle_dan` candidate（base/white/black/swim，默认 0.7）、`dolphro_kun_style` candidate（`@dropkun`）与无 trigger 的 `light_style` candidate。两个无作者视觉说明的风格只写保守 provides，不虚构特征；所有新项等待真实生图验收。

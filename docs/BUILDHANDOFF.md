@@ -27,7 +27,7 @@ Phase 2.6（Prompt Expansion）、Phase 3（Character Knowledge）与 PLAN-LORA 
 - LoRA Context / Binding：versioned Registry/Profile、last-good revision、scanner inventory、legacy adapter、Selection Resolver、幂等 exact Binding Compiler。
 - active LoRA 在翻译前进入 Reasoning/Vision Model 上下文；translate/jobs/dialog/start-image 共用 binding snapshot/revision。
 - 前端 Profile auto/显式锁定、per-asset 默认强度、provides/verified/待注册、切换后 stale Prompt 防串线。
-- onboarding：`.tools/register_lora.py --inspect/--validate`；人工蒸馏后原子更新 Registry，不自动把 HTML/Civitai trainedWords 升格为正式知识。
+- onboarding：双击 `.tools/start_lora_onboard_agent.bat` 或运行 `.tools/register_lora.py --agent`，粘贴作者说明后由 Reasoning Model 生成可修订候选；代码恢复 exact trigger/明确单值强度，双重确认后原子更新 Registry。`--inspect/--civitai/--validate` 继续可用，不自动把 HTML/Civitai trainedWords 升格为正式知识。
 
 ### 已验证项
 
@@ -56,6 +56,8 @@ Phase 2.6（Prompt Expansion）、Phase 3（Character Knowledge）与 PLAN-LORA 
 | `server/lora_registry.yaml` | versioned LoRA Asset/Profile/trigger/provides/default strength 人工知识 |
 | `.tools/test_prompt_unit.py` | 41 个零依赖 Prompt/角色知识/LoRA Registry/Binding/API/session 单测 |
 | `.tools/register_lora.py` | LoRA sidecar inspection、Registry validate 与原子 onboarding |
+| `.tools/start_lora_onboard_agent.bat` | 双击启动本地 LoRA 入库 Agent；API key 只从 gitignored config 读取 |
+| `.tools/test_lora_onboard_agent.py` | onboarding JSON/schema/exact trigger/strength/Civitai 分支确定性测试 |
 | `.tools/eval_set/render_exp/lora_context_cases.yaml` | 5 组真实 LoRA fixed-condition A/B 夹具 |
 | `.tools/eval_set/render_exp/run_lora_context_ab.py` | legacy/aware/author-control 真实生图与盲评页 runner |
 | `.tools/eval_set/image_cases.yaml` | Phase 1 固定 Prompt+seed 视觉夹具（002/012/018，已人眼验证） |
@@ -111,8 +113,8 @@ Phase 2.6（Prompt Expansion）、Phase 3（Character Knowledge）与 PLAN-LORA 
 ### 立即下一步
 
 1. 没有自动开启的新大阶段；先观察真实用户在 LoRA Profile、暗房 redo/tweak 和手动 Prompt 编辑中的反馈。
-2. 新下载 LoRA 先用 `python .tools/register_lora.py --inspect <file>` 查看本地作者资料，再人工写 Registry 并 `--validate`；不要让自动 inventory 的猜测直接成为正式 Profile。
-3. 若生产 API 仍是旧 Python 进程，重启后端再做在线 UI smoke；ComfyUI 新放入文件若 LoraManager 报 basename/OS Error 2，先调用其完整 scan 刷新持久索引。
+2. 新下载 LoRA 推荐双击 `.tools/start_lora_onboard_agent.bat`：它会尝试调用 LoRA Manager 增量 scan、列出未注册文件、接收多行作者说明并展示候选；输入 `revise` 可自然语言修订，只有 `write` + 最终 `y` 才写 Registry。仍需检查 exact tags/强度，并在真实生图后再提升 verified。
+3. 若 ComfyUI 未运行，Agent 会安全跳过 Manager scan；启动 ComfyUI 后重新运行即可。增量 scan 仍找不到文件时才调用 `?full_rebuild=true`，不要日常全量哈希。
 
 ### 条件性未完成项
 
@@ -144,7 +146,7 @@ Phase 2.6（Prompt Expansion）、Phase 3（Character Knowledge）与 PLAN-LORA 
 ### 当前最近验证
 
 ```text
-python -m py_compile server/main.py .tools/register_lora.py .tools/eval_set/render_exp/run_lora_context_ab.py
+python -m py_compile server/main.py .tools/register_lora.py .tools/test_lora_onboard_agent.py .tools/eval_set/render_exp/run_lora_context_ab.py
 ```
 
 状态：通过。
@@ -156,10 +158,11 @@ python .tools/test_prompt_unit.py
 状态：`41 prompt unit tests passed`。
 
 ```text
+python .tools/test_lora_onboard_agent.py
 python .tools/register_lora.py --validate
 ```
 
-状态：`registry valid: 6 assets`。
+状态：`9 lora onboarding agent tests passed`；`registry valid: 9 assets`。
 
 前端：提取两个内联 script 后 `node --check -` 通过；81 个 `$()` 元素引用全部存在。
 

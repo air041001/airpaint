@@ -511,3 +511,26 @@
 **验证（2026-08-23）**：首版实现完成。41 个确定性单测覆盖 nested loader/last-good、legacy adapter、Profile/optional 白名单、revision 409、scanner inventory、本地 `.civitai.info`、Binding 幂等、cache 隔离和 text/vision/jobs/dialog 贯通；前端内联 JS 与 81 个元素引用检查通过。5 组 fixed-condition A/B 经用户人眼得到 aware `1 胜 / 4 平 / 0 负`；DeepSeek 换 Anima 专用 LoRA 后，aware/legacy 图书馆结果均被接受且优于旧 IL 版本。多人 composition 仍因无真实资产不计为完成。
 
 **相关文件**：`server/main.py`、`server/lora_registry.yaml`、`.tools/register_lora.py`、`.tools/test_prompt_unit.py`、`.tools/eval_set/render_exp/lora_context_cases.yaml`、`.tools/eval_set/render_exp/run_lora_context_ab.py`、`web/index.html`、`docs/PLAN-LORA.md`、`docs/api.md`、`docs/architecture.md`。
+
+## D40. LoRA 入库 Agent：LLM 结构化候选，代码守住作者硬事实
+
+**背景**：手工 Registry 能保证 LoRA 语义质量，但每次新增复杂 LoRA 都依赖主开发对话重新读取作者 description、拆分 Profile 并编辑 YAML。LoRA Manager SQLite 只解决 ComfyUI 找文件，不理解人物/形态/装饰；把全部入库工作长期交给主 Agent 会浪费上下文，也不便于项目 owner 独立维护。
+
+**问题**：如何复用现有 Reasoning Model 降低复杂 LoRA 入库成本，同时不让模型静默改写 exact trigger、文件名、强度或验证状态？
+
+**决定**：扩展 `.tools/register_lora.py --agent`，并提供双击入口 `.tools/start_lora_onboard_agent.bat`。
+
+1. 工具启动时尝试调用 LoRA Manager 增量 scan，随后列出未注册图片 LoRA；ComfyUI 未运行时安全跳过，不启动或关闭服务。
+2. 维护者粘贴多行作者说明；Reasoning Model 只生成 Asset/Profile/provides/default/optional 的候选结构，并可根据 `revise` 自然语言意见重做。
+3. 作者说明按不可信文本处理；API key/model 只从 gitignored `server/config.yaml` 读取，key 不复制、不打印、不写文档或 Registry。
+4. 本地文件名、`source` 与 `verified:candidate` 由代码强制覆盖。逗号 prompt fragment 确定性拆项，泛化 `white/black/白/黑` 不进入 substring alias。
+5. 作者原文中能验证的 exact trigger 转义由代码恢复；明确的单一通用推荐强度由代码应用到 model/clip。范围或分别声明的 model/clip 值不静默折叠，留给人确认。
+6. 候选只在维护者输入 `write` 并再次输入最终 `y` 后原子写入；真实生图前不自动提升 verified。Civitai URL/sidecar 仍只是候选来源。
+
+**原因**：语义拆分适合 LLM，文件系统事实、exact token、数值证据、schema 与写入权限适合代码。小型一次性上下文足以处理单个 LoRA，不依赖主开发对话的长期记忆，同时保留人工知识门槛。
+
+**代价**：当前是本地终端向导而非网页管理页；候选仍需维护者检查，复杂或含糊作者说明可能需要一次 `revise`。LoRA Manager 与 AirPaint Registry 仍是两套职责明确的索引，不伪装成完全自动发现即生产可用。
+
+**验证**：9 个确定性测试覆盖 fenced JSON、Remi base/white/black/swim Profile、单值强度硬事实、范围不折叠、exact trigger 转义恢复、泛化 alias 过滤、无 trigger/required 风格和 Civitai URL 分支。使用真实 Remi 作者说明进行了多轮 dry-run，Registry 均在取消后保持不变；最终规则得到 base + 三形态、0.7/0.7 与作者 exact trigger。三个新资产以 candidate 注册，等待真实生图验收。
+
+**相关文件**：`.tools/register_lora.py`、`.tools/start_lora_onboard_agent.bat`、`.tools/test_lora_onboard_agent.py`、`server/lora_registry.yaml`、`docs/architecture.md`、`docs/BUILDHANDOFF.md`。

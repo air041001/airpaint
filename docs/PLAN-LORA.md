@@ -418,6 +418,8 @@ python .tools/register_lora.py --civitai <url>
 - 自动决定任意权重；
 - 未经人眼验证自动提升 `verified`。
 
+**2026-08-23 后续易用性补充**：现有工具增加 `--agent` 与双击启动入口。维护者粘贴作者说明，Reasoning Model 生成候选 Asset/Profile 并接受自然语言修订；文件名、candidate 状态、作者原文 exact trigger 恢复和明确单值强度由代码控制，最终仍需人工双重确认。该增强减少主开发对话上下文依赖，但不改变“外部资料不能自动污染正式 Registry”的边界。
+
 ---
 
 ## 7. 前端与暗房
