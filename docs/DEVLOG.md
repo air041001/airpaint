@@ -700,3 +700,24 @@ Phase 2.6 同时证明了两件事：自动画师协议相对旧翻译有稳定�
 ### 计划边界
 
 `PLAN-LORA.md` 已重写为 Step 0-10：先做 registry/loader/scanner/legacy adapter，再做 Binding Compiler、LLM context、API/session、前端、onboarding 和真实 A/B。registry 人工知识纳入版本控制，自动 cache 继续忽略。没有真实多人 LoRA 文件与人眼验证前，只让 schema 支持多 Profile，不宣称完成多人 composition；不引入 PromptState、Workflow Intelligence 或新的 Phase 2 批量结构门槛。
+
+## 第 42 条 2026-08-23 - LoRA Context / Binding 首版完成
+
+### 实现
+
+- 新增 versioned `server/lora_registry.yaml`、`HotLoraRegistry` last-good/revision、Asset/Profile/optional schema 与 legacy key adapter；人工知识优先，自动 cache 继续 gitignore。
+- 新增 Selection Resolver 与幂等 Binding Compiler。Reasoning/Vision Model 只见 `provides` 与允许的 Profile/optional ID；exact trigger、文件名和默认强度由代码决定。
+- active LoRA 覆盖文本快速路径，并贯通 reference image、reroll、translate/jobs/dialog/start-image；binding snapshot 与 registry revision 防止预览、暗房和工作流实际加载串线。
+- scanner 在 SHA/network 前排除 Wan，保留 unknown/incomplete inventory，优先读取本地 `.metadata.json` 与 `.civitai.info`；新增 `register_lora.py` inspect/validate/onboarding 工具。
+- 前端支持 Profile 自动判断/显式锁定、per-asset 默认强度、provides/verified/待注册状态；LoRA 改变后旧 Prompt 失效并要求重翻译。
+
+### 验证与人眼结果
+
+- `41 prompt unit tests passed`；registry validate、Python compile、前端内联 JS 和 81 个 DOM id 引用检查通过。
+- 5 组真实 LoRA fixed-condition A/B 最终为 aware `1 胜 / 4 平 / 0 负`。服装 Profile 组 aware 胜出；其余身份、角色变体、风格/光影与 DeepSeek 组均平局，没有场景/构图回退。
+- Blue Archive “明亮午后”补测暴露旧词典把午后固定成 golden/lazy；新增 clear daylight/high sun/crisp shadows 后，两张光线均被用户确认正常。
+- DeepSeek 旧 Illustrious 资产换成 Anima 专用 LoRA，沿用同作者身份/女仆装语义和 0.85 强度。LoRA Manager 首次失败的根因是持久 cache 未索引新文件，完整扫描后 3/3 正常生成；用户确认图书馆 aware/legacy 平局且 Anima 比 IL 更好。旧 IL 本地文件送入回收站。
+
+### 边界
+
+首版完成的是 LoRA Context、Profile/Trigger Binding 与角色×1 + 风格×1 的状态一致性。没有真实跨文件多人 LoRA 资产，不宣称完成自由多人 composition；不启动 PromptState、Workflow Intelligence 或推荐系统。

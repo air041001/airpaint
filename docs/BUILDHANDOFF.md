@@ -1,16 +1,16 @@
 # AirPaint Build Handoff
 
-> 交接日期：2026-08-22
+> 交接日期：2026-08-23
 > 当前分支：`main`
-> 远程状态：PLAN-LORA v2 规划更新应与 `origin/main` 同步；实际提交以 `git log` 为准
+> 远程状态：LoRA Context / Binding 首版实现、验证与文档闭环应与 `origin/main` 同步；实际以 `git log` / `git status` 为准
 
 ## 1. 当前阶段与进度
 
 ### 当前阶段
 
-项目处于 **最终任务：LoRA Context / Binding 工程（`docs/PLAN-LORA.md` v2）待执行**。
+项目的 **最终大工程：LoRA Context / Binding（`docs/PLAN-LORA.md` v2）首版已完成并通过用户人眼验收**。
 
-Phase 2.6（Prompt Expansion 生产协议）、Phase 3（Character Knowledge 自动缓存）均已完成并 push。Phase 4 PromptState 继续延后。当前唯一主线是 PLAN-LORA v2：选中的 LoRA/Profile 在翻译前进入模型上下文，LLM 负责语义选择，代码通过 Binding Compiler 确定性编译 exact trigger；按 Step 0-10 顺序执行。
+Phase 2.6（Prompt Expansion）、Phase 3（Character Knowledge）与 PLAN-LORA Step 0-10 均已完成。Phase 4 PromptState 继续由真实暗房使用触发；Phase 8 Workflow Intelligence 长期保留但不自动启动。当前没有新的大阶段被授权，后续优先观察真实使用与小范围修复。
 
 ### 已完成模块
 
@@ -18,17 +18,21 @@ Phase 2.6（Prompt Expansion 生产协议）、Phase 3（Character Knowledge 自
 - `compile_prompt()`：角色裸名清理、tag 去重、`count → character → general` 排序、NL 拼接。
 - `infer_render_profile()`：当前只对明确 NSFW、单主体、简单动作使用 `tag_first`；普通 SFW 保留 NL，复杂关系使用 `relation_hybrid`。
 - `/api/translate`：增加 `prompt_ir` 和 additive `prompt_ir_meta`，前端旧 `breakdown` 契约保持兼容。
-- 结构性回归：由 23 个零依赖单测覆盖（char_dict 命中/裸名剥离/排序/safety marker/角色 lookup），不依赖 30 条未验证 baseline。
+- 结构性回归：由 41 个零依赖单测覆盖 Prompt/角色知识与 LoRA Registry/Binding，不依赖未验证 baseline。
 - Failure taxonomy：已覆盖 counting、entity binding、action/pose、interaction、spatial、lighting、NSFW anatomy、model artifact、semantic misread 等类型。
 - NSFW 结构评测集：8 条明确成人内容，结构与 explicit safety 验证通过。
 - Rendering Strategy 实验工具：固定 Prompt、seed、尺寸、workflow，支持盲评页、manifest、variant 对照。
 - Dictionary vs LLM 对照工具与 girl/female 词汇对照工具。
 - 用户可手动编辑英文 `prompt_en`，作为复杂动作/多角色失败的产品 fallback。
+- LoRA Context / Binding：versioned Registry/Profile、last-good revision、scanner inventory、legacy adapter、Selection Resolver、幂等 exact Binding Compiler。
+- active LoRA 在翻译前进入 Reasoning/Vision Model 上下文；translate/jobs/dialog/start-image 共用 binding snapshot/revision。
+- 前端 Profile auto/显式锁定、per-asset 默认强度、provides/verified/待注册、切换后 stale Prompt 防串线。
+- onboarding：`.tools/register_lora.py --inspect/--validate`；人工蒸馏后原子更新 Registry，不自动把 HTML/Civitai trainedWords 升格为正式知识。
 
 ### 已验证项
 
 - Phase 2 profile 收窄后，结构回归由单测覆盖（历史 30/30 仅记录，baseline 已清理）。
-- Prompt 单测：最近一次为 `23` 个通过。
+- Prompt/LoRA 单测：最近一次为 `41` 个通过。
 - NSFW 结构验证：`8/8`，workflow safety 为 `explicit`。
 - Failure taxonomy 聚合：`17 pass / 18 fail`，主要失败类型为 `interaction_relation`、`model_artifact`、`action_pose`、`anatomy_nsfw`。
 - Phase 1.5 首轮：30 张图生成成功，用户完成盲评。
@@ -39,8 +43,8 @@ Phase 2.6（Prompt Expansion 生产协议）、Phase 3（Character Knowledge 自
 - Phase 2.5 E1-E7 扩写实验：14 张图生成成功，用户已完成详细评审。
 - Phase 2.6 A1/A2/A3 三路实验：21 张图和 E1/E6/E7 换 seed 的 9 张补测图均生成成功；用户已完成两轮 A/B/C 盲评，A3 对 A2 为 4 胜、1 平、2 负；初版生产 A/B 被判定为协议退化，已改为独立 `IR + PROMPT` 画师协议并修复护栏；v5 新旧 A/B 为 3 胜 2 平 0 负，提示词增强保留。
 - Phase 3 Danbooru 角色查询：主 API exact lookup 与 `name_matches` 连通；长门有希/御坂美琴已分别写入 `nagato_yuki`/`misaka_mikoto` auto cache，长门固定 Prompt 已生图并经用户确认。
-- 未验证的 baseline 回归资产已清理（删除 `baseline.yaml`/`cases.yaml`/`run_baseline.py`/`compare.py`，DEVLOG 40）；结构不变量由 23 个单测确定性覆盖。
-- 最终任务规划已按用户确认重写为 v2：`docs/PLAN-LORA.md`（LoRA Asset/Profile、versioned registry、Binding Compiler、LoRA-aware text/vision、binding revision、前端/暗房状态与真实 A/B）；D39 记录“LLM 选语义、代码编译 exact trigger”。
+- 未验证的 baseline 回归资产已清理（DEVLOG 40）；结构不变量由确定性单测覆盖。
+- PLAN-LORA v2 已落地并通过用户验收：5 组真实 A/B 为 aware 1 胜 4 平 0 负；DeepSeek 换 Anima 后图书馆 pair 平局且用户认为优于旧 IL；Blue Archive 午后光线补测正常。
 
 ## 2. 修改/新增文件清单
 
@@ -48,8 +52,12 @@ Phase 2.6（Prompt Expansion 生产协议）、Phase 3（Character Knowledge 自
 
 | 文件 | 当前作用 |
 |---|---|
-| `server/main.py` | Prompt IR 解析、`compile_prompt()`、`infer_render_profile()`、实验负面覆盖入口、原有 API/Workflow Engine |
-| `.tools/test_prompt_unit.py` | 23 个零依赖 Prompt/IR/profile/画师协议/角色 lookup/实验负面单测 |
+| `server/main.py` | Prompt/Intent/Workflow Engine + LoRA Registry/Scanner/Resolver/Binding/API/session |
+| `server/lora_registry.yaml` | versioned LoRA Asset/Profile/trigger/provides/default strength 人工知识 |
+| `.tools/test_prompt_unit.py` | 41 个零依赖 Prompt/角色知识/LoRA Registry/Binding/API/session 单测 |
+| `.tools/register_lora.py` | LoRA sidecar inspection、Registry validate 与原子 onboarding |
+| `.tools/eval_set/render_exp/lora_context_cases.yaml` | 5 组真实 LoRA fixed-condition A/B 夹具 |
+| `.tools/eval_set/render_exp/run_lora_context_ab.py` | legacy/aware/author-control 真实生图与盲评页 runner |
 | `.tools/eval_set/image_cases.yaml` | Phase 1 固定 Prompt+seed 视觉夹具（002/012/018，已人眼验证） |
 | `.tools/eval_set/run_gen_test.py` | 固定 Prompt+seed 生图测试 runner |
 | `.gitignore` | 忽略 candidate、NSFW candidate 和实验输出目录 |
@@ -83,17 +91,17 @@ Phase 2.6（Prompt Expansion 生产协议）、Phase 3（Character Knowledge 自
 | 文件 | 当前作用 |
 |---|---|
 | `docs/PLAN-v5 — AirPaint Prompt Intelligence.md` | 长期实施路线（唯一现行计划，取代已删除的 PLAN-v4） |
-| `docs/PLAN-LORA.md` | **最终任务执行蓝本 v2**：LoRA Context / Binding 工程（Step 0-10） |
-| `ROADMAP.md` | Phase 2.6/3 完成，Phase 4 延后，最终任务为 LoRA 工程 |
-| `docs/DEVLOG.md` | 第 31-41 条记录 Phase 1 至 Phase 3、baseline 清理与 PLAN-LORA v2 |
-| `docs/decisions.md` | D30-D33 已重排补全，D34-D38 历史结论，D39 为当前 LoRA Binding 决策 |
-| `docs/architecture.md` | 当前 Prompt IR/Compiler、R4 多角色限制和手动 Prompt fallback |
-| `docs/api.md` | `/api/translate` 的 `prompt_ir`/`prompt_ir_meta` 契约 |
+| `docs/PLAN-LORA.md` | 最终任务 v2 设计、Step 0-10 与最终验收结果 |
+| `ROADMAP.md` | Phase 2.6/3/LoRA Context 首版完成；Phase 4/8 与多人 composition 条件触发 |
+| `docs/DEVLOG.md` | 第 31-42 条记录 Phase 1 至 LoRA Context 首版完成 |
+| `docs/decisions.md` | D39 为已实现并验证的 LoRA Binding 决策 |
+| `docs/architecture.md` | 当前 Prompt/LoRA Registry/Binding/Workflow/Frontend 架构与边界 |
+| `docs/api.md` | translate/jobs/dialog 的 selection/binding/revision 契约 |
 | `docs/workflow-anatomy.md` | 用户维护的 AnimaFull 权威节点解剖；当前 HEAD 中已单独提交，后续必须优先参考 |
 
 ### 当前工作区
 
-- Phase 2.6、Phase 3、baseline 清理、D33 重排补全均已提交并推送；PLAN-LORA v2、D39 与本次文档同步组成独立 planning commit，交接时应已 push。
+- PLAN-LORA planning commit 为 `b141a7a`；实现、前端和本次文档闭环应已分别提交并推送，具体 hash 以 `git log` 为准。
 - `docs/PLAN-v4` 与 `docs/inspiration.md` 已删除（历史参考不再保留）；`web/index.html.bak2` 已删（web/ 子仓库）。
 - `.tools/eval_set/render_exp/output/`、`.tools/eval_set/nsfw/output/`：实验生成物，已被 gitignore，不能当源码提交。
 - `.opencode/`、`opencode.jsonc`：环境未跟踪文件，未修改、不可纳入提交。
@@ -102,13 +110,13 @@ Phase 2.6（Prompt Expansion 生产协议）、Phase 3（Character Knowledge 自
 
 ### 立即下一步
 
-1. 按 `docs/PLAN-LORA.md` Step 0 开始资产/cache 审计和迁移映射；不要再把 deepseek_maid 误判为“未扫描”，实际是 cache 中 `type=unknown` 后被 API 隐藏。
-2. 依次执行 Step 1-10：Registry/loader → scanner → legacy adapter → Binding Compiler → LoRA-aware text/vision → API/session → 前端 → onboarding → 真实 A/B → 文档 push。
-3. 用户已确认核心硬约束：选中的 LoRA 必须在翻译前进入模型上下文，Prompt 与 LoRA 不割裂、不串人物/服装/风格；exact trigger、文件和权重由代码确定。
+1. 没有自动开启的新大阶段；先观察真实用户在 LoRA Profile、暗房 redo/tweak 和手动 Prompt 编辑中的反馈。
+2. 新下载 LoRA 先用 `python .tools/register_lora.py --inspect <file>` 查看本地作者资料，再人工写 Registry 并 `--validate`；不要让自动 inventory 的猜测直接成为正式 Profile。
+3. 若生产 API 仍是旧 Python 进程，重启后端再做在线 UI smoke；ComfyUI 新放入文件若 LoraManager 报 basename/OS Error 2，先调用其完整 scan 刷新持久索引。
 
 ### 条件性未完成项
 
-- 无当前阻塞开发项；PLAN-LORA v2 核心边界已确认。实现细节如函数命名可按代码调整，但不得退回“LLM 复制 trigger”或“生成时盲拼”的旧边界。
+- 无当前阻塞开发项。不得退回“LLM 复制 trigger”或“生成时盲拼 trainedWords”的旧边界。
 
 ### 已明确跳过
 
@@ -129,14 +137,14 @@ Phase 2.6（Prompt Expansion 生产协议）、Phase 3（Character Knowledge 自
 - NSFW 目标是“高质量二次元插画的色气感”，不是裸体 tag 堆砌；统一补全底层应使用构图、光影、氛围、材质，NSFW 只在服装状态、身体语言、揭示节奏上分流。
 - R4 的失败不是当前 Phase 2 主线 blocker，但应继续作为 failure taxonomy 的 `interaction_relation` + `spatial_composition` + `model_artifact` 样本。
 - `docs/decisions.md` 历史 D1-D38 必须保持完整（D30-D33 已重排、D33 已补全）；编辑只能追加 ADR，不能用 Add File 替换已有文件。
-- LoRA 工程的核心痛点（PLAN-LORA §0）：全 trigger 盲拼导致 Prompt 与 LoRA 语义割裂并挤压场景空间。v2 解法是 LLM 看见 `provides/Profile` 后规划剩余画面，代码用 Binding Compiler 编译 registry 中的 minimal exact tags。
+- LoRA Context 已解决原“先翻译、后盲拼”的状态割裂；真实 A/B 没有场景退化。仍需注意：跨文件多人 LoRA composition 尚无资产证据，不能从 schema 支持推导为质量完成。
 
 ## 5. 验证命令与状态
 
 ### 当前最近验证
 
 ```text
-python -m py_compile server/main.py .tools/test_prompt_unit.py .tools/eval_set/nsfw/validate.py .tools/eval_set/render_exp/label.py .tools/eval_set/render_exp/run_experiment.py .tools/eval_set/render_exp/expansion/run_phase26.py .tools/eval_set/render_exp/expansion/run_production_ab.py
+python -m py_compile server/main.py .tools/register_lora.py .tools/eval_set/render_exp/run_lora_context_ab.py
 ```
 
 状态：通过。
@@ -145,7 +153,17 @@ python -m py_compile server/main.py .tools/test_prompt_unit.py .tools/eval_set/n
 python .tools/test_prompt_unit.py
 ```
 
-状态：`23 prompt unit tests passed`。
+状态：`41 prompt unit tests passed`。
+
+```text
+python .tools/register_lora.py --validate
+```
+
+状态：`registry valid: 6 assets`。
+
+前端：提取两个内联 script 后 `node --check -` 通过；81 个 `$()` 元素引用全部存在。
+
+真实 LoRA：5 组 fixed-condition A/B 均完成用户人眼验收，aware 1 胜 4 平 0 负；DeepSeek Anima 最终 3/3 生成，图书馆 A/C 平局。
 
 ```text
 python .tools/test_prompt_unit.py  # 含 test_painter_tag_guard_preserves_explicit_safety_marker
@@ -179,7 +197,7 @@ python .tools/eval_set/render_exp/expansion/run_phase26.py --mode render
 - 修改前必须先读 `AGENTS.md`、本文件、`docs/PLAN-LORA.md`、最新 PLAN-v5、D34-D39 和 `docs/workflow-anatomy.md`。
 - `docs/workflow-anatomy.md` 是当前 AnimaFull 节点权威参考；节点 4 是负向 `ImpactWildcardProcessor`，节点 55 是负向 CLIP 编码，不要再按旧节点猜。
 - 不要把实验用 `negative_text_node` / 节点 4 覆盖能力当成生产默认负面；config 默认没有 `negative_text_node`，D6 固定负面策略保持不变。
-- **LoRA Context / Binding 是当前最终任务目标，不是禁区**。按 PLAN-LORA v2 实现 versioned Registry/Profile、LoRA-aware text/vision、确定性 Binding Compiler 和 translate/jobs/dialog binding snapshot；不要退回让 LLM 逐字复制 trigger 的旧计划。
+- **LoRA Context / Binding 首版已经完成**。维护时保持 versioned Registry/Profile、LoRA-aware text/vision、确定性 Binding Compiler 与 translate/jobs/dialog snapshot 边界；不要让 LLM 决定文件、强度或 exact trigger。
 - 不要把 weighted NL、semantic negative、girl/female 替换、R4 特判、PromptState、自动优化 Agent 提前合并。
 - 不要把“Prompt 更长”“IR 字段更满”“结构解析通过”当成图像质量证明；人眼是最终语义验收。
 - 单张图的手脚/武器偶发错误先视为随机因素；只有换 seed 后仍重复才归入策略失败。
@@ -199,8 +217,8 @@ python .tools/eval_set/render_exp/expansion/run_phase26.py --mode render
 3. `docs/PLAN-LORA.md`（最终任务执行蓝本）
 4. `docs/PLAN-v5 — AirPaint Prompt Intelligence.md`
 5. `ROADMAP.md`
-6. `docs/decisions.md`（重点 D34-D39；当前工程先看 D39）
-7. `docs/DEVLOG.md`（重点第 31-41 条；当前工程先看第 41 条）
+6. `docs/decisions.md`（重点 D34-D39）
+7. `docs/DEVLOG.md`（重点第 31-42 条）
 8. `docs/architecture.md`
 9. `docs/workflow-anatomy.md`
 10. `.tools/eval_set/image_cases.yaml`

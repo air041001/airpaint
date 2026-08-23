@@ -1,0 +1,194 @@
+schema_version: 1
+
+loras:
+  salt_finale:
+    name: "Salt - Finale / Milk"
+    type: character
+    file: "salt(finale)-anima-v1.0.safetensors"
+    trigger_policy: profile
+    default_strength: {model: 1.0, clip: 1.0}
+    selection:
+      default_profile: maid
+      allow_multiple_profiles: false
+    profiles:
+      maid:
+        name: "Salt - Finale（女仆装）"
+        aliases: ["Salt Finale", "Salt女仆", "Finale女仆"]
+        provides: ["Salt character identity", "cat ears", "blue-and-white maid outfit"]
+        required_tags: ["salt(finale)"]
+        default_tags: ["cat ears", "maid headdress", "blue dress", "white apron"]
+        optional_tags: {}
+        source: "manual config"
+        verified: curated
+        notes: ""
+      sailor:
+        name: "Salt - Milk（水手服）"
+        aliases: ["Salt Milk", "Salt水手服", "Milk水手服"]
+        provides: ["Salt character identity", "cat ears", "sailor uniform", "tail"]
+        required_tags: ["salt(finale)"]
+        default_tags: ["cat ears", "serafuku", "sailor collar", "tail"]
+        optional_tags: {}
+        source: "manual config"
+        verified: curated
+        notes: ""
+    legacy_keys:
+      salt_finale_maid: maid
+      salt_milk_sailor: sailor
+
+  ningen_mame:
+    name: "Ningen Mame"
+    type: character
+    file: "M_dz_nbv_ningen_mame_v2-000081.safetensors"
+    trigger_policy: profile
+    default_strength: {model: 1.0, clip: 1.0}
+    selection:
+      default_profile: default
+      allow_multiple_profiles: false
+    profiles:
+      default:
+        name: "Ningen Mame"
+        aliases: ["Ningen Mame"]
+        provides: ["Ningen Mame character identity", "more humanoid appearance"]
+        required_tags: ["ningen_mame"]
+        default_tags: []
+        optional_tags: {}
+        source: "manual config"
+        verified: curated
+        notes: ""
+    legacy_keys:
+      ningen_mame: default
+
+  denia:
+    name: "达妮娅 / 西格莉卡"
+    type: character
+    file: "denia_lorav4-000005.safetensors"
+    trigger_policy: profile
+    default_strength: {model: 1.0, clip: 1.0}
+    selection:
+      default_profile: white
+      allow_multiple_profiles: false
+    profiles:
+      white:
+        name: "达妮娅（白）"
+        aliases: ["达妮娅", "白达妮娅", "白娅"]
+        provides: ["Denia character identity", "black headband", "blue headpiece"]
+        required_tags: ["denia \\(wuthering waves\\)"]
+        default_tags: ["denia black headband", "blue headpiece"]
+        optional_tags:
+          white_dress:
+            name: "白裙完整细节"
+            aliases: ["白裙", "白色连衣裙", "white dress"]
+            provides: ["white dress", "frilled clothing"]
+            tags: ["white dress", "frills", "jewelry choker", "fur-trimmed sleeves"]
+        source: "author description"
+        verified: curated
+        notes: ""
+      sigrika:
+        name: "西格莉卡"
+        aliases: ["西格莉卡"]
+        provides: ["Sigrika character identity", "headrest", "white headwear"]
+        required_tags: ["sigrika \\(wuthering waves\\)"]
+        default_tags: ["headrest", "white headwear"]
+        optional_tags: {}
+        source: "author description"
+        verified: curated
+        notes: "旧 config 的 wutherng 拼写已在此修正"
+      black:
+        name: "达妮娅（黑）"
+        aliases: ["黑达妮娅", "黑娅", "阿列夫一形态"]
+        provides: ["black-form Denia character identity", "black headband", "blue headpiece"]
+        required_tags: ["blackdenia \\(wuthering waves\\)"]
+        default_tags: ["denia black headband", "blue headpiece"]
+        optional_tags:
+          arm_tattoo:
+            name: "手臂纹身"
+            aliases: ["手臂纹身", "arm tattoo"]
+            provides: ["arm tattoo"]
+            tags: ["arm tattoo"]
+          chest_tattoo:
+            name: "蓝色胸口纹身"
+            aliases: ["胸口纹身", "胸部纹身", "blue chest tattoo"]
+            provides: ["blue chest tattoo"]
+            tags: ["blue chest tattoo"]
+        source: "author description"
+        verified: curated
+        notes: ""
+    legacy_keys:
+      denia_white: white
+      denia_sigrika: sigrika
+      denia_black: black
+
+  deepseek_maid:
+    name: "DeepSeek Whale Girl（女仆装）"
+    type: character
+    file: "deepseek_whale_girl_maid_anima_lora_clean.safetensors"
+    trigger_policy: profile
+    default_strength: {model: 0.85, clip: 0.85}
+    selection:
+      default_profile: maid
+      allow_multiple_profiles: false
+    profiles:
+      maid:
+        name: "DeepSeek Whale Girl（女仆装）"
+        aliases: ["DeepSeek女仆", "小鲸鱼", "大肥鱼", "Whale Girl"]
+        provides: ["DeepSeek whale-girl identity", "very long gradient blue hair", "whale fin ears and blue whale tail", "complete navy-blue maid outfit"]
+        required_tags: ["deepseek_whale_girl", "deepseek_maid_outfit"]
+        default_tags:
+          - "solo"
+          - "blue hair"
+          - "very long hair"
+          - "wavy hair"
+          - "gradient blue hair"
+          - "bangs"
+          - "ahoge"
+          - "blue eyes"
+          - "whale fin ears"
+          - "blue hair bows"
+          - "maid"
+          - "maid headdress"
+          - "white frilled maid headdress"
+          - "navy blue maid dress"
+          - "white frilled apron"
+          - "blue whale emblem"
+          - "dark blue neck bow"
+          - "blue gemstone brooch"
+          - "puff sleeves"
+          - "long sleeves"
+          - "gold trim"
+          - "blue whale tail"
+          - "starry tail pattern"
+          - "frilled thighhighs"
+          - "white thighhighs"
+          - "thighhigh bows"
+          - "black mary janes"
+          - "ankle strap shoes"
+          - "low heels"
+        optional_tags: {}
+        source: "same-author Civitai description and prompts, applied to the Anima release"
+        verified: curated
+        notes: "Anima LoRA; the downloaded file had no author sidecar or embedded metadata, so the same author's DeepSeek identity/outfit prompt and the previously tested 0.85 strength are retained. Exact binding and three real renders passed on 2026-08-23; the user accepted the aware/legacy library pair as a tie and judged Anima better than the former Illustrious release."
+    legacy_keys: {}
+
+  shiratama_art:
+    name: "白玉画风（Shiratama）"
+    type: style
+    file: "shiratama_art_1b_anima-000040.safetensors"
+    trigger_policy: required
+    required_tags: ["@shiratama"]
+    provides: ["Shiratama illustration style"]
+    default_strength: {model: 1.0, clip: 1.0}
+    source: "manual config"
+    verified: curated
+    legacy_keys: ["shiratama_art"]
+
+  blue_archive_style:
+    name: "蔚蓝档案风格（Blue Archive）"
+    type: style
+    file: "BlueArchiveStyleB1.safetensors"
+    trigger_policy: required
+    required_tags: ["@BlueArchStyle"]
+    provides: ["Blue Archive illustration style"]
+    default_strength: {model: 1.0, clip: 1.0}
+    source: "manual config"
+    verified: curated
+    legacy_keys: ["blue_archive_style"]

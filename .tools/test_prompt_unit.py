@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 """零依赖 Prompt Engine 纯函数回归检查。"""
 import asyncio
+import json
 import sys
 import tempfile
 from pathlib import Path
@@ -335,6 +336,363 @@ def test_unknown_character_fallback_on_unavailable():
         main._TRANSLATE_CACHE = old_cache
 
 
+def test_lora_registry_preserves_nested_profiles():
+    registry = main.get_lora_registry()
+    denia = registry["denia"]
+    assert denia["profiles"]["white"]["required_tags"] == ["denia \\(wuthering waves\\)"]
+    assert denia["profiles"]["black"]["optional_tags"]["arm_tattoo"]["tags"] == ["arm tattoo"]
+    assert denia["registry_revision"] == main.LORA_REGISTRY.snapshot()[1]
+    deepseek = registry["deepseek_maid"]["profiles"]["maid"]
+    assert "very long hair" in deepseek["default_tags"]
+    assert "black mary janes" in deepseek["default_tags"]
+    assert registry["deepseek_maid"]["strength_model"] == 0.85
+
+
+def test_bright_afternoon_uses_daylight_not_golden_hour():
+    tags, remaining = main.match_dict_words("明亮午后光线")
+    assert "bright afternoon" in tags, tags
+    assert "high sun" in tags, tags
+    assert "golden" not in tags and "golden hour" not in tags, tags
+    assert remaining == "光线", remaining
+
+
+def test_hot_lora_registry_keeps_last_good_snapshot():
+    with tempfile.TemporaryDirectory() as td:
+        path = Path(td) / "registry.yaml"
+        path.write_text(
+            "schema_version: 1\nloras:\n  test:\n    name: Test\n    type: style\n"
+            "    file: test.safetensors\n    trigger_policy: none\n",
+            encoding="utf-8",
+        )
+        hot = main.HotLoraRegistry(path)
+        before, revision = hot.snapshot()
+        assert before["loras"]["test"]["name"] == "Test"
+        path.write_text("schema_version: [broken", encoding="utf-8")
+        after, after_revision = hot.snapshot()
+        assert after == before
+        assert after_revision == revision
+
+
+def test_lora_legacy_key_resolves_explicit_profile():
+    bindings, warnings, revision = main.resolve_lora_selections(["denia_black"])
+    assert not warnings, warnings
+    assert revision == main.LORA_REGISTRY.snapshot()[1]
+    assert bindings[0]["key"] == "denia"
+    assert bindings[0]["profile"] == "black"
+    assert bindings[0]["resolved_by"] == "explicit"
+    assert bindings[0]["injected_tags"][0] == "blackdenia \\(wuthering waves\\)"
+
+
+def test_lora_auto_profile_and_optional_ids_are_whitelisted():
+    bindings, warnings, _ = main.resolve_lora_selections(
+        [{"key": "denia", "mode": "auto"}],
+        {"denia": {"profile": "white", "optional": ["white_dress", "made_up"]}},
+    )
+    assert bindings[0]["profile"] == "white"
+    assert bindings[0]["optional"] == ["white_dress"]
+    assert "white dress" in bindings[0]["injected_tags"]
+    assert any("made_up" in warning for warning in warnings), warnings
+
+
+def test_lora_explicit_profile_still_accepts_semantic_optional_choice():
+    bindings, warnings, _ = main.resolve_lora_selections(
+        [{"key": "denia", "profile": "white", "mode": "explicit"}],
+        {"denia": {"profile": "black", "optional": ["white_dress"]}},
+    )
+    assert not warnings, warnings
+    assert bindings[0]["profile"] == "white"
+    assert bindings[0]["resolved_by"] == "explicit"
+    assert bindings[0]["optional"] == ["white_dress"]
+    assert "white dress" in bindings[0]["injected_tags"]
+
+
+def test_lora_intent_alias_locks_profile_and_optional_ids():
+    selections = main.apply_lora_intent_hints(
+        "黑达妮娅露出手臂纹身", [{"key": "denia", "mode": "auto"}]
+    )
+    assert selections == [{
+        "key": "denia", "profile": "black", "mode": "auto", "optional": ["arm_tattoo"]
+    }], selections
+    bindings, warnings, _ = main.resolve_lora_selections(selections)
+    assert not warnings, warnings
+    assert bindings[0]["resolved_by"] == "intent_alias"
+    assert "arm tattoo" in bindings[0]["injected_tags"]
+
+
+def test_lora_registry_revision_rejects_stale_binding():
+    try:
+        main.resolve_lora_selections(["denia_white"], expected_revision="stale-revision")
+    except main.HTTPException as exc:
+        assert exc.status_code == 409, exc
+        assert "LoRA Registry" in str(exc.detail), exc.detail
+    else:
+        raise AssertionError("stale LoRA registry revision must be rejected")
+
+
+def test_scan_force_skips_known_wan_without_hashing():
+    with tempfile.TemporaryDirectory() as td:
+        temp_dir = Path(td)
+        wan = temp_dir / "wan_lightx2v_high_noise_model.safetensors"
+        wan.write_bytes(b"not-a-real-model")
+        old_dir = main.LORA_DIR
+        old_cache_file = main.LORA_CACHE_FILE
+        old_auto = main._lora_auto
+        old_loaded = main._lora_auto_loaded
+        old_read_sha = main._read_sha256
+
+        def fail_if_hashed(_):
+            raise AssertionError("known Wan file must be excluded before SHA256")
+
+        try:
+            main.LORA_DIR = temp_dir
+            main.LORA_CACHE_FILE = temp_dir / "cache.json"
+            main._lora_auto = {
+                wan.stem: {
+                    "baseModel": "Wan Video 14B",
+                    "status": "excluded",
+                    "fingerprint": "old",
+                }
+            }
+            main._lora_auto_loaded = True
+            main._read_sha256 = fail_if_hashed
+            result = asyncio.run(main.scan_loras(force=True))
+            assert result["excluded"] == 1, result
+            assert main._lora_auto[wan.stem]["status"] == "excluded"
+        finally:
+            main.LORA_DIR = old_dir
+            main.LORA_CACHE_FILE = old_cache_file
+            main._lora_auto = old_auto
+            main._lora_auto_loaded = old_loaded
+            main._read_sha256 = old_read_sha
+
+
+def test_scan_uses_local_civitai_info_before_hash_or_network():
+    with tempfile.TemporaryDirectory() as td:
+        temp_dir = Path(td)
+        lora = temp_dir / "sidecar_character.safetensors"
+        lora.write_bytes(b"not-a-real-model")
+        (temp_dir / "sidecar_character.civitai.info").write_text(json.dumps({
+            "name": "v1", "baseModel": "Illustrious",
+            "trainedWords": ["sidecar_character, blue hair"],
+            "model": {"name": "Sidecar Character", "tags": ["character", "anime"]},
+            "files": [{"name": lora.name, "hashes": {"SHA256": "ABC123"}}],
+        }), encoding="utf-8")
+        old_dir = main.LORA_DIR
+        old_cache_file = main.LORA_CACHE_FILE
+        old_auto = main._lora_auto
+        old_loaded = main._lora_auto_loaded
+        old_read_sha = main._read_sha256
+        old_lookup = main._civitai_lookup
+
+        def fail_if_hashed(_):
+            raise AssertionError("valid .civitai.info must avoid SHA256")
+
+        async def fail_if_online(_):
+            raise AssertionError("valid .civitai.info must avoid network lookup")
+
+        try:
+            main.LORA_DIR = temp_dir
+            main.LORA_CACHE_FILE = temp_dir / "cache.json"
+            main._lora_auto = {}
+            main._lora_auto_loaded = True
+            main._read_sha256 = fail_if_hashed
+            main._civitai_lookup = fail_if_online
+            result = asyncio.run(main.scan_loras(force=True))
+            cached = main._lora_auto[lora.stem]
+            assert result["new"] == 1, result
+            assert cached["status"] == "resolved", cached
+            assert cached["type"] == "character", cached
+            assert cached["sha256"] == "abc123", cached
+            assert cached["metadataSource"] == "civitai.info", cached
+        finally:
+            main.LORA_DIR = old_dir
+            main.LORA_CACHE_FILE = old_cache_file
+            main._lora_auto = old_auto
+            main._lora_auto_loaded = old_loaded
+            main._read_sha256 = old_read_sha
+            main._civitai_lookup = old_lookup
+
+
+def test_lora_binding_compiler_is_exact_and_idempotent():
+    bindings, _, _ = main.resolve_lora_selections(["denia_white"])
+    first = main.compile_lora_bindings("1girl, solo, denia wuthering waves, beach, sunset", bindings)
+    second = main.compile_lora_bindings(first, bindings)
+    assert first == second
+    assert first.count("denia \\(wuthering waves\\)") == 1, first
+    assert "denia wuthering waves" not in first, first
+    assert first.startswith("1girl, solo, denia \\(wuthering waves\\)"), first
+
+
+def test_lora_choice_protocol_parser():
+    output = (
+        'IR: {"subject":["1girl"],"appearance":[],"clothing":[],"action":[],"pose":[],"interaction":[],"scene":[],"composition":[],"lighting":[],"mood":[],"style":[],"constraints":[]}\n'
+        'LORA: {"denia":{"profile":"white","optional":["white_dress"]}}\n'
+        'PROMPT: 1girl, solo, beach\n'
+    )
+    choices = main._parse_lora_choices(output)
+    assert choices == {"denia": {"profile": "white", "optional": ["white_dress"]}}, choices
+
+
+def test_active_lora_forces_painter_and_compiles_binding():
+    old_translate = main.siliconflow_translate
+    old_cache = dict(main._TRANSLATE_CACHE)
+    calls = []
+
+    async def fake_translate(context, reroll=False):
+        calls.append(context)
+        out = (
+            'IR: {"subject":["1girl"],"appearance":[],"clothing":[],"action":["standing"],"pose":[],"interaction":[],"scene":["beach"],"composition":["full body"],"lighting":["sunset"],"mood":["calm"],"style":[],"constraints":[]}\n'
+            'LORA: {"denia":{"profile":"white","optional":[]}}\n'
+            'PROMPT: 1girl, solo, standing, beach, full body, sunset\n'
+        )
+        return main._parse_structured_output(out) + ([], main._parse_lora_choices(out))
+
+    main.siliconflow_translate = fake_translate
+    main._TRANSLATE_CACHE = {}
+    try:
+        prompt, _, _, meta = asyncio.run(main.translate(
+            "站在海边", lora_selections=[{"key": "denia", "mode": "auto"}], include_meta=True
+        ))
+        assert calls and "ACTIVE LORA CONTEXT" in calls[0], calls
+        assert "Select exactly one profile ID" in calls[0], calls[0]
+        assert "denia \\(wuthering waves\\)" in prompt, prompt
+        assert "beach" in prompt and "sunset" in prompt, prompt
+        assert meta["lora_aware"] is True
+        assert meta["lora_bindings"][0]["profile"] == "white"
+    finally:
+        main.siliconflow_translate = old_translate
+        main._TRANSLATE_CACHE = old_cache
+
+
+def test_active_lora_is_present_in_vision_path():
+    old_vision = main.siliconflow_vision_translate
+    calls = []
+
+    async def fake_vision(image_b64, context, reroll=False, mode="reference"):
+        calls.append((context, reroll, mode))
+        return (
+            "1girl, beach, sunset", {"scene": "beach", "lighting": "sunset"}, "", None,
+            {"denia": {"profile": "white", "optional": []}},
+        )
+
+    main.siliconflow_vision_translate = fake_vision
+    try:
+        prompt, _, _, meta = asyncio.run(main.translate(
+            "站在海边", image_b64="mock-image",
+            lora_selections=[{"key": "denia", "mode": "auto"}], include_meta=True,
+        ))
+        assert calls and "ACTIVE LORA CONTEXT" in calls[0][0], calls
+        assert "denia \\(wuthering waves\\)" in prompt, prompt
+        assert meta["lora_bindings"][0]["profile"] == "white"
+    finally:
+        main.siliconflow_vision_translate = old_vision
+
+
+def test_lora_cache_isolated_by_profile():
+    old_translate = main.siliconflow_translate
+    old_cache = dict(main._TRANSLATE_CACHE)
+    calls = 0
+
+    async def fake_translate(context, reroll=False):
+        nonlocal calls
+        calls += 1
+        profile = "black" if "Locked profile: black" in context else "white"
+        out = (
+            'IR: {"subject":["1girl"],"appearance":[],"clothing":[],"action":[],"pose":[],"interaction":[],"scene":["street"],"composition":[],"lighting":[],"mood":[],"style":[],"constraints":[]}\n'
+            f'LORA: {{"denia":{{"profile":"{profile}","optional":[]}}}}\n'
+            'PROMPT: 1girl, solo, street\n'
+        )
+        return main._parse_structured_output(out) + ([], main._parse_lora_choices(out))
+
+    main.siliconflow_translate = fake_translate
+    main._TRANSLATE_CACHE = {}
+    try:
+        white = asyncio.run(main.translate("街道", lora_selections=["denia_white"]))[0]
+        black = asyncio.run(main.translate("街道", lora_selections=["denia_black"]))[0]
+        assert calls == 2, calls
+        assert "denia \\(wuthering waves\\)" in white
+        assert "blackdenia \\(wuthering waves\\)" in black
+    finally:
+        main.siliconflow_translate = old_translate
+        main._TRANSLATE_CACHE = old_cache
+
+
+def test_build_prompt_re_resolves_binding_and_deduplicates_trigger():
+    bindings, _, revision = main.resolve_lora_selections(["denia_white"])
+    payload = main.build_prompt(
+        "anima", "1girl, solo, denia \\(wuthering waves\\), beach", 832, 1216,
+        lora_bindings=bindings, registry_revision=revision,
+    )
+    prompt = payload["prompt"][str(main.WORKFLOWS["anima"]["prompt_node"])]["inputs"]["text"]
+    loras = payload["prompt"][str(main.WORKFLOWS["anima"]["lora_node"])]["inputs"]["loras"]["__value__"]
+    assert prompt.count("denia \\(wuthering waves\\)") == 1, prompt
+    assert loras[0]["name"] == "denia_lorav4-000005.safetensors", loras
+
+
+def test_enqueue_rebuilds_client_binding_from_registry_snapshot():
+    old_jobs, old_queue, old_usage = main.JOBS, main.QUEUE, main.USAGE
+    _, revision = main.LORA_REGISTRY.snapshot()
+    try:
+        main.JOBS = {}
+        main.QUEUE = asyncio.Queue()
+        main.USAGE = {"test-token": ["2099-01-01", 0]}
+        job_id = asyncio.run(main._enqueue(
+            "test-token", "anima", "1girl, beach", "测试", "832x1216",
+            [], None, None,
+            lora_bindings=[{
+                "key": "denia", "profile": "white", "optional": [],
+                "file": "evil.safetensors", "injected_tags": ["evil trigger"],
+            }],
+            registry_revision=revision,
+        ))
+        job = main.JOBS[job_id]
+        assert "evil trigger" not in job["prompt_en"], job
+        assert "denia \\(wuthering waves\\)" in job["prompt_en"], job
+        assert job["lora_bindings"][0]["file"] == "denia_lorav4-000005.safetensors"
+        assert asyncio.run(main.QUEUE.get()) == job_id
+    finally:
+        main.JOBS, main.QUEUE, main.USAGE = old_jobs, old_queue, old_usage
+
+
+def test_dialog_start_carries_binding_snapshot_into_job():
+    old_translate = main.translate
+    old_jobs, old_sessions = main.JOBS, main.SESSIONS
+    old_queue, old_usage = main.QUEUE, main.USAGE
+    bindings, _, revision = main.resolve_lora_selections(["denia_white"])
+
+    class FakeRequest:
+        async def json(self):
+            return {
+                "action": "start", "prompt": "达妮娅在海边", "workflow": "anima",
+                "size": "832x1216", "lora_selections": ["denia_white"],
+            }
+
+    async def fake_translate(*args, **kwargs):
+        meta = {
+            "lora_bindings": bindings, "lora_warnings": [],
+            "registry_revision": revision,
+        }
+        return "1girl, denia \\(wuthering waves\\), beach", None, None, meta
+
+    try:
+        main.translate = fake_translate
+        main.JOBS = {}
+        main.SESSIONS = {}
+        main.QUEUE = asyncio.Queue()
+        main.USAGE = {"dialog-token": ["2099-01-01", 0]}
+        response = asyncio.run(main.dialog_turn(FakeRequest(), token="dialog-token"))
+        session = main.SESSIONS[response["session_id"]]
+        job = main.JOBS[response["job_id"]]
+        assert session["registry_revision"] == revision
+        assert session["lora_bindings"] == bindings
+        assert job["registry_revision"] == revision
+        assert job["lora_bindings"][0]["profile"] == "white"
+    finally:
+        main.translate = old_translate
+        main.JOBS, main.SESSIONS = old_jobs, old_sessions
+        main.QUEUE, main.USAGE = old_queue, old_usage
+
+
 def main_test():
     tests = [
         test_character_match,
@@ -360,6 +718,24 @@ def main_test():
         test_auto_character_cache_write_and_match,
         test_unavailable_lookup_is_retryable,
         test_unknown_character_fallback_on_unavailable,
+        test_lora_registry_preserves_nested_profiles,
+        test_bright_afternoon_uses_daylight_not_golden_hour,
+        test_hot_lora_registry_keeps_last_good_snapshot,
+        test_lora_legacy_key_resolves_explicit_profile,
+        test_lora_auto_profile_and_optional_ids_are_whitelisted,
+        test_lora_explicit_profile_still_accepts_semantic_optional_choice,
+        test_lora_intent_alias_locks_profile_and_optional_ids,
+        test_lora_registry_revision_rejects_stale_binding,
+        test_scan_force_skips_known_wan_without_hashing,
+        test_scan_uses_local_civitai_info_before_hash_or_network,
+        test_lora_binding_compiler_is_exact_and_idempotent,
+        test_lora_choice_protocol_parser,
+        test_active_lora_forces_painter_and_compiles_binding,
+        test_active_lora_is_present_in_vision_path,
+        test_lora_cache_isolated_by_profile,
+        test_build_prompt_re_resolves_binding_and_deduplicates_trigger,
+        test_enqueue_rebuilds_client_binding_from_registry_snapshot,
+        test_dialog_start_carries_binding_snapshot_into_job,
     ]
     for test in tests:
         test()

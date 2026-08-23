@@ -1,8 +1,10 @@
 # PLAN-LORA — LoRA Context / Binding 工程（项目最终大工程）
 
-> 状态：v2 方案已与用户确认，待实现（2026-08-22）
+> 状态：首版已完成并通过用户人眼验收（2026-08-23）
 > 本计划取代 2026-08-19 版本。合并 PLAN-v5 的 Phase 5（LoRA Context）/ Phase 6（Trigger Engine）/ Phase 7（LoRA Composition），但仍按验证门逐步落地，不因“最终工程”而一次性铺开未验证能力。
 > 核心决定见 D39：**LLM 选择 LoRA 语义/Profile，代码确定性编译 exact trigger。**
+>
+> 完成边界：LoRA Context、Profile/Trigger Binding、API/session 状态与角色×1 + 风格×1 的现有组合链已落地；跨文件多角色 LoRA composition 因没有真实资产与人眼证据，仍不宣称完成。
 
 ---
 
@@ -512,6 +514,8 @@ B = aware：LLM 知 provides/Profile + Binding Compiler minimal exact tags
 
 ## 9. 执行步骤与验收门
 
+Step 0-10 已于 2026-08-23 完成。最终实现包含 versioned Registry/热加载、scanner inventory、legacy adapter、Selection Resolver、Binding Compiler、LoRA-aware text/vision、translate/jobs/dialog revision snapshot、前端 Profile/stale UX、onboarding 工具和真实固定条件 A/B。
+
 | Step | 内容 | 通过条件 |
 |---|---|---|
 | 0 | 资产/缓存审计 + D39 + 迁移映射确认 | deepseek/wan/denia 根因与旧 key 映射明确 |
@@ -525,6 +529,15 @@ B = aware：LLM 知 provides/Profile + Binding Compiler minimal exact tags
 | 8 | Onboarding 工具 | deepseek 可人工蒸馏并原子写 registry |
 | 9 | 真实 A/B + 用户人眼 | LoRA 不串、人物正确、场景/构图不退化 |
 | 10 | 文档闭环 + push | D39 验证、architecture/api/DEVLOG/ROADMAP/BUILDHANDOFF 同步，worktree clean |
+
+### 9.1 最终验收结果
+
+- 确定性验证：`41 prompt unit tests passed`；覆盖 nested registry、坏 YAML 保留 last-good、legacy key、Profile/optional 白名单、revision 409、scanner 预过滤与本地 `.civitai.info`、Binding 幂等、text/vision/cache/jobs/dialog 贯通。
+- 前端验证：内联 JavaScript 语法通过，81 个元素引用无缺失；直接生成、先看翻译、reroll、参考图、Profile 自动/锁定、切换后 stale 提示和暗房 binding snapshot 已做 smoke。
+- 真实 A/B：5 组最终为 aware `1 胜 / 4 平 / 0 负`。唯一明确胜出是服装 Profile 语义组；其余人物、风格、光影与 DeepSeek Anima 组均为平局，没有 LoRA-aware 导致场景/构图退化。
+- DeepSeek：旧 Illustrious 资产换为 Anima 专用 LoRA；同作者身份/女仆装语义以 0.85 绑定，图书馆 aware/legacy 两张均被用户接受，且 Anima 整体优于原 IL 版本。作者水下花园 Prompt 只作 LoRA 控制组，不参与图书馆语义胜负。
+- 光影反馈：`明亮午后` 从旧的 golden/lazy 午后词条中分离为 clear daylight/high sun/crisp shadows；Blue Archive 两张复测光线均正常。
+- 边界：多 Profile schema 已验证，角色×1 + 风格×1 可组合；没有真实多人 LoRA 资产，因此跨文件多角色 composition 仍留待未来证据触发。
 
 开发时可用内部 feature flag/实验参数保留 `legacy` 与 `aware` 两条链，A/B 通过后再把 `aware` 设为生产默认；验证失败不 push 失败状态。
 

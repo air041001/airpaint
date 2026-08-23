@@ -26,6 +26,7 @@ CHAR_DICT_PATH = BASE / "char_dict.yaml"
 KNOWLEDGE_CACHE_DIR = BASE / "knowledge_cache"
 CHAR_AUTO_PATH = KNOWLEDGE_CACHE_DIR / "characters_auto.yaml"
 CHAR_LOOKUP_PATH = KNOWLEDGE_CACHE_DIR / "characters_lookup.json"
+LORA_REGISTRY_PATH = BASE / "lora_registry.yaml"
 
 
 class HotDict:
@@ -62,6 +63,97 @@ class HotDict:
         return self._d.items()
 
 
+class HotLoraRegistry:
+    """保留嵌套结构的 LoRA Registry 热加载器。
+
+    与 HotDict 不同，这里不能把 value 转字符串。每次变更先完整解析和校验，
+    通过后才原子替换内存快照；半写入/坏 YAML 继续使用上一份有效数据。
+    """
+    def __init__(self, path: Path):
+        self.path = path
+        self._mtime_ns = -1
+        self._data: dict = {"schema_version": 1, "loras": {}}
+        self._revision = hashlib.sha256(b"empty-lora-registry").hexdigest()[:16]
+        self.reload()
+
+    @staticmethod
+    def validate(raw: dict) -> None:
+        if not isinstance(raw, dict) or raw.get("schema_version") != 1:
+            raise ValueError("schema_version 必须为 1")
+        loras = raw.get("loras")
+        if not isinstance(loras, dict):
+            raise ValueError("loras 必须是对象")
+        for key, asset in loras.items():
+            if not isinstance(key, str) or not key.strip() or not isinstance(asset, dict):
+                raise ValueError("LoRA key/asset 格式错误")
+            for field in ("name", "type", "file", "trigger_policy"):
+                if not isinstance(asset.get(field), str) or not asset[field].strip():
+                    raise ValueError(f"{key}.{field} 缺失或不是字符串")
+            if asset["trigger_policy"] not in {"profile", "required", "none"}:
+                raise ValueError(f"{key}.trigger_policy 非法")
+            strength = asset.get("default_strength") or {}
+            if not isinstance(strength, dict):
+                raise ValueError(f"{key}.default_strength 必须是对象")
+            for field in ("model", "clip"):
+                try:
+                    value = float(strength.get(field, 1.0))
+                except (TypeError, ValueError):
+                    raise ValueError(f"{key}.default_strength.{field} 非数字")
+                if not 0 <= value <= 2:
+                    raise ValueError(f"{key}.default_strength.{field} 超出 0~2")
+            policy = asset["trigger_policy"]
+            if policy == "profile":
+                profiles = asset.get("profiles")
+                if not isinstance(profiles, dict) or not profiles:
+                    raise ValueError(f"{key}.profiles 不能为空")
+                default_profile = (asset.get("selection") or {}).get("default_profile")
+                if default_profile and default_profile not in profiles:
+                    raise ValueError(f"{key}.selection.default_profile 不存在")
+                for pid, profile in profiles.items():
+                    if not isinstance(profile, dict) or not isinstance(profile.get("name"), str):
+                        raise ValueError(f"{key}.profiles.{pid} 格式错误")
+                    for list_field in ("aliases", "provides", "required_tags", "default_tags"):
+                        value = profile.get(list_field, [])
+                        if not isinstance(value, list) or any(not isinstance(x, str) for x in value):
+                            raise ValueError(f"{key}.profiles.{pid}.{list_field} 必须是字符串数组")
+                    optional = profile.get("optional_tags") or {}
+                    if not isinstance(optional, dict):
+                        raise ValueError(f"{key}.profiles.{pid}.optional_tags 必须是对象")
+                    for oid, option in optional.items():
+                        if not isinstance(option, dict):
+                            raise ValueError(f"{key}.{pid}.optional_tags.{oid} 格式错误")
+                        aliases = option.get("aliases") or []
+                        if not isinstance(aliases, list) or any(not isinstance(x, str) for x in aliases):
+                            raise ValueError(f"{key}.{pid}.optional_tags.{oid}.aliases 必须是字符串数组")
+                        tags = option.get("tags") or []
+                        if not isinstance(tags, list) or any(not isinstance(x, str) for x in tags):
+                            raise ValueError(f"{key}.{pid}.optional_tags.{oid}.tags 必须是字符串数组")
+            else:
+                tags = asset.get("required_tags") or []
+                if not isinstance(tags, list) or any(not isinstance(x, str) for x in tags):
+                    raise ValueError(f"{key}.required_tags 必须是字符串数组")
+
+    def reload(self) -> None:
+        if not self.path.exists():
+            return
+        try:
+            mtime_ns = self.path.stat().st_mtime_ns
+            if mtime_ns == self._mtime_ns:
+                return
+            raw = yaml.safe_load(self.path.read_text(encoding="utf-8")) or {}
+            self.validate(raw)
+            canonical = json.dumps(raw, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+            self._data = raw
+            self._revision = hashlib.sha256(canonical.encode("utf-8")).hexdigest()[:16]
+            self._mtime_ns = mtime_ns
+        except Exception as e:
+            print(f"[LoRA Registry] 重载失败, 保留旧版本: {e}", flush=True)
+
+    def snapshot(self) -> tuple[dict, str]:
+        self.reload()
+        return self._data, self._revision
+
+
 # 属性/感觉词典: 中文 -> danbooru tag. key 小写匹配.
 DICT = HotDict(DICT_PATH, key_fn=str.lower)
 # 角色词典: 中文名 -> danbooru 精确 tag. LLM 认不准角色 tag (字面翻译/编造/漏认),
@@ -86,6 +178,7 @@ WORKFLOWS = CFG.get("workflows", {})
 #   有 trainedWords -> 自动可用; 没有 -> 标记 "未配置", 需手动加 config
 LORA_DIR = Path(CFG.get("comfy_dir", ".")) / "models" / "loras"
 LORA_CACHE_FILE = BASE / "lora_cache.json"
+LORA_REGISTRY = HotLoraRegistry(LORA_REGISTRY_PATH)
 # {filename_stem: {sha256, trainedWords, modelName, tags, baseModel, type, fetchedAt}}
 _lora_auto: dict[str, dict] = {}
 _lora_auto_loaded = False
@@ -141,6 +234,56 @@ def _read_sha256(filepath: Path) -> str | None:
         return None
 
 
+def _read_lora_metadata(filepath: Path) -> dict:
+    result = {}
+    meta = filepath.with_name(f"{filepath.stem}.metadata.json")
+    if meta.exists():
+        try:
+            raw = json.loads(meta.read_text(encoding="utf-8"))
+            if isinstance(raw, dict):
+                result.update(raw)
+        except Exception:
+            pass
+    # ComfyUI Manager/Civitai Helper 可能把完整索引写在同名 .civitai.info。
+    # 这里只读取结构化字段作为 inventory candidate；HTML description 仍须人工蒸馏，
+    # 不允许自动污染正式 Registry。
+    civitai_info = filepath.with_name(f"{filepath.stem}.civitai.info")
+    if civitai_info.exists():
+        try:
+            raw = json.loads(civitai_info.read_text(encoding="utf-8"))
+            if isinstance(raw, dict):
+                model = raw.get("model") or {}
+                files = raw.get("files") or []
+                file_info = next(
+                    (item for item in files if isinstance(item, dict)
+                     and item.get("name") == filepath.name),
+                    files[0] if files and isinstance(files[0], dict) else {},
+                )
+                hashes = file_info.get("hashes") or {}
+                result.setdefault("sha256", str(hashes.get("SHA256") or "").lower())
+                result.setdefault("trainedWords", raw.get("trainedWords") or [])
+                result.setdefault("model_name", model.get("name") or raw.get("name") or filepath.stem)
+                result.setdefault("tags", model.get("tags") or [])
+                result.setdefault("baseModel", raw.get("baseModel") or "")
+                result["metadata_source"] = "civitai.info"
+        except Exception:
+            pass
+    return result
+
+
+def _classify_lora_type(tags) -> tuple[str, list[str]]:
+    tag_names = [t.get("name", "") if isinstance(t, dict) else str(t) for t in (tags or [])]
+    low = {name.strip().lower() for name in tag_names}
+    lora_type = "character" if "character" in low else (
+        "style" if any(tag in low for tag in ("style", "artist", "artstyle")) else "unknown")
+    return lora_type, tag_names
+
+
+def _lora_fingerprint(filepath: Path) -> str:
+    stat = filepath.stat()
+    return f"{stat.st_size}:{stat.st_mtime_ns}"
+
+
 async def _civitai_lookup(sha256: str) -> dict | None:
     """按 SHA256 查 Civitai API, 返回 {trainedWords, modelName, tags, baseModel, type} 或 None."""
     try:
@@ -152,10 +295,7 @@ async def _civitai_lookup(sha256: str) -> dict | None:
         model = d.get("model") or {}
         # Civitai model.tags 是 [{name, count}] 对象数组, 提取 name 列表再判类型
         # (修: 旧代码 "character" in tags 当字符串数组用, 永远 False -> 全 unknown)
-        raw_tags = model.get("tags") or []
-        tag_names = [t.get("name", "") if isinstance(t, dict) else str(t) for t in raw_tags]
-        lora_type = "character" if "character" in tag_names else (
-            "style" if any(t in tag_names for t in ("style", "artist", "artstyle")) else "unknown")
+        lora_type, tag_names = _classify_lora_type(model.get("tags") or [])
         return {
             "trainedWords": d.get("trainedWords") or [],
             "modelName": model.get("name", ""),
@@ -167,88 +307,486 @@ async def _civitai_lookup(sha256: str) -> dict | None:
         return None
 
 
-async def scan_loras() -> dict:
-    """扫描 loras 目录, 为 config 未覆盖的文件查 Civitai 取元数据. 更新内存+磁盘缓存."""
+async def scan_loras(force: bool = False) -> dict:
+    """扫描 LoRA inventory；metadata 预过滤非图片文件，失败项允许 refresh 重试。"""
+    global _lora_auto
     _load_lora_cache()
     if not LORA_DIR.exists():
-        return {"scanned": 0, "new": 0, "failed": 0, "total_auto": len(_lora_auto)}
-    config_files = {v.get("file", "") for v in CFG.get("loras", {}).values()}
+        return {"scanned": 0, "new": 0, "failed": 0, "excluded": 0, "total_auto": len(_lora_auto)}
+    registry, _ = LORA_REGISTRY.snapshot()
+    registry_files = {v.get("file", "") for v in registry.get("loras", {}).values()}
+    config_files = {v.get("file", "") for v in CFG.get("loras", {}).values()} | registry_files
     sfs = sorted(LORA_DIR.glob("*.safetensors"))
-    new_count = failed = 0
+    new_count = failed = excluded = 0
+    image_bases = {"Anima", "NoobAI", "SDXL", "Illustrious", "Unknown", ""}
     for fp in sfs:
         if fp.name in config_files:
             continue
         key = fp.stem
-        if key in _lora_auto:
+        fingerprint = _lora_fingerprint(fp)
+        cached = _lora_auto.get(key) or {}
+        cached_status = cached.get("status", "resolved" if cached else "")
+        cached_base = str(cached.get("baseModel") or "").strip()
+        # refresh 也不能把已经确认是视频底模的巨型文件重新做 SHA256。部分
+        # Wan 文件的 sidecar metadata 只写 Unknown，但旧 Civitai 结果已经足够
+        # 证明它不属于当前图片工作流；文件指纹变化后仍应先排除，再谈联网刷新。
+        known_video_name = key.lower().startswith("wan_") or key.lower().startswith("detailz-wan")
+        if ((cached_base and cached_base not in image_bases) or known_video_name):
+            _lora_auto[key] = {
+                **cached,
+                "sha256": cached.get("sha256", ""),
+                "trainedWords": cached.get("trainedWords", []),
+                "modelName": cached.get("modelName") or key,
+                "tags": cached.get("tags", []),
+                "baseModel": cached_base or "Wan Video",
+                "type": cached.get("type", "unknown"),
+                "status": "excluded",
+                "fingerprint": fingerprint,
+                "fetchedAt": time.time(),
+            }
+            excluded += 1
+            continue
+        if (not force and cached.get("fingerprint") == fingerprint
+                and cached_status in {"resolved", "excluded"}):
+            continue
+        metadata = _read_lora_metadata(fp)
+        metadata_base = (metadata.get("base_model") or metadata.get("baseModel") or "").strip()
+        if metadata_base and metadata_base not in image_bases:
+            _lora_auto[key] = {
+                "sha256": (metadata.get("sha256") or "").strip().lower(),
+                "trainedWords": [], "modelName": metadata.get("model_name") or key,
+                "tags": [], "baseModel": metadata_base, "type": "unknown",
+                "status": "excluded", "fingerprint": fingerprint,
+                "fetchedAt": time.time(),
+            }
+            excluded += 1
+            continue
+        metadata_words = metadata.get("trainedWords") or []
+        if isinstance(metadata_words, list) and metadata_words:
+            metadata_type, metadata_tags = _classify_lora_type(metadata.get("tags") or [])
+            status = "resolved" if metadata_type in {"character", "style"} else "incomplete"
+            _lora_auto[key] = {
+                "sha256": str(metadata.get("sha256") or "").lower(),
+                "trainedWords": metadata_words,
+                "modelName": metadata.get("model_name") or key,
+                "tags": metadata_tags,
+                "baseModel": metadata_base,
+                "type": metadata_type,
+                "status": status,
+                "fingerprint": fingerprint,
+                "metadataSource": metadata.get("metadata_source", "metadata"),
+                "fetchedAt": time.time(),
+            }
+            new_count += 1
             continue
         sha = _read_sha256(fp)
         if not sha:
+            _lora_auto[key] = {
+                "sha256": "", "trainedWords": [], "modelName": key, "tags": [],
+                "baseModel": metadata_base, "type": "unknown", "status": "failed",
+                "fingerprint": fingerprint, "fetchedAt": time.time(),
+            }
             failed += 1
             continue
         info = await _civitai_lookup(sha)
         if info is None:
             _lora_auto[key] = {"sha256": sha, "trainedWords": [], "modelName": key,
-                                "tags": [], "baseModel": "", "type": "unknown", "fetchedAt": 0}
+                                "tags": [], "baseModel": metadata_base, "type": "unknown",
+                                "status": "failed", "fingerprint": fingerprint,
+                                "fetchedAt": time.time()}
             failed += 1
-        elif info.get("baseModel") and info["baseModel"] not in (
-                "Anima", "NoobAI", "SDXL", "Illustrious", "Unknown"):
-            continue  # 跳过非图片 LoRA (Wan 视频等)
+        elif info.get("baseModel") and info["baseModel"] not in image_bases:
+            _lora_auto[key] = {"sha256": sha, "fetchedAt": time.time(),
+                               "status": "excluded", "fingerprint": fingerprint, **info}
+            excluded += 1
         else:
-            _lora_auto[key] = {"sha256": sha, "fetchedAt": time.time(), **info}
+            status = "resolved" if info.get("type") in {"character", "style"} else "incomplete"
+            _lora_auto[key] = {"sha256": sha, "fetchedAt": time.time(),
+                               "status": status, "fingerprint": fingerprint, **info}
             new_count += 1
         await asyncio.sleep(0.3)  # 对 Civitai 友好
-    # 清理: (1) 非图片 LoRA 残留 (Wan 视频等, 过滤逻辑后加无失效清理)
-    #       (2) 文件已删除/改名的旧 stem 残留 (salt(finale) 旧名永久残留问题)
-    valid_bases = {"Anima", "NoobAI", "SDXL", "Illustrious", "Unknown", ""}
+    # 文件已删除/改名的旧 stem 清理；excluded 保留状态供诊断，但不会进入 registry/API。
     valid_stems = {fp.stem for fp in sfs}
-    _lora_auto = {k: v for k, v in _lora_auto.items()
-                  if k in valid_stems
-                  and (not v.get("baseModel") or v["baseModel"] in valid_bases)}
+    _lora_auto = {k: v for k, v in _lora_auto.items() if k in valid_stems}
     _save_lora_cache()
-    return {"scanned": len(sfs), "new": new_count, "failed": failed, "total_auto": len(_lora_auto)}
+    return {"scanned": len(sfs), "new": new_count, "failed": failed,
+            "excluded": excluded, "total_auto": len(_lora_auto)}
 
 
 def get_lora_registry() -> dict[str, dict]:
-    """合并 config 条目 + 自动发现条目. 返回 flat dict, key -> LoRA 信息.
-    config 条目优先 (人写的 trigger/type/name 最准); 自动发现仅出现在 config 未覆盖的文件上."""
+    """合并 versioned registry > legacy config > 自动 inventory，返回 Asset 级结构。"""
     _load_lora_cache()
-    registry = {}
-    # 1. config 手动配置
+    raw_registry, revision = LORA_REGISTRY.snapshot()
+    registry: dict[str, dict] = {}
+
+    # 1. versioned 人工 Registry
+    for key, raw in raw_registry.get("loras", {}).items():
+        strength = raw.get("default_strength") or {}
+        asset = json.loads(json.dumps(raw, ensure_ascii=False))
+        asset.update({
+            "key": key,
+            "strength_model": float(strength.get("model", 1.0)),
+            "strength_clip": float(strength.get("clip", 1.0)),
+            "source": "registry",
+            "configured": True,
+            "registry_revision": revision,
+        })
+        registry[key] = asset
+
+    registry_files = {v.get("file", "") for v in registry.values()}
+
+    # 2. 未迁移的 legacy config；已被 versioned file 覆盖的条目通过 legacy_keys 解析。
     for key, v in CFG.get("loras", {}).items():
+        if v.get("file", "") in registry_files:
+            continue
+        trigger_tags = [x.strip() for x in str(v.get("trigger", "")).split(",") if x.strip()]
         registry[key] = {
             "key": key,
             "type": v.get("type", "unknown"),
             "name": v.get("name", key),
             "file": v["file"],
-            "trigger": v.get("trigger", ""),
+            "trigger_policy": "required" if trigger_tags else "none",
+            "required_tags": trigger_tags,
+            "provides": [v.get("description", "")] if v.get("description") else [],
             "strength_model": float(v.get("strength_model", 1.0)),
             "strength_clip": float(v.get("strength_clip", 1.0)),
             "description": v.get("description", ""),
             "preview": v.get("preview"),
             "source": "config",
-            "configured": bool(v.get("trigger")),
+            "configured": True,
+            "registry_revision": revision,
         }
-    # 2. 自动发现 (config 未覆盖的文件)
-    config_files = {v.get("file", "") for v in CFG.get("loras", {}).values()}
+
+    # 3. 自动 inventory：unknown/incomplete 也保留，API 放到 other 供 onboarding。
+    covered_files = {v.get("file", "") for v in registry.values()}
     for key, info in _lora_auto.items():
         fname = f"{key}.safetensors"
-        if fname in config_files:
+        if (fname in covered_files or info.get("status") == "excluded"
+                or (info.get("baseModel") and info.get("baseModel") not in
+                    {"Anima", "NoobAI", "SDXL", "Illustrious", "Unknown"})):
             continue
         trained = info.get("trainedWords", [])
+        candidate_tags = []
+        for group in trained:
+            candidate_tags.extend(x.strip() for x in str(group).split(",") if x.strip())
         registry[key] = {
             "key": key,
             "type": info.get("type", "unknown"),
             "name": info.get("modelName", key),
             "file": fname,
-            "trigger": ", ".join(trained) if trained else "",
+            "trigger_policy": "required" if candidate_tags else "none",
+            "required_tags": candidate_tags,
+            "provides": [],
             "strength_model": 1.0,
             "strength_clip": 1.0,
             "description": "",
             "preview": None,
             "source": "civitai",
-            "configured": bool(trained),
+            "configured": False,
+            "inventory_status": info.get("status", "incomplete"),
+            "registry_revision": revision,
         }
     return registry
+
+
+def get_lora_legacy_aliases(registry: dict[str, dict] | None = None) -> dict[str, tuple[str, str | None]]:
+    """旧 key -> (Asset key, Profile id)。Asset 自身也映射到自己。"""
+    registry = registry or get_lora_registry()
+    aliases: dict[str, tuple[str, str | None]] = {}
+    for key, asset in registry.items():
+        aliases[key] = (key, None)
+        legacy = asset.get("legacy_keys") or {}
+        if isinstance(legacy, dict):
+            for old_key, profile in legacy.items():
+                aliases[str(old_key)] = (key, str(profile) if profile is not None else None)
+        elif isinstance(legacy, list):
+            for old_key in legacy:
+                aliases[str(old_key)] = (key, None)
+    return aliases
+
+
+def normalize_lora_selections(raw, registry: dict[str, dict] | None = None) -> list[dict]:
+    """把新 selection、旧 loras 字符串和 legacy key 统一成 Asset/Profile 选择。"""
+    if not raw:
+        return []
+    if isinstance(raw, (str, dict)):
+        raw = [raw]
+    if not isinstance(raw, list):
+        raise HTTPException(400, "lora_selections/loras 必须是数组")
+    registry = registry or get_lora_registry()
+    aliases = get_lora_legacy_aliases(registry)
+    result = []
+    seen = set()
+    type_counts: dict[str, int] = {}
+    for item in raw:
+        if isinstance(item, str):
+            key, profile, mode, optional = item.strip(), None, "auto", []
+        elif isinstance(item, dict):
+            key = str(item.get("key") or "").strip()
+            profile = str(item.get("profile") or "").strip() or None
+            mode = str(item.get("mode") or ("explicit" if profile else "auto")).strip()
+            optional = item.get("optional") or []
+        else:
+            raise HTTPException(400, "LoRA selection 条目格式错误")
+        if not key:
+            continue
+        if key not in aliases:
+            raise HTTPException(400, f"未知的 LoRA: {key}")
+        asset_key, legacy_profile = aliases[key]
+        if legacy_profile:
+            profile, mode = legacy_profile, "explicit"
+        if mode not in {"explicit", "auto"}:
+            raise HTTPException(400, f"LoRA {key} mode 非法")
+        if not isinstance(optional, list) or any(not isinstance(x, str) for x in optional):
+            raise HTTPException(400, f"LoRA {key} optional 必须是字符串数组")
+        asset = registry[asset_key]
+        if not asset.get("configured", False):
+            raise HTTPException(400, f"LoRA {asset_key} 尚未注册完整")
+        identity = (asset_key, profile)
+        if identity in seen:
+            continue
+        seen.add(identity)
+        lora_type = asset.get("type", "unknown")
+        type_counts[lora_type] = type_counts.get(lora_type, 0) + 1
+        if lora_type in {"character", "style"} and type_counts[lora_type] > 1:
+            raise HTTPException(400, f"当前只支持同时选择一个 {lora_type} LoRA")
+        result.append({"key": asset_key, "profile": profile, "mode": mode,
+                       "optional": list(dict.fromkeys(optional))})
+    return result
+
+
+def _coerce_llm_lora_choices(raw) -> dict[str, dict]:
+    if not isinstance(raw, dict):
+        return {}
+    result = {}
+    for key, value in raw.items():
+        if isinstance(value, str):
+            result[str(key)] = {"profile": value, "optional": []}
+        elif isinstance(value, dict):
+            optional = value.get("optional") or []
+            result[str(key)] = {
+                "profile": str(value.get("profile") or "").strip() or None,
+                "optional": [str(x) for x in optional] if isinstance(optional, list) else [],
+            }
+    return result
+
+
+def apply_lora_intent_hints(text: str, selections) -> list[dict]:
+    """用 Registry 的明确 alias 把用户原话解析成 Profile/optional ID。
+
+    这是 canonical lookup，不替代 LLM 的语义判断：只有维护者登记过的精确别名才会
+    命中；其余复杂表达仍交给 Reasoning Model。这样常见角色名和关键服装不会因为
+    模型偶尔漏掉 LORA 行而退回默认 Profile。
+    """
+    registry = get_lora_registry()
+    normalized = normalize_lora_selections(selections, registry)
+    if not text or not normalized:
+        return normalized
+    low = text.lower()
+    result = []
+    for selection in normalized:
+        selection = dict(selection)
+        asset = registry[selection["key"]]
+        profiles = asset.get("profiles") or {}
+        if not selection.get("profile") and selection.get("mode") == "auto":
+            matches = []
+            for pid, profile in profiles.items():
+                aliases = profile.get("aliases") or []
+                matched_lengths = [
+                    len(str(alias).strip()) for alias in aliases
+                    if str(alias).strip() and str(alias).strip().lower() in low
+                ]
+                if matched_lengths:
+                    matches.append((max(matched_lengths), pid))
+            if matches:
+                best_length = max(length for length, _ in matches)
+                best = [pid for length, pid in matches if length == best_length]
+                if len(best) == 1:
+                    selection["profile"] = best[0]
+        profile = profiles.get(selection.get("profile")) or {}
+        optional = list(selection.get("optional") or [])
+        for oid, option in (profile.get("optional_tags") or {}).items():
+            aliases = option.get("aliases") or []
+            if any(str(alias).strip().lower() in low for alias in aliases if str(alias).strip()):
+                optional.append(oid)
+        selection["optional"] = list(dict.fromkeys(optional))
+        result.append(selection)
+    return result
+
+
+def resolve_lora_selections(selections, llm_choices=None, *, allow_unresolved_auto: bool = False,
+                            expected_revision: str | None = None) -> tuple[list[dict], list[str], str]:
+    """解析 Profile/optional ID，返回可供 Compiler 与 workflow 使用的 binding snapshot。"""
+    registry = get_lora_registry()
+    _, revision = LORA_REGISTRY.snapshot()
+    if expected_revision and expected_revision != revision:
+        raise HTTPException(409, "LoRA Registry 已更新，请重新翻译后再提交")
+    normalized = normalize_lora_selections(selections, registry)
+    choices = _coerce_llm_lora_choices(llm_choices)
+    bindings, warnings = [], []
+    for selection in normalized:
+        asset = registry[selection["key"]]
+        profile_id = selection.get("profile")
+        resolved_by = ("explicit" if profile_id and selection.get("mode") == "explicit"
+                       else "intent_alias" if profile_id else selection.get("mode", "auto"))
+        optional_ids = list(selection.get("optional") or [])
+        tags: list[str] = []
+        provides = list(asset.get("provides") or [])
+        if asset.get("trigger_policy") == "profile":
+            profiles = asset.get("profiles") or {}
+            choice = choices.get(selection["key"]) or {}
+            if not profile_id and selection.get("mode") == "auto":
+                candidate = choice.get("profile")
+                if candidate in profiles:
+                    profile_id, resolved_by = candidate, "llm"
+                elif allow_unresolved_auto:
+                    bindings.append({**selection, "type": asset.get("type"), "name": asset.get("name"),
+                                     "file": asset.get("file"), "resolved_by": "pending",
+                                     "injected_tags": [], "provides": []})
+                    continue
+                else:
+                    default = (asset.get("selection") or {}).get("default_profile")
+                    if default in profiles:
+                        profile_id, resolved_by = default, "default"
+                        warnings.append(f"{asset['name']} 未匹配到明确 Profile，已使用默认 {profiles[default]['name']}")
+                    else:
+                        raise HTTPException(400, f"LoRA {selection['key']} 需要明确选择 Profile")
+            elif not profile_id:
+                default = (asset.get("selection") or {}).get("default_profile")
+                if default in profiles:
+                    profile_id, resolved_by = default, "default"
+                elif len(profiles) == 1:
+                    profile_id, resolved_by = next(iter(profiles)), "single"
+                else:
+                    raise HTTPException(400, f"LoRA {selection['key']} 需要明确选择 Profile")
+            if profile_id not in profiles:
+                raise HTTPException(400, f"LoRA {selection['key']} 不存在 Profile: {profile_id}")
+            profile = profiles[profile_id]
+            provides = list(profile.get("provides") or [])
+            tags.extend(profile.get("required_tags") or [])
+            tags.extend(profile.get("default_tags") or [])
+            # Profile 是否自动只影响“选哪个 Profile”；已经锁定 Profile 后，LLM 仍可
+            # 根据用户意图挑选该 Profile 白名单里的 optional concept ID。
+            optional_ids.extend(choices.get(selection["key"], {}).get("optional") or [])
+            option_defs = profile.get("optional_tags") or {}
+            valid_optional = []
+            for option_id in dict.fromkeys(optional_ids):
+                if option_id not in option_defs:
+                    warnings.append(f"{asset['name']}/{profile['name']} 忽略未知 optional: {option_id}")
+                    continue
+                valid_optional.append(option_id)
+                option = option_defs[option_id]
+                tags.extend(option.get("tags") or [])
+                provides.extend(option.get("provides") or [])
+            optional_ids = valid_optional
+        else:
+            if profile_id:
+                raise HTTPException(400, f"LoRA {selection['key']} 不支持 Profile")
+            tags.extend(asset.get("required_tags") or [])
+            optional_ids = []
+            resolved_by = "explicit"
+        tags = list(dict.fromkeys(t.strip() for t in tags if isinstance(t, str) and t.strip()))
+        bindings.append({
+            "key": selection["key"], "type": asset.get("type", "unknown"),
+            "name": asset.get("name", selection["key"]), "file": asset.get("file"),
+            "profile": profile_id, "optional": optional_ids, "resolved_by": resolved_by,
+            "injected_tags": tags, "provides": list(dict.fromkeys(provides)),
+            "strength_model": asset.get("strength_model", 1.0),
+            "strength_clip": asset.get("strength_clip", 1.0),
+        })
+    return bindings, warnings, revision
+
+
+def build_lora_context(selections) -> tuple[str, list[dict], str]:
+    """构建只含语义能力/候选 ID 的 LLM context；不泄露文件名或 exact trigger。"""
+    registry = get_lora_registry()
+    normalized = normalize_lora_selections(selections, registry)
+    if not normalized:
+        _, revision = LORA_REGISTRY.snapshot()
+        return "", [], revision
+    pending, _, revision = resolve_lora_selections(normalized, allow_unresolved_auto=True)
+    lines = ["ACTIVE LORA CONTEXT (the backend injects exact tags and weights):"]
+    contract = {}
+    for selection, binding in zip(normalized, pending):
+        asset = registry[selection["key"]]
+        contract[selection["key"]] = {
+            "profile": (binding.get("profile") or "<choose one allowed profile ID>"
+                        if asset.get("trigger_policy") == "profile" else None),
+            "optional": [],
+        }
+        lines.append(f"- LoRA {selection['key']}: {asset['name']} ({asset.get('type', 'unknown')})")
+        if asset.get("trigger_policy") == "none":
+            lines.append("  Active through weights; no trigger words are needed.")
+        elif binding.get("profile"):
+            profile = asset["profiles"][binding["profile"]]
+            lines.append(f"  Locked profile: {binding['profile']} / {profile['name']}")
+            lines.append(f"  Already provides: {', '.join(profile.get('provides') or ['the selected concept'])}")
+            optional = profile.get("optional_tags") or {}
+            if optional:
+                choices = "; ".join(
+                    f"{oid}={', '.join(opt.get('provides') or [opt.get('name', oid)])}"
+                    for oid, opt in optional.items())
+                lines.append(f"  Optional IDs (only if explicitly requested): {choices}")
+        elif asset.get("trigger_policy") == "profile":
+            lines.append("  Select exactly one profile ID from:")
+            for pid, profile in asset.get("profiles", {}).items():
+                lines.append(f"    {pid}: {profile['name']}; provides {', '.join(profile.get('provides') or [])}")
+        else:
+            lines.append(f"  Already provides: {', '.join(asset.get('provides') or ['the selected concept'])}")
+    lines.extend([
+        "Do not copy, invent, or rewrite LoRA trigger strings, filenames, or weights in PROMPT.",
+        "Do not invent a conflicting character identity, outfit, appearance, or style.",
+        "Use scene, action, pose, composition, lighting, and mood to complete the remaining image.",
+        "When an auto profile or optional concept is needed, output only allowed IDs in the LORA JSON line.",
+        "The LORA line is mandatory for this request. Use this exact JSON shape and replace placeholders only with allowed IDs:",
+        "LORA: " + json.dumps(contract, ensure_ascii=False, separators=(",", ":")),
+    ])
+    return "\n".join(lines), normalized, revision
+
+
+def lora_selection_aliases(selections) -> set[str]:
+    registry = get_lora_registry()
+    aliases: set[str] = set()
+    for selection in normalize_lora_selections(selections, registry):
+        asset = registry[selection["key"]]
+        profiles = asset.get("profiles") or {}
+        profile_ids = [selection["profile"]] if selection.get("profile") else list(profiles)
+        for profile_id in profile_ids:
+            profile = profiles.get(profile_id) or {}
+            aliases.update(str(x).strip().lower() for x in profile.get("aliases", []) if str(x).strip())
+            if profile.get("name"):
+                aliases.add(str(profile["name"]).strip().lower())
+    return aliases
+
+
+def _lora_tag_key(tag: str) -> str:
+    value = tag.lower().replace("\\", "").replace("_", " ")
+    value = re.sub(r"[()\[\]{}]", " ", value)
+    return re.sub(r"\s+", " ", value).strip(" ,.")
+
+
+def compile_lora_bindings(prompt_en: str, bindings: list[dict] | None) -> str:
+    """把 registry exact tags 幂等合入最终 Prompt；不从 LLM 字符串反推 Profile。"""
+    if not bindings:
+        return prompt_en.strip()
+    lora_tags = []
+    for binding in bindings:
+        lora_tags.extend(binding.get("injected_tags") or [])
+    lora_tags = list(dict.fromkeys(t.strip() for t in lora_tags if t and t.strip()))
+    if not lora_tags:
+        return prompt_en.strip()
+    # Prompt 当前以 comma tags 为主；保留可能存在的短 NL 后缀。
+    body, sep, nl = prompt_en.partition(". ")
+    existing = [t.strip() for t in body.split(",") if t.strip()]
+    lora_keys = {_lora_tag_key(t) for t in lora_tags}
+    existing = [t for t in existing if _lora_tag_key(t) not in lora_keys]
+    insert_at = 0
+    while insert_at < len(existing) and existing[insert_at].lower() in {
+            "1girl", "1boy", "1other", "solo", "2girls", "2boys", "multiple girls", "multiple boys"}:
+        insert_at += 1
+    merged = existing[:insert_at] + lora_tags + existing[insert_at:]
+    result = ", ".join(merged)
+    return result + (sep + nl if sep else "")
 
 IMAGES = BASE / "images"
 IMAGES.mkdir(exist_ok=True)
@@ -312,7 +850,7 @@ def check_banned(text: str):
 
 # ---------- 中文 -> tag 翻译 ----------
 # 简单的进程内 LRU 缓存, 相同中文提示直接返回上次结果, 省 API 调用
-_TRANSLATE_CACHE: dict[str, tuple[str, dict | None, dict | None]] = {}
+_TRANSLATE_CACHE: dict[str, tuple] = {}
 _TRANSLATE_CACHE_MAX = 500
 
 # Legacy protocol reference only. Production requests use PAINTER_SYSTEM_PROMPT below;
@@ -390,9 +928,12 @@ PAINTER_SYSTEM_PROMPT = (
     "You are a professional painter-style prompt planner for the base Anima anime image model. "
     "You receive known canonical tags and the remaining Chinese user idea. Preserve the known tags in the final prompt through the backend; "
     "do not repeat known character or attribute tags in your PROMPT line.\n\n"
-    "Output EXACTLY these two lines, nothing else (no markdown, no explanation):\n"
+    "Normally output EXACTLY these two lines, nothing else (no markdown, no explanation):\n"
     "IR: <one-line valid compact JSON object with exactly these 12 array fields: subject, appearance, clothing, action, pose, interaction, scene, composition, lighting, mood, style, constraints>\n"
-    "PROMPT: <one compact comma-separated positive prompt in lowercase English>\n\n"
+    "PROMPT: <one compact comma-separated positive prompt in lowercase English>\n"
+    "If ACTIVE LORA CONTEXT is present, insert one LORA JSON line between IR and PROMPT. "
+    "Use only the supplied LoRA key/profile/optional IDs. Echo a locked explicit profile unchanged; "
+    "for auto mode select the best allowed profile. Never put trigger strings, filenames, or weights in LORA or PROMPT.\n\n"
     "Build the prompt in five layers, in this order:\n"
     "1. Lock the explicit subject, count, named character, core object, action and location.\n"
     "2. Add only coherent appearance, clothing, pose and body-language details that support the explicit idea.\n"
@@ -406,6 +947,7 @@ PAINTER_SYSTEM_PROMPT = (
     "- If the input names a girl or woman, do not invent a school uniform, see-through clothing or a different hairstyle. If a named character has known canonical tags, keep them unchanged. For an unknown named character, put the best candidate tag in IR.subject so the backend can verify it.\n"
     "- For mood-only input, choose one concrete setting and one clear focal anchor that actually communicates the mood. A bare empty street or vague atmosphere is not enough; if a person is added, do not make them tiny or hide them in black space.\n"
     "- For explicit NSFW input, keep the human body and readable pose present. Prefer a medium/full-body or three-quarter composition over a default close-up unless the user asks for a close-up. Improve quality with gaze, facial expression, body language, fabric/skin material and reveal pacing. Do not add age labels, extra people or a new sex act.\n"
+    "- Active LoRA capabilities are already supplied by weights and the backend binding. Plan around them; do not invent a conflicting identity, outfit, appearance, or style, and do not repeat provided LoRA details in PROMPT.\n"
     "- Do not output quality/score tags, negative tags, text/watermark, realistic/photorealistic/3d/render terms, or a TAGS/NL section.\n"
 )
 
@@ -465,6 +1007,8 @@ VISION_SYSTEM_PROMPT = (
     "5. Use lowercase danbooru tags; spaces preferred over underscores. "
     "Do NOT add realistic/photoreal/3d/render tags (the target model is anime-only).\n"
     "6. TAGS collects every concrete tag from the 5 fields above. Keep under ~200 chars.\n"
+    "7. If ACTIVE LORA CONTEXT is present, add a LORA JSON line immediately before TAGS using only supplied key/profile/optional IDs. "
+    "Do not output trigger strings, filenames, weights, or visual details that conflict with the active LoRA.\n"
 )
 
 # ⑤ D 保氛围迭代: 与 ③ 不同--③ 是用户上传参考图"只提氛围禁抄主体"(vibe-only), D 是"保氛围再画一版"
@@ -489,6 +1033,8 @@ VISION_ITERATE_SYSTEM_PROMPT = (
     "4. Do NOT output quality/score tags (masterpiece, best quality, score_*, safe, absurdres) - handled separately.\n"
     "5. Use lowercase danbooru tags; spaces over underscores. Do NOT add realistic/photoreal/3d/render tags (anime-only).\n"
     "6. TAGS collects every concrete tag from the 5 fields above. Keep under ~200 chars.\n"
+    "7. If ACTIVE LORA CONTEXT is present, add a LORA JSON line immediately before TAGS using only supplied key/profile/optional IDs. "
+    "Keep the active binding locked and do not output trigger strings, filenames, or weights.\n"
 )
 
 
@@ -560,6 +1106,20 @@ def _parse_character_hints(out: str) -> list[dict]:
             if name and name.lower() not in {"none", "null", "无"}:
                 hints.append({"name": name, "candidate_tag": candidate})
     return hints
+
+
+def _parse_lora_choices(out: str) -> dict[str, dict]:
+    """解析可选 LORA JSON 行；只保留 ID 形状，合法性由 resolver 对 registry 校验。"""
+    for line in out.splitlines():
+        line = line.strip()
+        if not line.lower().startswith("lora:"):
+            continue
+        payload = line.split(":", 1)[1].strip().strip("`")
+        try:
+            return _coerce_llm_lora_choices(json.loads(payload))
+        except (json.JSONDecodeError, TypeError):
+            return {}
+    return {}
 
 
 def _normalize_character_candidate(item: str) -> str | None:
@@ -765,7 +1325,7 @@ def match_dict_words(text: str) -> tuple[list[str], str]:
     return hits, remaining
 
 
-async def siliconflow_translate(context: str, reroll: bool = False) -> tuple[str, dict | None, str, dict | None, list[dict]]:
+async def siliconflow_translate(context: str, reroll: bool = False) -> tuple[str, dict | None, str, dict | None, list[dict], dict]:
     """走硅基流动 Qwen 翻译/扩写. context 是结构化上下文 (Known tags + Remaining).
     返回 (LLM 新增 tag, 结构化拆解 dict). tag 不含已知 tag (由 translate 拼接).
     breakdown 供前端预览展示 AI 理解, prompt_ir 保存 12 字段语义计划. 失败抛异常 (上层转 HTTPException).
@@ -786,15 +1346,19 @@ async def siliconflow_translate(context: str, reroll: bool = False) -> tuple[str
              "keep every explicit subject, action, location and constraint, and preserve subject readability. "
              "Still follow the output format and the known-tags rule.\n\n") if reroll else ""
     user_content = ("/no_think " if not thinking else "") + nudge + context
+    active_lora = "ACTIVE LORA CONTEXT" in context
 
     out = ""
     tags, breakdown, nl, prompt_ir = "", None, "", None
+    lora_choices = {}
     for attempt in range(2):
-        repair = "" if attempt == 0 else (
-            "\nFORMAT REPAIR: Your previous response was missing a valid IR JSON. "
-            "Return exactly one compact valid IR JSON line with all 12 array fields, "
-            "followed by PROMPT. Do not omit IR.\n"
-        )
+        repair = ""
+        if attempt:
+            repair = (
+                "\nFORMAT REPAIR: Return one compact valid IR JSON line with all 12 array fields, "
+                + ("then the mandatory LORA JSON line using only the supplied IDs, " if active_lora else "")
+                + "then PROMPT. Do not omit any required line.\n"
+            )
         r = await CLIENT.post(
             "https://api.siliconflow.cn/v1/chat/completions",
             headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
@@ -806,7 +1370,7 @@ async def siliconflow_translate(context: str, reroll: bool = False) -> tuple[str
                     {"role": "user", "content": user_content + repair},
                 ],
                 "temperature": temperature,
-                "max_tokens": 550,
+                "max_tokens": 650,
                 # ★ 关键: enable_thinking 必须放顶层, 放 extra_body 里硅基流动不认 -> 思考没关掉. (见 D2)
                 "enable_thinking": thinking,
             },
@@ -824,7 +1388,8 @@ async def siliconflow_translate(context: str, reroll: bool = False) -> tuple[str
 
         # 解析结构化输出: IR + PROMPT. 旧协议仍由解析器兼容.
         tags, breakdown, nl, prompt_ir = _parse_structured_output(out)
-        if prompt_ir is not None or attempt == 1:
+        lora_choices = _parse_lora_choices(out)
+        if (prompt_ir is not None and (not active_lora or lora_choices)) or attempt == 1:
             break
 
     # 兜底: 检测重复 tag (模型复读), 出现3次以上相同 tag 说明输出异常
@@ -834,10 +1399,10 @@ async def siliconflow_translate(context: str, reroll: bool = False) -> tuple[str
     if dupes:
         raise RuntimeError(f"翻译输出异常(重复tag: {dupes[0]}), 请重试")
 
-    return tags, breakdown, nl, prompt_ir, _parse_character_hints(out)
+    return tags, breakdown, nl, prompt_ir, _parse_character_hints(out), lora_choices
 
 
-async def siliconflow_vision_translate(image_b64: str, context: str, reroll: bool = False, mode: str = "reference") -> tuple[str, dict | None, str, dict | None]:
+async def siliconflow_vision_translate(image_b64: str, context: str, reroll: bool = False, mode: str = "reference") -> tuple[str, dict | None, str, dict | None, dict]:
     """③ 参考图理解: 走硅基流动 Qwen3-VL, 从参考图提取氛围/配色/构图/场景/光影 -> 结构化 breakdown + TAGS.
     image_b64: data URI (data:image/...;base64,...) 或纯 base64. context 同文本 LLM (Known tags + Remaining).
     返回 (tags, breakdown), 复用 _parse_structured_output. 失败抛异常 (上层转 HTTPException). 见 D23.
@@ -868,7 +1433,7 @@ async def siliconflow_vision_translate(image_b64: str, context: str, reroll: boo
                 ]},
             ],
             "temperature": temperature,
-            "max_tokens": 400,
+            "max_tokens": 500,
         },
         timeout=60,
     )
@@ -888,7 +1453,7 @@ async def siliconflow_vision_translate(image_b64: str, context: str, reroll: boo
     dupes = [t for t, c in Counter(tag_list).most_common(3) if c >= 3 and t]
     if dupes:
         raise RuntimeError(f"视觉输出异常(重复tag: {dupes[0]}), 请重试")
-    return tags, breakdown, nl, prompt_ir
+    return tags, breakdown, nl, prompt_ir, _parse_lora_choices(out)
 
 
 # Anima 期望的 tag 顺序: quality -> count -> character -> general (见 D20).
@@ -1034,17 +1599,29 @@ def compile_prompt(char_tags: list[str], other_tags: list[str], nl: str = "",
 
 
 async def translate(text: str, reroll: bool = False, image_b64: str | None = None,
-                    include_meta: bool = False) -> tuple:
+                    lora_selections=None, include_meta: bool = False) -> tuple:
     """中文 -> danbooru tag. 三层: 角色匹配 -> 词典匹配 -> LLM 扩写(只处理未命中).
     返回 (prompt_en, breakdown, prompt_ir): breakdown 是既有 5 维展示结构,
     prompt_ir 是 12 字段语义计划; 快速路径或旧视觉协议时二者按实际情况为 None.
     include_meta=True 时追加第四项 prompt_ir_meta，供 API additive 返回，不影响旧内部调用。
     reroll=True: 只对 LLM 路径生效, 高温重出一版不同补全方案, 跳过缓存(探索性, 不污染正常缓存).
-    image_b64: ③ 参考图 (data URI 或 base64). 有图走视觉 LLM 提氛围, 不走文本 LLM/快速路径. 见 D23."""
+    image_b64: ③ 参考图 (data URI 或 base64). 有图走视觉 LLM 提氛围.
+    lora_selections: Active LoRA Asset/Profile；存在时所有路径都使用同一 binding context."""
     backend = CFG.get("translate", "none")
+    lora_selections = apply_lora_intent_hints(text, lora_selections)
+    lora_context, normalized_loras, lora_revision = build_lora_context(lora_selections)
+    has_lora = bool(normalized_loras)
 
     def finish(prompt_en: str, breakdown: dict | None, prompt_ir: dict | None,
-               meta: dict):
+               meta: dict, bindings: list[dict] | None = None,
+               lora_warnings: list[str] | None = None):
+        meta = dict(meta)
+        meta.update({
+            "lora_aware": has_lora,
+            "lora_bindings": bindings or [],
+            "lora_warnings": lora_warnings or [],
+            "registry_revision": lora_revision if has_lora else None,
+        })
         result = (prompt_en, breakdown, prompt_ir)
         return result + (meta,) if include_meta else result
 
@@ -1065,20 +1642,28 @@ async def translate(text: str, reroll: bool = False, image_b64: str | None = Non
         if hits:
             ctx_lines.append(f"Known attribute tags: {', '.join(hits)}")
         ctx_lines.append(f"User instruction: {', '.join(misses) if misses else '(no specific instruction - extract everything from the image)'}")
+        if lora_context:
+            ctx_lines.append(lora_context)
+            ctx_lines.append(f"Registry revision: {lora_revision}")
         context = "\n".join(ctx_lines)
         try:
-            new_tags, breakdown, nl, prompt_ir = await siliconflow_vision_translate(image_b64, context, reroll=reroll)
+            vision_result = await siliconflow_vision_translate(image_b64, context, reroll=reroll)
+            new_tags, breakdown, nl, prompt_ir = vision_result[:4]
+            lora_choices = vision_result[4] if len(vision_result) > 4 else {}
         except Exception as e:
             raise HTTPException(502, f"参考图理解失败, 请稍后重试 ({e})")
         new_list = [t.strip() for t in new_tags.split(",") if t.strip()]
         result = compile_prompt(char_tags, hits + new_list, nl, infer_render_profile(prompt_ir))
+        bindings, lora_warnings, _ = resolve_lora_selections(normalized_loras, lora_choices)
+        result = compile_lora_bindings(result, bindings)
         return finish(
             result, breakdown, prompt_ir,
             _prompt_ir_meta("vision_reference", reroll, prompt_ir, char_tags, hits),
+            bindings, lora_warnings,
         )
 
     # 全命中 (无 misses): 不调 LLM
-    if not misses:
+    if not misses and not has_lora:
         # 裸角色名快速路径: 只有角色没别的描述 -> 补 1girl, solo
         # (LLM 对裸角色名会疯狂编场景/武器, 实测 7.9s + 噪声 tag, 见 D13)
         if char_tags and not hits:
@@ -1097,9 +1682,14 @@ async def translate(text: str, reroll: bool = False, image_b64: str | None = Non
     if backend == "none":
         # 未翻译部分原样保留 (混输英文 tag 时合适)
         result = compile_prompt(char_tags, hits + misses, profile="tag_first")
+        bindings, lora_warnings, _ = resolve_lora_selections(normalized_loras)
+        if has_lora:
+            lora_warnings.append("Reasoning Model 未启用：已注入确定性 LoRA binding，但未执行语义冲突检查")
+        result = compile_lora_bindings(result, bindings)
         return finish(result, None, None,
                       _prompt_ir_meta("faithful", reroll,
-                                      char_tags=char_tags, attribute_tags=hits))
+                                      char_tags=char_tags, attribute_tags=hits),
+                      bindings, lora_warnings)
 
     if backend == "siliconflow":
         # 构造上下文: 已知 tag 喂给 LLM, 只让它翻/扩 misses (不重复已知 tag)
@@ -1108,31 +1698,42 @@ async def translate(text: str, reroll: bool = False, image_b64: str | None = Non
             ctx_lines.append(f"Known character tags: {', '.join(char_tags)}")
         if hits:
             ctx_lines.append(f"Known attribute tags: {', '.join(hits)}")
-        ctx_lines.append(f"Remaining: {', '.join(misses)}")
+        ctx_lines.append(f"Original user intent: {text or '(image-only)'}")
+        ctx_lines.append(f"Remaining: {', '.join(misses) if misses else '(all ordinary terms already resolved; still plan around Active LoRA)'}")
+        if lora_context:
+            ctx_lines.append(lora_context)
+            ctx_lines.append(f"Registry revision: {lora_revision}")
         context = "\n".join(ctx_lines)
 
         cache_key = context
         if not reroll and cache_key in _TRANSLATE_CACHE:
-            cached_result, cached_breakdown, cached_ir = _TRANSLATE_CACHE[cache_key]
+            cached = _TRANSLATE_CACHE[cache_key]
+            cached_result, cached_breakdown, cached_ir = cached[:3]
+            cached_bindings = cached[3] if len(cached) > 3 else []
+            cached_warnings = cached[4] if len(cached) > 4 else []
             return finish(
                 cached_result, cached_breakdown, cached_ir,
                 _prompt_ir_meta("painter_expansion", reroll, cached_ir, char_tags, hits),
+                cached_bindings, cached_warnings,
             )
         try:
-            new_tags, breakdown, nl, prompt_ir, character_hints = await siliconflow_translate(
-                context, reroll=reroll
-            )
+            translated = await siliconflow_translate(context, reroll=reroll)
+            new_tags, breakdown, nl, prompt_ir, character_hints = translated[:5]
+            lora_choices = translated[5] if len(translated) > 5 else {}
         except Exception as e:
             raise HTTPException(502, f"翻译失败, 请稍后重试 ({e})")
         lookup_results = []
         resolved_char_tags = list(char_tags)
         known_names = set(_character_names())
+        active_lora_aliases = lora_selection_aliases(normalized_loras) if has_lora else set()
         if not character_hints:
             character_hints = _infer_character_hints_from_ir(
                 prompt_ir, misses, known_names, char_tags
             )
         for hint in character_hints:
             name = hint["name"]
+            if name.strip().lower() in active_lora_aliases:
+                continue
             candidate = _normalize_character_candidate(hint["candidate_tag"]) or hint["candidate_tag"]
             if name in known_names or candidate in char_tags:
                 continue
@@ -1148,15 +1749,18 @@ async def translate(text: str, reroll: bool = False, image_b64: str | None = Non
         new_list = [t.strip() for t in new_tags.split(",") if t.strip()]
         painter_tags = _prepare_painter_tags(hits + new_list, prompt_ir, text, resolved_char_tags)
         result = compile_prompt(resolved_char_tags, painter_tags, nl, infer_render_profile(prompt_ir))
+        bindings, lora_warnings, _ = resolve_lora_selections(normalized_loras, lora_choices)
+        result = compile_lora_bindings(result, bindings)
         # reroll 不写缓存: 探索性结果不应顶掉正常翻译的缓存原版 (见 D19)
         if not reroll:
             if len(_TRANSLATE_CACHE) >= _TRANSLATE_CACHE_MAX:
                 _TRANSLATE_CACHE.pop(next(iter(_TRANSLATE_CACHE)))
-            _TRANSLATE_CACHE[cache_key] = (result, breakdown, prompt_ir)
+            _TRANSLATE_CACHE[cache_key] = (result, breakdown, prompt_ir, bindings, lora_warnings)
         return finish(
             result, breakdown, prompt_ir,
             _prompt_ir_meta("painter_expansion", reroll, prompt_ir,
                             resolved_char_tags, hits, lookup_results),
+            bindings, lora_warnings,
         )
 
     if backend == "google":
@@ -1165,9 +1769,14 @@ async def translate(text: str, reroll: bool = False, image_b64: str | None = Non
         except Exception as e:
             raise HTTPException(502, f"翻译失败, 请稍后重试 ({e})")
         result = compile_prompt(char_tags, hits + translated_missing, profile="tag_first")
+        bindings, lora_warnings, _ = resolve_lora_selections(normalized_loras)
+        if has_lora:
+            lora_warnings.append("Google 翻译降级路径未执行 LoRA 语义冲突检查")
+        result = compile_lora_bindings(result, bindings)
         return finish(result, None, None,
                       _prompt_ir_meta("translation", reroll,
-                                      char_tags=char_tags, attribute_tags=hits))
+                                      char_tags=char_tags, attribute_tags=hits),
+                      bindings, lora_warnings)
 
     raise HTTPException(500, f"未知的 translate 后端: {backend}")
 
@@ -1219,7 +1828,9 @@ def build_prompt(wf_name: str, prompt_en: str, width: int | None, height: int | 
                  strength_char: float | None = None, strength_style: float | None = None,
                  image_filename: str | None = None, denoise: float | None = None,
                  detailer: dict | None = None,
-                 negative_text: str | None = None) -> dict:
+                 negative_text: str | None = None,
+                 lora_bindings: list[dict] | None = None,
+                 registry_revision: str | None = None) -> dict:
     wcfg = WORKFLOWS[wf_name]
     wf = json.loads((BASE / wcfg["file"]).read_text(encoding="utf-8"))
     wf = sanitize_for_api(wf)
@@ -1263,39 +1874,40 @@ def build_prompt(wf_name: str, prompt_en: str, width: int | None, height: int | 
                 raise HTTPException(500, f"workflow {wf_name} 负面节点缺少 {field} 文本")
             inputs[field] = base_negative.rstrip(" ,") + ", " + extra_negative
 
-    # LoRA 注入: 写 LoraManager 节点的 loras widget. __value__ 内是对象数组, 每项 {name, strength,
-    # clipStrength, active}; active 必须为 true, 否则 _collect_widget_entries 跳过 (见 D16).
-    # 多 LoRA: 角色+风格可同时注入. 触发词全部拼进 prompt (节点5 output2 -> 37->46->48->54 链
-    # 已被下面 set_input("prompt_node","text",...) 覆盖而断掉, 故手动拼).
-    trigger = ""
-    if lora_keys:
+    # LoRA Binding: 客户端只提供 key/profile/optional ID，exact tags/file/strength 重新从
+    # 同 revision Registry 解析。Prompt 与 workflow 注入共享同一 binding snapshot (D39).
+    effective_bindings: list[dict] = []
+    if lora_bindings:
+        selections = [
+            {"key": b.get("key"), "profile": b.get("profile"), "mode": "explicit",
+             "optional": b.get("optional") or []}
+            for b in lora_bindings
+        ]
+        effective_bindings, _, _ = resolve_lora_selections(
+            selections, expected_revision=registry_revision)
+    elif lora_keys:
+        effective_bindings, _, registry_revision = resolve_lora_selections(lora_keys)
+    if effective_bindings:
         if "lora_node" not in wcfg:
             raise HTTPException(400, f"工作流 {wf_name} 不支持 LoRA")
-        reg = get_lora_registry()
         lora_entries = []
-        triggers = []
-        for k in lora_keys:
-            if k not in reg:
-                raise HTTPException(400, f"未知的 LoRA: {k}")
-            lr = reg[k]
+        for binding in effective_bindings:
             # 按类型取强度: 角色/风格各自独立, 未传则用 config 默认
-            t = lr["type"]
+            t = binding["type"]
             sv = strength_char if t == "character" else (strength_style if t == "style" else None)
-            sm = float(sv) if sv is not None else lr["strength_model"]
-            sc = float(sv) if sv is not None else lr["strength_clip"]
-            lora_entries.append({"name": lr["file"], "strength": sm, "clipStrength": sc, "active": True})
-            t = (lr.get("trigger") or "").strip()
-            if t:
-                triggers.append(t)
+            sm = float(sv) if sv is not None else binding["strength_model"]
+            sc = float(sv) if sv is not None else binding["strength_clip"]
+            lora_entries.append({"name": binding["file"], "strength": sm,
+                                 "clipStrength": sc, "active": True})
         set_input("lora_node", "loras", {"__value__": lora_entries})
-        trigger = ", ".join(triggers)
+        prompt_en = compile_lora_bindings(prompt_en, effective_bindings)
 
     # safety 标签: Anima 要求明确 safe/sensitive/nsfw/explicit. 检测 prompt_en 里的 NSFW 关键词.
     _NSFW_KW = {"nipples", "pussy", "penis", "sex", "nude", "naked", "cum", "anus", "areola",
                 "breasts out", "panty pull", "explicit", "questionable"}
     safety = "explicit, " if any(kw in prompt_en.lower() for kw in _NSFW_KW) else "safe, "
 
-    full_prompt = wcfg.get("quality_prefix", "") + safety + (trigger + ", " if trigger else "") + prompt_en
+    full_prompt = wcfg.get("quality_prefix", "") + safety + prompt_en
     set_input("prompt_node", "text", full_prompt)
     if "negative_node" in wcfg:
         set_input("negative_node", "text", wcfg.get("negative_prefix", "") + wcfg.get("negative_extra", ""))
@@ -1350,10 +1962,15 @@ async def submit_and_wait(wf_name: str, prompt_en: str, width, height, lora_keys
                           strength_char: float | None = None, strength_style: float | None = None,
                           image_filename: str | None = None, denoise: float | None = None,
                           detailer: dict | None = None,
-                          negative_text: str | None = None) -> str:
-    payload = build_prompt(wf_name, prompt_en, width, height, lora_keys,
-                            strength_char, strength_style, image_filename, denoise,
-                            detailer, negative_text)
+                          negative_text: str | None = None,
+                          lora_bindings: list[dict] | None = None,
+                          registry_revision: str | None = None) -> str:
+    payload = build_prompt(
+        wf_name, prompt_en, width, height, lora_keys,
+        strength_char, strength_style, image_filename, denoise,
+        detailer, negative_text, lora_bindings=lora_bindings,
+        registry_revision=registry_revision,
+    )
     seed = payload.pop("_seed")
     r = await CLIENT.post(f"{COMFY}/prompt", json=payload)
     if r.status_code != 200:
@@ -1397,7 +2014,8 @@ async def worker():
             fname = await submit_and_wait(job["workflow"], job["prompt_en"], job.get("width"), job.get("height"),
                                          job.get("loras"), job.get("strength_char"), job.get("strength_style"),
                                          job.get("image_filename"), job.get("denoise"),
-                                         job.get("detailer"))
+                                         job.get("detailer"), lora_bindings=job.get("lora_bindings"),
+                                         registry_revision=job.get("registry_revision"))
             job.update(status="done", image=f"/images/{fname}")
         except Exception as e:
             job.update(status="failed", error=str(e))
@@ -1439,8 +2057,7 @@ async def list_workflows(token: str = Depends(auth)):
 
 @app.get("/api/loras")
 async def list_loras(token: str = Depends(auth)):
-    """LoRA 列表, 按 type 分组. config 手动 + Civitai 自动发现合并.
-    configured=false 的没有触发词, 需手动加 config."""
+    """LoRA Asset 列表；Registry Profiles 优先，unknown/incomplete 放 other。"""
     reg = get_lora_registry()
     items = [
         {
@@ -1451,18 +2068,58 @@ async def list_loras(token: str = Depends(auth)):
             "preview": v.get("preview"),
             "configured": v["configured"],
             "source": v["source"],
+            "trigger_policy": v.get("trigger_policy", "none"),
+            "provides": v.get("provides", []),
+            "verified": v.get("verified"),
+            "strength_model": v.get("strength_model", 1.0),
+            "strength_clip": v.get("strength_clip", 1.0),
+            "default_profile": (v.get("selection") or {}).get("default_profile"),
+            "profiles": [
+                {
+                    "id": pid,
+                    "name": profile.get("name", pid),
+                    "aliases": profile.get("aliases", []),
+                    "provides": profile.get("provides", []),
+                    "verified": profile.get("verified"),
+                    "optional": [
+                        {"id": oid, "name": option.get("name", oid),
+                         "provides": option.get("provides", [])}
+                        for oid, option in (profile.get("optional_tags") or {}).items()
+                    ],
+                }
+                for pid, profile in (v.get("profiles") or {}).items()
+            ],
         }
         for v in reg.values()
     ]
     return {"characters": [i for i in items if i["type"] == "character"],
-            "styles": [i for i in items if i["type"] == "style"]}
+            "styles": [i for i in items if i["type"] == "style"],
+            "other": [i for i in items if i["type"] not in {"character", "style"}]}
 
 
 @app.post("/api/loras/refresh")
 async def refresh_loras(token: str = Depends(auth)):
-    """重新扫描 loras 目录, 查 Civitai 补全未配置的 LoRA. 返回扫描结果."""
-    result = await scan_loras()
+    """强制重试 failed/incomplete inventory，并重新按 metadata/Civitai 分类。"""
+    result = await scan_loras(force=True)
     return {"ok": True, **result}
+
+
+def _extract_lora_selections(body: dict):
+    if "lora_selections" in body:
+        return body.get("lora_selections") or []
+    loras = body.get("loras")
+    if loras is not None:
+        return loras
+    single = body.get("lora")
+    return [single] if single else []
+
+
+def _bindings_as_selections(bindings: list[dict] | None) -> list[dict]:
+    return [
+        {"key": b.get("key"), "profile": b.get("profile"), "mode": "explicit",
+         "optional": b.get("optional") or []}
+        for b in (bindings or [])
+    ]
 
 
 @app.post("/api/translate")
@@ -1485,7 +2142,8 @@ async def translate_prompt(req: Request, token: str = Depends(verify_token)):
         check_banned(prompt)
     reroll = bool(body.get("reroll"))
     prompt_en, breakdown, prompt_ir, prompt_ir_meta = await translate(
-        prompt, reroll=reroll, image_b64=(image or None), include_meta=True
+        prompt, reroll=reroll, image_b64=(image or None),
+        lora_selections=_extract_lora_selections(body), include_meta=True
     )
     check_banned(prompt_en)
     return {
@@ -1493,13 +2151,18 @@ async def translate_prompt(req: Request, token: str = Depends(verify_token)):
         "breakdown": breakdown,
         "prompt_ir": prompt_ir,
         "prompt_ir_meta": prompt_ir_meta,
+        "lora_bindings": prompt_ir_meta.get("lora_bindings", []),
+        "lora_warnings": prompt_ir_meta.get("lora_warnings", []),
+        "registry_revision": prompt_ir_meta.get("registry_revision"),
     }
 
 
 async def _enqueue(token: str, wf_name: str, prompt_en: str, prompt_raw: str,
-                   size, loras: list[str] | None, strength_char, strength_style,
+                   size, lora_selections, strength_char, strength_style,
                    image_filename: str | None = None, denoise: float | None = None,
-                   detailer: dict | None = None) -> str:
+                   detailer: dict | None = None,
+                   lora_bindings: list[dict] | None = None,
+                   registry_revision: str | None = None) -> str:
     """校验并入队一次出图 (USAGE+1 / JOBS / QUEUE.put). create_job 与 /api/dialog/turn 共用. 返回 job_id.
     prompt_en/prompt_raw 的 banned 检查由调用方负责 (两处逻辑不同)."""
     if wf_name not in WORKFLOWS:
@@ -1511,14 +2174,28 @@ async def _enqueue(token: str, wf_name: str, prompt_en: str, prompt_raw: str,
         if size not in wcfg["sizes"]:
             raise HTTPException(400, "非法尺寸")
         width, height = map(int, size.split("x"))
-    # LoRA 校验 (失败快速返回 400, 不进队列)
-    if loras:
+    # LoRA selection/binding 校验；客户端 injected_tags/file 不可信，按 ID + revision 重解析。
+    resolved_bindings: list[dict] = []
+    lora_warnings: list[str] = []
+    resolved_revision: str | None = None
+    binding_requests = None
+    if lora_bindings:
+        if not isinstance(lora_bindings, list):
+            raise HTTPException(400, "lora_bindings 必须是数组")
+        binding_requests = [
+            {"key": b.get("key"), "profile": b.get("profile"), "mode": "explicit",
+             "optional": b.get("optional") or []}
+            for b in lora_bindings if isinstance(b, dict)
+        ]
+    elif lora_selections:
+        binding_requests = lora_selections
+    if binding_requests:
         if "lora_node" not in wcfg:
             raise HTTPException(400, "该工作流不支持 LoRA")
-        reg = get_lora_registry()
-        for k in loras:
-            if k not in reg:
-                raise HTTPException(400, f"未知的 LoRA: {k}")
+        resolved_bindings, lora_warnings, resolved_revision = resolve_lora_selections(
+            binding_requests,
+            expected_revision=registry_revision if lora_bindings else None,
+        )
         for sv in (strength_char, strength_style):
             if sv is not None:
                 try:
@@ -1527,9 +2204,11 @@ async def _enqueue(token: str, wf_name: str, prompt_en: str, prompt_raw: str,
                     raise HTTPException(400, "LoRA 强度需为数字")
                 if not (0 <= sv <= 1):
                     raise HTTPException(400, "LoRA 强度需在 0~1 之间")
+        prompt_en = compile_lora_bindings(prompt_en, resolved_bindings)
     else:
-        loras = None
         strength_char = strength_style = None
+    if len(prompt_en) > 1200:
+        raise HTTPException(400, "编译后的提示词过长(>1200)")
     # detailer 校验 (只允许 face/hand/nsfw/eyes)
     if detailer:
         allowed = {"face", "hand", "nsfw", "eyes"}
@@ -1542,7 +2221,11 @@ async def _enqueue(token: str, wf_name: str, prompt_en: str, prompt_raw: str,
     JOBS[job_id] = {
         "id": job_id, "token": token, "workflow": wf_name,
         "prompt_raw": prompt_raw, "prompt_en": prompt_en,
-        "width": width, "height": height, "loras": loras,
+        "width": width, "height": height,
+        "loras": [b["key"] for b in resolved_bindings] or None,
+        "lora_bindings": resolved_bindings,
+        "lora_warnings": lora_warnings,
+        "registry_revision": resolved_revision,
         "strength_char": strength_char, "strength_style": strength_style,
         "image_filename": image_filename, "denoise": denoise,
         "detailer": detailer,
@@ -1558,18 +2241,9 @@ async def create_job(req: Request, token: str = Depends(auth)):
     wf_name = body.get("workflow", "")
     prompt_en = (body.get("prompt_en") or "").strip()
     prompt_raw = (body.get("prompt") or "").strip() or prompt_en   # 原始中文, 仅存档展示; 不传则同 prompt_en
-    # loras: list[str] (新, 多选) 或 lora: str (旧, 单选, 包装成 list)
-    loras = body.get("loras")
-    if loras is None:
-        single = (body.get("lora") or "").strip()
-        loras = [single] if single else None
-    elif isinstance(loras, str):
-        loras = [loras] if loras else None
-    # 过滤空串
-    if loras:
-        loras = [k for k in loras if k]
-        if not loras:
-            loras = None
+    lora_selections = _extract_lora_selections(body)
+    lora_bindings = body.get("lora_bindings") or None
+    registry_revision = (body.get("registry_revision") or "").strip() or None
     if not prompt_en or len(prompt_en) > 800:
         raise HTTPException(400, "提示词为空或过长(>800)")
     if prompt_raw != prompt_en and len(prompt_raw) > 500:
@@ -1590,10 +2264,16 @@ async def create_job(req: Request, token: str = Depends(auth)):
         except Exception as e:
             raise HTTPException(502, f"图片上传失败 ({e})")
     job_id = await _enqueue(token, wf_name, prompt_en, prompt_raw,
-                            body.get("size"), loras,
+                            body.get("size"), lora_selections,
                             body.get("strength_char"), body.get("strength_style"),
-                            image_filename, denoise, detailer)
-    return {"id": job_id, "prompt_en": prompt_en}
+                            image_filename, denoise, detailer,
+                            lora_bindings=lora_bindings,
+                            registry_revision=registry_revision)
+    job = JOBS[job_id]
+    return {"id": job_id, "prompt_en": job["prompt_en"],
+            "lora_bindings": job.get("lora_bindings", []),
+            "lora_warnings": job.get("lora_warnings", []),
+            "registry_revision": job.get("registry_revision")}
 
 
 @app.get("/api/jobs/{job_id}")
@@ -1602,7 +2282,9 @@ async def job_status(job_id: str, token: str = Depends(auth)):
     if not job:
         raise HTTPException(404, "任务不存在")
     queued_ids = list(QUEUE._queue)  # MVP 简单读取
-    resp = {k: job[k] for k in ("id", "status", "prompt_raw", "prompt_en", "workflow") if k in job}
+    resp = {k: job[k] for k in (
+        "id", "status", "prompt_raw", "prompt_en", "workflow",
+        "lora_bindings", "lora_warnings", "registry_revision") if k in job}
     if job["status"] == "queued":
         resp["position"] = queued_ids.index(job_id) + 1 if job_id in queued_ids else 1
     if job["status"] == "done":
@@ -1627,6 +2309,7 @@ async def dialog_turn(req: Request, token: str = Depends(auth)):
     wf_name = body.get("workflow", "")
     image_filename = None
     denoise = None
+    requested_lora_selections = _extract_lora_selections(body)
 
     if action == "start":
         prompt = (body.get("prompt") or "").strip()
@@ -1634,15 +2317,23 @@ async def dialog_turn(req: Request, token: str = Depends(auth)):
             raise HTTPException(400, "提示词为空或过长(>500)")
         check_banned(prompt)
         try:
-            prompt_en, _, _ = await translate(prompt)
+            prompt_en, _, _, translate_meta = await translate(
+                prompt, lora_selections=requested_lora_selections, include_meta=True)
         except HTTPException:
             raise
         except Exception as e:
             raise HTTPException(502, f"翻译失败, 请稍后重试 ({e})")
         check_banned(prompt_en)
         session_id = uuid.uuid4().hex[:10]
-        SESSIONS[session_id] = {"id": session_id, "token": token, "raw": prompt,
-                                "current_en": prompt_en, "created": time.time(), "turns": []}
+        session_bindings = translate_meta.get("lora_bindings", [])
+        SESSIONS[session_id] = {
+            "id": session_id, "token": token, "raw": prompt,
+            "current_en": prompt_en, "created": time.time(), "turns": [],
+            "lora_selections": _bindings_as_selections(session_bindings),
+            "lora_bindings": session_bindings,
+            "lora_warnings": translate_meta.get("lora_warnings", []),
+            "registry_revision": translate_meta.get("registry_revision"),
+        }
         raw = prompt
     elif action == "start-image":
         # 从已完成的 job 起步, 不重新生成 -- 原图当第一轮 (前端「继续迭代」直接进暗房)
@@ -1658,6 +2349,10 @@ async def dialog_turn(req: Request, token: str = Depends(auth)):
             "raw": src_job.get("prompt_raw", ""),
             "current_en": src_job.get("prompt_en", ""),
             "created": time.time(),
+            "lora_selections": _bindings_as_selections(src_job.get("lora_bindings")),
+            "lora_bindings": src_job.get("lora_bindings", []),
+            "lora_warnings": src_job.get("lora_warnings", []),
+            "registry_revision": src_job.get("registry_revision"),
             "turns": [{"job_id": src_job_id, "action": "start-image", "delta": "",
                        "prompt_en": src_job.get("prompt_en", "")}],
         }
@@ -1679,7 +2374,13 @@ async def dialog_turn(req: Request, token: str = Depends(auth)):
                     session["raw"] = re.sub(r"[,，\s]+", " ", session["raw"]).strip()
                 session["raw"] = (session["raw"] + "，" + delta) if session["raw"] else delta
                 try:
-                    prompt_en, _, _ = await translate(session["raw"])
+                    prompt_en, _, _, translate_meta = await translate(
+                        session["raw"], lora_selections=session.get("lora_selections", []),
+                        include_meta=True)
+                    session["lora_bindings"] = translate_meta.get("lora_bindings", [])
+                    session["lora_warnings"] = translate_meta.get("lora_warnings", [])
+                    session["registry_revision"] = translate_meta.get("registry_revision")
+                    session["lora_selections"] = _bindings_as_selections(session["lora_bindings"])
                 except HTTPException:
                     raise
                 except Exception as e:
@@ -1704,7 +2405,13 @@ async def dialog_turn(req: Request, token: str = Depends(auth)):
             try:
                 # ③ reference 路径: char_dict+dict 从 delta 预匹配(认角色名), VL 从图提氛围(vibe-only),
                 # 主体由 delta 文字给。不用 iterate(锁主体) -- 用户要"保氛围换主体"=reference, iterate 反而冲突(见 D25 修正)
-                prompt_en, _, _ = await translate(delta, image_b64=image_b64)
+                prompt_en, _, _, translate_meta = await translate(
+                    delta, image_b64=image_b64,
+                    lora_selections=session.get("lora_selections", []), include_meta=True)
+                session["lora_bindings"] = translate_meta.get("lora_bindings", [])
+                session["lora_warnings"] = translate_meta.get("lora_warnings", [])
+                session["registry_revision"] = translate_meta.get("registry_revision")
+                session["lora_selections"] = _bindings_as_selections(session["lora_bindings"])
             except HTTPException:
                 raise
             except Exception as e:
@@ -1731,7 +2438,13 @@ async def dialog_turn(req: Request, token: str = Depends(auth)):
             if delta:
                 session["raw"] = (session["raw"] + "，" + delta) if session["raw"] else delta
                 try:
-                    prompt_en, _, _ = await translate(session["raw"])
+                    prompt_en, _, _, translate_meta = await translate(
+                        session["raw"], lora_selections=session.get("lora_selections", []),
+                        include_meta=True)
+                    session["lora_bindings"] = translate_meta.get("lora_bindings", [])
+                    session["lora_warnings"] = translate_meta.get("lora_warnings", [])
+                    session["registry_revision"] = translate_meta.get("registry_revision")
+                    session["lora_selections"] = _bindings_as_selections(session["lora_bindings"])
                 except HTTPException:
                     raise
                 except Exception as e:
@@ -1746,20 +2459,15 @@ async def dialog_turn(req: Request, token: str = Depends(auth)):
             raise HTTPException(400, f"未知 action: {action}")
 
     check_banned(prompt_en)
-    # loras: list[str] (新) 或 lora: str (旧, 包装成 list)
-    loras = body.get("loras")
-    if loras is None:
-        single = (body.get("lora") or "").strip()
-        loras = [single] if single else None
-    elif isinstance(loras, str):
-        loras = [loras] if loras else None
-    if loras:
-        loras = [k for k in loras if k] or None
+    session = SESSIONS[session_id]
     job_id = await _enqueue(token, wf_name, prompt_en, raw,
-                            body.get("size"), loras,
+                            body.get("size"), session.get("lora_selections", []),
                             body.get("strength_char"), body.get("strength_style"),
-                            image_filename, denoise, body.get("detailer"))
-    SESSIONS[session_id]["turns"].append({"job_id": job_id, "action": action, "delta": delta, "prompt_en": prompt_en})
+                            image_filename, denoise, body.get("detailer"),
+                            lora_bindings=session.get("lora_bindings"),
+                            registry_revision=session.get("registry_revision"))
+    session["turns"].append({"job_id": job_id, "action": action, "delta": delta,
+                             "prompt_en": JOBS[job_id]["prompt_en"]})
     return {"session_id": session_id, "job_id": job_id}
 
 
@@ -1776,7 +2484,10 @@ async def dialog_get(session_id: str, token: str = Depends(auth)):
             "action": t["action"], "delta": t["delta"], "prompt_en": t["prompt_en"],
             "status": job.get("status", "?"), "image": job.get("image"), "error": job.get("error"),
         })
-    return {"session_id": session_id, "raw": session["raw"], "current_en": session["current_en"], "turns": turns}
+    return {"session_id": session_id, "raw": session["raw"], "current_en": session["current_en"],
+            "lora_bindings": session.get("lora_bindings", []),
+            "lora_warnings": session.get("lora_warnings", []),
+            "registry_revision": session.get("registry_revision"), "turns": turns}
 
 
 if __name__ == "__main__":

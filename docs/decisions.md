@@ -508,6 +508,6 @@
 
 **代价**：API 需要新增 selection/binding/revision 契约；前端要支持多 Profile 与 stale Prompt；dialog/JOBS 需保存 binding snapshot；registry/loader/scanner/onboarding 都要成套实现，工程量高于字符串拼接。
 
-**验证**：本 ADR 先确认设计。实现后需补 nested loader、legacy adapter、binding 幂等、cache 隔离、text/vision/dialog 贯通单测，并用 deepseek_maid、denia、BlueArchiveStyleB1 做 fixed-condition A/B 人眼验收。没有真实多人 LoRA 资产前，不把多人 composition 计为完成。
+**验证（2026-08-23）**：首版实现完成。41 个确定性单测覆盖 nested loader/last-good、legacy adapter、Profile/optional 白名单、revision 409、scanner inventory、本地 `.civitai.info`、Binding 幂等、cache 隔离和 text/vision/jobs/dialog 贯通；前端内联 JS 与 81 个元素引用检查通过。5 组 fixed-condition A/B 经用户人眼得到 aware `1 胜 / 4 平 / 0 负`；DeepSeek 换 Anima 专用 LoRA 后，aware/legacy 图书馆结果均被接受且优于旧 IL 版本。多人 composition 仍因无真实资产不计为完成。
 
-**相关文件**：`docs/PLAN-LORA.md`、`docs/PLAN-v5 — AirPaint Prompt Intelligence.md`、`ROADMAP.md`、`docs/BUILDHANDOFF.md`。实现阶段将涉及 `server/main.py`、`server/lora_registry.yaml`、`.tools/register_lora.py`、`.tools/test_prompt_unit.py`、`web/index.html`、`docs/api.md`、`docs/architecture.md`。
+**相关文件**：`server/main.py`、`server/lora_registry.yaml`、`.tools/register_lora.py`、`.tools/test_prompt_unit.py`、`.tools/eval_set/render_exp/lora_context_cases.yaml`、`.tools/eval_set/render_exp/run_lora_context_ab.py`、`web/index.html`、`docs/PLAN-LORA.md`、`docs/api.md`、`docs/architecture.md`。

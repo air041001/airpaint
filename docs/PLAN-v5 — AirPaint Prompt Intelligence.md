@@ -311,15 +311,15 @@ Phase 2 首轮的 case 都是短句翻译或关系失败，没有验证 AirPaint
 
 Phase 4 不永久取消，但在暗房使用数据证明 redo/tweak 高频，或再次出现 D31 类字符串累加问题前不启动。当前先观察真实使用，不提前做 PromptState 设计或 dialog 重构。
 
-### Phase 5-7: LoRA Context / Binding（当前最终大工程）
+### Phase 5-7: LoRA Context / Binding（首版已完成 2026-08-23）
 
-已合并为 [`PLAN-LORA.md`](PLAN-LORA.md) v2，并由 D39 修订原设想：
+已按 [`PLAN-LORA.md`](PLAN-LORA.md) v2 与 D39 落地：
 
 - 选中的 LoRA/Profile 在翻译前进入 Reasoning/Vision Model 上下文，避免 Prompt 与权重语义割裂
 - LLM 只做 Profile/可选概念的语义选择，不复制 exact trigger，不决定文件名或权重
 - 代码通过 versioned Registry + LoRA Binding Compiler 确定性编译 required/default tags，并让 translate/jobs/dialog 使用同一 binding snapshot
-- 多 Profile schema 首版支持；没有真实资产和人眼验证前，不宣称完成多人 LoRA composition
-- 少量真实 LoRA 做 fixed-condition A/B，不搞 ML 系统或批量结构门槛
+- 多 Profile schema 首版支持；角色×1 + 风格×1 保持现有组合边界；没有真实多人资产和人眼验证，不宣称完成跨文件多人 LoRA composition
+- 真实 LoRA fixed-condition A/B 为 aware 1 胜 4 平 0 负；41 个确定性单测与前端 smoke 通过
 
 ### Phase 8: Workflow Intelligence（长期保留，不纳入当前最终大工程）
 
@@ -334,12 +334,10 @@ Phase 4 不永久取消，但在暗房使用数据证明 redo/tweak 高频，或
 - LLM 输出协议改 Prompt IR JSON + 验证稳定性
 - Prompt Compiler 初版
 
-### 延后（Phase 2-8，按顺序）
-- Rendering Strategy 实验结论之前的生产级 TAG/NL/权重/semantic negative 规则
-- Dictionary vs LLM 策略固化
-- char_dict 联网查询 + 知识成长 + 结构化
+### 延后（由真实使用或资产触发）
 - PromptState + dialog 重构
-- LoRA context / Trigger Engine / LoRA Composition / Workflow Intelligence
+- 跨文件多角色 LoRA Composition
+- Workflow Intelligence
 
 ### 目前根本不做
 - 小白产品 / "一句话不用管"路线

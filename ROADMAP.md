@@ -64,10 +64,11 @@ Phase 3 不做结构化 char_dict 迁移、156 条全量审计或复杂审批后
 - [ ] 观察暗房 redo/tweak 使用频率和 D31 类字符串累加问题
 - [ ] 只有真实迭代痛点成立后才启动 PromptState 设计
 
-### Phase 5-7: LoRA Context / Binding（最终大工程，v2 计划已确认）
-- [ ] 见 `docs/PLAN-LORA.md`：LoRA-aware Painter + versioned Registry/Profile + 确定性 Binding Compiler
-- [ ] 核心验收：选中的 LoRA、Prompt、exact trigger 与 workflow 权重语义一致，不串人物/服装/风格
-- [ ] 多人 composition 只有在真实资产 + 人眼验证后才算完成；Phase 8 Workflow Intelligence 不纳入本工程
+### Phase 5-7: LoRA Context / Binding（首版已完成 2026-08-23）
+- [x] `docs/PLAN-LORA.md`：LoRA-aware Painter + versioned Registry/Profile + 确定性 Binding Compiler
+- [x] translate/jobs/dialog 共用 binding snapshot/revision；前端支持 Profile auto/锁定和 stale Prompt 防串线
+- [x] 41 个确定性单测、前端 smoke 与 5 组真实 A/B：aware 1 胜 4 平 0 负
+- [ ] 跨文件多人 composition 仅在真实资产 + 人眼验证后启动；Phase 8 Workflow Intelligence 不纳入本工程
 
 ---
 
