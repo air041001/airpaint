@@ -691,7 +691,7 @@
   },
   "32": {
     "inputs": {
-      "value": 2
+      "value": 1
     },
     "class_type": "PrimitiveInt",
     "_meta": {

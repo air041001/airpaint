@@ -571,3 +571,21 @@ LoRA 用户可见名称以 versioned `server/lora_registry.yaml` 为单一真相
 **验证**：浏览器验证 1920×950、1280×720、390×844；宽屏画布高度约从 418px 增至 538px，输入区约从 222px 降至 155px。`1024x1536` 无 detailer 在 RTX 4060 Laptop 8GB 上真实成功，峰值显存约 7.75GB，输出 `anima_20260823_00014_.png`；旧 300 秒 deadline 先于 ComfyUI 完成误报超时，因此修正为 450 秒。42 个确定性单测、Python/内联 JS/DOM 引用检查通过。
 
 **相关文件**：`web/index.html`、`server/main.py`、`server/config.example.yaml`、`.tools/test_prompt_unit.py`、`docs/api.md`、`docs/architecture.md`。
+
+## D43. 显式选择生成分支并纠正 D42 的高分辨率结论
+
+**背景**：用户检查成品文件发现，网站选择其他尺寸后多数输出仍为 832×1216；D42 记录的“1024×1536”任务日志显示 `SELECTED: input2`，30 步采样只用 47 秒，但总执行 309.72 秒。原生 ComfyUI 的真正 1024×1536 走 `input1`，总执行约 72 秒。
+
+**问题**：D42 只检查了请求值、节点 56 和任务成功状态，没有检查 ImpactSwitch 最终分支与成品像素，因此把错误分支的耗时当成高分辨率性能，并据此增加了像素面积 timeout。
+
+**决定**：`build_prompt()` 每次显式设置 ImpactSwitch：txt2img=`select=1`（节点 56 EmptyLatent），img2img=`select=2`（节点 33 VAEEncode）；工作流节点 32 的安全默认值改为 1。删除 `generation_timeout_seconds()`，恢复所有尺寸使用统一 `timeout_seconds`。前端成品徽标读取图片的实际像素，不再只复述请求值。
+
+**原因**：生成模式是离散、可验证的程序状态，不能依赖工作流文件的历史 widget 默认值。txt2img 误走 `input2` 时，链路实际使用 `salt.jpg -> Resize(832×1216) -> VAEEncode`，既绕过请求尺寸，又引入采样前的图片处理与动态显存换入。放宽 timeout 只会掩盖路由错误。
+
+**代价**：工作流文件和后端各自都保留安全选择，存在少量重复；这是有意的纵深防护。高分辨率仍比约 1MP 档更慢，且不承诺与 detailer 组合的 8GB 显存表现，但目前没有证据需要按像素自动延长 deadline。
+
+**验证**：固定无 LoRA/detailer 请求 1024×1536，实际输出 `1529ed18e206.png` 经 PIL 确认为 1024×1536；Comfy history 为 `select=1`、节点 56=`1024x1536`，Comfy 执行约 82.3 秒、端到端 84.16 秒。旧任务 history 为节点 32=`2`、输出 832×1216、执行约 309.7 秒。42 个确定性单测覆盖 txt2img/img2img 双分支。
+
+**修订关系**：本决定修订 D42 中“旧任务是真实 1024×1536”“300 秒来自高分辨率”“应按像素面积放宽 timeout”三项结论；D42 的布局与尺寸选择器决定继续有效。
+
+**相关文件**：`server/main.py`、`server/workflows/AnimaFull.json`、`.tools/test_prompt_unit.py`、`web/index.html`、`docs/workflow-anatomy.md`、`docs/architecture.md`、`docs/api.md`。

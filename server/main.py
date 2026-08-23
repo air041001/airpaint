@@ -1938,10 +1938,12 @@ def build_prompt(wf_name: str, prompt_en: str, width: int | None, height: int | 
             else:
                 del wf[nid]   # 删未选 detailer 节点, 重连 (依赖节点变不可达, 不执行)
         wf[save_id]["inputs"]["images"] = [prev, 0]
-    # img2img 注入: 切 ImpactSwitch select=2 (VAEEncode latent) + 覆盖主 KSampler denoise
+    # 路由必须每次显式写入：原工作流节点 32 曾默认 value=2，若 txt2img 不覆盖，
+    # 会误走 salt.jpg -> Resize -> VAEEncode，绕过节点 56 的尺寸并引发额外 VRAM 换入。
+    if "switch_node" in wcfg:
+        set_input("switch_node", "select", 2 if image_filename else 1)
+    # img2img 注入: input2=VAEEncode latent + 覆盖主 KSampler denoise
     if image_filename and "image_node" in wcfg:
-        if "switch_node" in wcfg:
-            set_input("switch_node", "select", 2)
         if denoise is not None and "denoise_node" in wcfg:
             set_input("denoise_node", "denoise", float(denoise))
     return {"prompt": wf, "client_id": CLIENT_ID, "_seed": seed}
@@ -1956,15 +1958,6 @@ async def upload_image_to_comfy(image_bytes: bytes) -> str:
     if r.status_code != 200:
         raise RuntimeError(f"ComfyUI 上传图片失败: {r.status_code} {r.text[:200]}")
     return r.json()["name"]
-
-
-def generation_timeout_seconds(width: int | None, height: int | None) -> int:
-    """按像素面积放宽高分辨率任务超时，标准约 1MP 仍沿用配置值。"""
-    base_timeout = max(1, int(CFG.get("timeout_seconds", 300)))
-    if not width or not height:
-        return base_timeout
-    scale = max(1.0, (int(width) * int(height)) / (1024 * 1024))
-    return min(900, max(base_timeout, round(base_timeout * scale)))
 
 
 async def submit_and_wait(wf_name: str, prompt_en: str, width, height, lora_keys: list[str] | None = None,
@@ -1986,7 +1979,7 @@ async def submit_and_wait(wf_name: str, prompt_en: str, width, height, lora_keys
         raise RuntimeError(f"ComfyUI 拒绝: {r.text[:200]}")
     pid = r.json()["prompt_id"]
 
-    deadline = time.time() + generation_timeout_seconds(width, height)
+    deadline = time.time() + int(CFG.get("timeout_seconds", 300))
     while time.time() < deadline:
         await asyncio.sleep(2)
         h = (await CLIENT.get(f"{COMFY}/history/{pid}")).json()

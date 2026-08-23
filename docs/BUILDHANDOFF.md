@@ -18,7 +18,7 @@ Phase 2.6（Prompt Expansion）、Phase 3（Character Knowledge）与 PLAN-LORA 
 - `compile_prompt()`：角色裸名清理、tag 去重、`count → character → general` 排序、NL 拼接。
 - `infer_render_profile()`：当前只对明确 NSFW、单主体、简单动作使用 `tag_first`；普通 SFW 保留 NL，复杂关系使用 `relation_hybrid`。
 - `/api/translate`：增加 `prompt_ir` 和 additive `prompt_ir_meta`，前端旧 `breakdown` 契约保持兼容。
-- 结构性回归：由 42 个零依赖单测覆盖 Prompt/角色知识、LoRA Registry/Binding 与高分辨率 timeout，不依赖未验证 baseline。
+- 结构性回归：由 42 个零依赖单测覆盖 Prompt/角色知识、LoRA Registry/Binding 与 txt2img/img2img 显式路由，不依赖未验证 baseline。
 - Failure taxonomy：已覆盖 counting、entity binding、action/pose、interaction、spatial、lighting、NSFW anatomy、model artifact、semantic misread 等类型。
 - NSFW 结构评测集：8 条明确成人内容，结构与 explicit safety 验证通过。
 - Rendering Strategy 实验工具：固定 Prompt、seed、尺寸、workflow，支持盲评页、manifest、variant 对照。
@@ -32,7 +32,7 @@ Phase 2.6（Prompt Expansion）、Phase 3（Character Knowledge）与 PLAN-LORA 
 ### 已验证项
 
 - Phase 2 profile 收窄后，结构回归由单测覆盖（历史 30/30 仅记录，baseline 已清理）。
-- Prompt/LoRA 单测：最近一次为 `41` 个通过。
+- Prompt/LoRA 单测：最近一次为 `42` 个通过。
 - NSFW 结构验证：`8/8`，workflow safety 为 `explicit`。
 - Failure taxonomy 聚合：`17 pass / 18 fail`，主要失败类型为 `interaction_relation`、`model_artifact`、`action_pose`、`anatomy_nsfw`。
 - Phase 1.5 首轮：30 张图生成成功，用户完成盲评。
@@ -46,7 +46,7 @@ Phase 2.6（Prompt Expansion）、Phase 3（Character Knowledge）与 PLAN-LORA 
 - 未验证的 baseline 回归资产已清理（DEVLOG 40）；结构不变量由确定性单测覆盖。
 - PLAN-LORA v2 已落地并通过用户验收：5 组真实 A/B 为 aware 1 胜 4 平 0 负；DeepSeek 换 Anima 后图书馆 pair 平局且用户认为优于旧 IL；Blue Archive 午后光线补测正常。
 - Remielle Dan（base/白/黑/泳装）、Dolphro-kun 风格与无 trigger Light 风格均由用户确认生效并通过验收，Registry 已提升为 verified。LoRA 显示名来自 `server/lora_registry.yaml` 的 Asset/Profile `name`，不要在前端按 key 硬编码别名。
-- 前端布局已按用户 1920×950 截图重排；`1024x1536` 在 RTX 4060 Laptop 8GB、无 detailer 下真实成功，峰值约 7.75GB，耗时略超旧 300 秒。后端现按像素面积将该档 timeout 放宽为 450 秒，前端提示 2～5 分钟。
+- 前端布局已按用户 1920×950 截图重排。尺寸路由纠错后，`1024x1536` 在 RTX 4060 Laptop 8GB、无 detailer 下实际输出 1024×1536，端到端 84.16 秒；此前 309.72 秒任务实际误走 `input2` 并输出 832×1216，不是高分辨率性能结论。前端现从成品 `naturalWidth/naturalHeight` 显示真实像素。
 
 ## 2. 修改/新增文件清单
 
@@ -56,7 +56,7 @@ Phase 2.6（Prompt Expansion）、Phase 3（Character Knowledge）与 PLAN-LORA 
 |---|---|
 | `server/main.py` | Prompt/Intent/Workflow Engine + LoRA Registry/Scanner/Resolver/Binding/API/session |
 | `server/lora_registry.yaml` | versioned LoRA Asset/Profile/trigger/provides/default strength 人工知识 |
-| `.tools/test_prompt_unit.py` | 42 个零依赖 Prompt/角色知识/LoRA Registry/Binding/API/session/timeout 单测 |
+| `.tools/test_prompt_unit.py` | 42 个零依赖 Prompt/角色知识/LoRA Registry/Binding/API/session/workflow 路由单测 |
 | `.tools/register_lora.py` | LoRA sidecar inspection、Registry validate 与原子 onboarding |
 | `.tools/start_lora_onboard_agent.bat` | 双击启动本地 LoRA 入库 Agent；API key 只从 gitignored config 读取 |
 | `.tools/test_lora_onboard_agent.py` | onboarding JSON/schema/exact trigger/strength/Civitai 分支确定性测试 |
@@ -166,9 +166,9 @@ python .tools/register_lora.py --validate
 
 状态：`9 lora onboarding agent tests passed`；`registry valid: 9 assets`。
 
-前端：两个内联 script 语法通过；103 个 DOM id 无重复，全部 `$()` 引用存在；浏览器完成 1920×950、1280×720、390×844 响应式与尺寸展开/收起验证。
+前端：三个内联 script 语法通过；104 个 DOM id 无重复，全部 `$()` 引用存在；浏览器完成 1920×950、1280×720、390×844 响应式与尺寸展开/收起验证。
 
-高分辨率：`1024x1536` 无 detailer 真实工作流成功输出 `anima_20260823_00014_.png`；旧 300 秒 deadline 先误报超时，像素面积 timeout 修正后该档为 450 秒。
+高分辨率：修复后 `1024x1536` 无 LoRA/detailer 端到端输出 `1529ed18e206.png`，PIL 实测 1024×1536；`build_prompt`/Comfy history 均确认 txt2img `select=1`、节点 56=`1024x1536`。端到端 84.16 秒，Comfy 执行约 82.3 秒。原 `anima_20260823_00014_.png` 历史记录为 `select=2`，实际 832×1216、执行约 309.7 秒，不能作为高分辨率验证。
 
 真实 LoRA：5 组 fixed-condition A/B 均完成用户人眼验收，aware 1 胜 4 平 0 负；DeepSeek Anima 最终 3/3 生成，图书馆 A/C 平局。
 

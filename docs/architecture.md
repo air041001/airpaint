@@ -78,7 +78,7 @@ Active LoRA 时，文本快速路径也强制进入 LoRA-aware painter；Reasoni
 4. **LoRA binding 重解析**：有 snapshot 时只取 key/profile/optional，按同一 `registry_revision` 从当前 Registry 重建；旧 `lora_keys` 走 legacy adapter。随后由 Binding Compiler 补回被编辑删除的 required/default exact tags。
 5. **LoRA workflow 注入**：写 `lora_node.loras = {"__value__":[{name,strength,clipStrength,active:true}, ...]}`。文件名与默认强度来自 Registry，角色/风格滑块只允许 0~1 覆盖；LoraManager 的 `text` 字段执行时会被 `del`，不能依赖它加载权重。
 6. 注入 `prompt_node.text = quality_prefix + safety + compiled prompt` 与尺寸；不再把 Civitai 全量 trainedWords 在生成阶段盲拼。负面继续使用工作流固化模板。
-7. **detailer 拼接** (若 `detailer:{face,hand,nsfw,eyes}`): 删未选 detailer 节点、重连 (删的节点不执行, 省时)。img2img: 切 ImpactSwitch select=2 + 覆盖主 KSampler denoise。
+7. **生成分支与 detailer**：每次构建都显式写 ImpactSwitch：txt2img=`input1`（节点 56 EmptyLatent，使用请求宽高），img2img=`input2`（节点 33 VAEEncode）并覆盖主 KSampler denoise。若有 `detailer:{face,hand,nsfw,eyes}`，删未选 detailer 节点并重连（删掉的节点不可达，不执行）。
 8. 返回 `{prompt, client_id, _seed}`。
 
 > 扩展其他节点注入 (ControlNet / 图生图 等) 前, 先看 `CLAUDE.md` 的「ComfyUI 节点注入准则」-- 必须查本机节点源码定 input 格式, 不靠猜; 实例见 D16 (LoRA)。
@@ -114,7 +114,7 @@ Active LoRA 时，文本快速路径也强制进入 LoRA-aware painter；Reasoni
 关键字段: `comfy_url` `comfy_dir` `host/port` `allow_origins` `tokens` `daily_limit`
 `timeout_seconds` `banned_words` `translate` `siliconflow_api_key` `siliconflow_model` `siliconflow_vision_model` `reroll_temperature`
 `workflows.anima.{file,prompt_node,seed_node,size_node,lora_node,image_node,switch_node,denoise_node,detailer_nodes,sizes,quality_prefix}`;
-`submit_and_wait()` 以 `timeout_seconds` 为约 1MP 基准，并按请求像素面积放宽高分辨率 deadline（上限 900 秒），避免 ComfyUI 已完成但网站先误报超时。
+`submit_and_wait()` 统一使用 `timeout_seconds` 作为单次 ComfyUI deadline。当前 1024×1536 无 detailer 实测约 82 秒；此前 300 秒并非高分辨率正常开销，而是 txt2img 误走占位图 VAE 分支，已由显式 switch 路由修复（D43）。
 人工 LoRA 真相在 `server/lora_registry.yaml`；`config.yaml` 顶层 `loras` 只作未迁移 legacy 兼容。未注册文件进入 gitignored `server/lora_cache.json` inventory，本地 `.metadata.json`/`.civitai.info` 优先，Civitai hash lookup 次之。
 
 ## 尚未实现 / 已知限制

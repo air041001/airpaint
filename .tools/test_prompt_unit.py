@@ -98,11 +98,19 @@ def test_experiment_negative_override_is_opt_in():
             workflow["negative_text_node"] = previous
 
 
-def test_generation_timeout_scales_with_pixel_area():
-    base = int(main.CFG.get("timeout_seconds", 300))
-    assert main.generation_timeout_seconds(832, 1216) == base
-    assert main.generation_timeout_seconds(1024, 1536) == round(base * 1.5)
-    assert main.generation_timeout_seconds(4096, 4096) == 900
+def test_build_prompt_routes_txt2img_and_img2img_explicitly():
+    txt2img = main.build_prompt("anima", "1girl, beach", 1024, 1536)["prompt"]
+    assert txt2img["42"]["inputs"]["select"] == 1
+    assert txt2img["56"]["inputs"]["width"] == 1024
+    assert txt2img["56"]["inputs"]["height"] == 1536
+
+    img2img = main.build_prompt(
+        "anima", "1girl, beach", 1024, 1536,
+        image_filename="uploaded.png", denoise=0.35,
+    )["prompt"]
+    assert img2img["42"]["inputs"]["select"] == 2
+    assert img2img["0"]["inputs"]["image"] == "uploaded.png"
+    assert img2img["6"]["inputs"]["denoise"] == 0.35
 
 
 def test_render_profile_inference():
@@ -710,7 +718,7 @@ def main_test():
         test_character_bare_name_is_removed,
         test_compile_prompt_merges_tags_and_nl,
         test_experiment_negative_override_is_opt_in,
-        test_generation_timeout_scales_with_pixel_area,
+        test_build_prompt_routes_txt2img_and_img2img_explicitly,
         test_render_profile_inference,
         test_tag_first_profile_drops_nl,
         test_prompt_ir_meta_is_additive,

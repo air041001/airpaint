@@ -183,7 +183,7 @@ Authorization: Bearer <token>
 ```
 - `prompt_en`: 必填, 已翻译英文 tag (可经用户编辑), ≤800 字符, 经内容过滤。
 - `prompt`: 可选, 原始中文 (仅存档展示, ≤500); 不传则 prompt_raw 同 prompt_en。
-- `size`: 可选, 必须是该工作流 `sizes` 之一; 不传取第一个。约 1MP 使用 `timeout_seconds`，更大画幅按像素面积自动放宽生成 deadline（最多 900 秒）。
+- `size`: 可选, 必须是该工作流 `sizes` 之一; 不传取第一个。后端把该尺寸写入 txt2img 的 EmptyLatent 节点，并显式选择 txt2img 分支；所有尺寸共用配置项 `timeout_seconds`。
 - `lora_selections`: 新客户端的选择真相。支持角色×1 + 风格×1；Profile/optional 只能使用 Registry ID。
 - `lora_bindings` + `registry_revision`: 推荐原样回传 translate 结果。后端不信任客户端的 file/tags/strength，而是从 binding 的 key/profile/optional 重新解析；revision 过期返回 409。
 - `loras` / `lora`: 旧客户端兼容入口，内部转为 selection；不传或空表示不用 LoRA。
