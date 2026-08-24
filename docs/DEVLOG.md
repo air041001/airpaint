@@ -753,3 +753,9 @@ LoRA 显示名称的单一真相为 `server/lora_registry.yaml` 的 Asset/Profil
 修复后 `build_prompt()` 每次显式路由：txt2img=`select=1`，img2img=`select=2`；工作流节点 32 的安全默认值也改为 1。撤销基于错误性能结论加入的像素面积 timeout，恢复统一 `timeout_seconds`。前端尺寸徽标改为读取成品图片的 `naturalWidth/naturalHeight`，请求尺寸与实际尺寸不一致时给出提示。
 
 RTX 4060 Laptop 8GB、无 LoRA/detailer 重新端到端测试：请求 1024×1536，输出 `1529ed18e206.png` 经 PIL 确认为 1024×1536；Comfy history 为 `select=1`、节点 56=`1024x1536`，Comfy 执行约 82.3 秒、网站调用端到端 84.16 秒。旧任务约 309.7 秒中的 47 秒进度条只覆盖采样循环，前置长等待来自误走的图片加载/缩放/VAE 编码及动态显存换入，不能归因于高分辨率。第 45 条保留为历史记录，其性能与输出尺寸结论由本条纠正。
+
+## 第 47 条 2026-08-24 - rating 控制权回归用户与 DeepSeek 条件配方修正
+
+复核一次 DeepSeek 女仆失败请求后确认，`safe` 并非由未成年词触发，而是 `build_prompt()` 对所有未命中固定英文 NSFW 关键词的 Prompt 默认追加；`exposing crotch` 等改写会被错误归到 `safe`。现已删除自动 `safe/explicit` 分类，Reasoning/Vision Model 也被明确禁止自行推断 rating。用户在生成前编辑英文 Prompt 加入的 rating tag 仍原样生效。明确成人内容的语义保真与构图护栏继续存在，但不再冒充 rating 分类器。
+
+用户提供的 DeepSeek LoRA 作者说明按视角分为正面身份、正面全身、正面腰上、纯背面和侧面。旧 Registry 错把前两段合并成所有请求都注入的 30 余个默认 tag。现在默认只保留 `deepseek_whale_girl` 与 `deepseek_maid_outfit` 两个 exact trigger，五类长清单改成显式视角才启用的 optional 配方。由于现有三张实测验证的是旧正面全量绑定，新最小默认绑定标记为 candidate，等待固定条件真实图片比较；确定性测试只证明路由、白名单和手动 rating 透传正确，不宣称画质提升。

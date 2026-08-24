@@ -131,42 +131,38 @@ loras:
       maid:
         name: "DeepSeek Whale Girl（女仆装）"
         aliases: ["DeepSeek女仆", "小鲸鱼", "大肥鱼", "Whale Girl"]
-        provides: ["DeepSeek whale-girl identity", "very long gradient blue hair", "whale fin ears and blue whale tail", "complete navy-blue maid outfit"]
+        provides: ["DeepSeek whale-girl identity", "navy-blue maid outfit concept"]
         required_tags: ["deepseek_whale_girl", "deepseek_maid_outfit"]
-        default_tags:
-          - "solo"
-          - "blue hair"
-          - "very long hair"
-          - "wavy hair"
-          - "gradient blue hair"
-          - "bangs"
-          - "ahoge"
-          - "blue eyes"
-          - "whale fin ears"
-          - "blue hair bows"
-          - "maid"
-          - "maid headdress"
-          - "white frilled maid headdress"
-          - "navy blue maid dress"
-          - "white frilled apron"
-          - "blue whale emblem"
-          - "dark blue neck bow"
-          - "blue gemstone brooch"
-          - "puff sleeves"
-          - "long sleeves"
-          - "gold trim"
-          - "blue whale tail"
-          - "starry tail pattern"
-          - "frilled thighhighs"
-          - "white thighhighs"
-          - "thighhigh bows"
-          - "black mary janes"
-          - "ankle strap shoes"
-          - "low heels"
-        optional_tags: {}
-        source: "same-author Civitai description and prompts, applied to the Anima release"
-        verified: curated
-        notes: "Anima LoRA; the downloaded file had no author sidecar or embedded metadata, so the same author's DeepSeek identity/outfit prompt and the previously tested 0.85 strength are retained. Exact binding and three real renders passed on 2026-08-23; the user accepted the aware/legacy library pair as a tie and judged Anima better than the former Illustrious release."
+        default_tags: []
+        optional_tags:
+          identity_front:
+            name: "正面 / 三分之四视角身份细节"
+            aliases: ["正面", "三分之四视角", "front view", "three-quarter view"]
+            provides: ["front or three-quarter identity details"]
+            tags: ["blue hair", "very long hair", "wavy hair", "gradient blue hair", "bangs", "ahoge", "blue eyes", "whale fin ears", "blue hair bows", "white frilled maid headdress"]
+          maid_front_full:
+            name: "正面全身女仆装细节"
+            aliases: ["正面全身", "全身正面", "front full body", "full-body front view"]
+            provides: ["front full-body maid outfit details"]
+            tags: ["navy blue maid dress", "white frilled apron", "blue whale emblem", "dark blue neck bow", "blue gemstone brooch", "puff sleeves", "long sleeves", "gold trim", "blue whale tail", "starry tail pattern", "frilled thighhighs", "white thighhighs", "thighhigh bows", "black mary janes", "ankle strap shoes", "low heels"]
+          maid_front_upper:
+            name: "正面腰上女仆装细节"
+            aliases: ["正面腰上", "腰上正面", "front upper body", "upper-body front view"]
+            provides: ["front upper-body maid outfit details"]
+            tags: ["navy blue maid dress", "white frilled apron", "blue whale emblem", "dark blue neck bow", "blue gemstone brooch", "puff sleeves", "long sleeves", "gold trim"]
+          maid_back:
+            name: "纯背面女仆装细节"
+            aliases: ["纯背面", "背面视角", "back view", "from directly behind"]
+            provides: ["back-view maid outfit details"]
+            tags: ["navy blue maid dress", "white frills", "gold trim", "large white back bow", "blue whale tail", "starry tail pattern", "frilled thighhighs", "white thighhighs", "thighhigh bows", "black mary janes", "ankle strap shoes", "low heels"]
+          side_visible:
+            name: "侧面单侧可见细节"
+            aliases: ["侧面单侧", "侧面视角", "side view", "single side visible"]
+            provides: ["single visible eye, whale fin ear and hair bow in side view"]
+            tags: ["blue eye", "whale fin ear", "blue hair bow"]
+        source: "user-provided LoRA author description"
+        verified: candidate
+        notes: "作者说明按视角分别给出身份与服装配方，因此默认只注入两个 exact trigger；正面身份、正面全身、正面腰上、纯背面和侧面细节仅在用户明确要求对应视角时加入。2026-08-23 的三张实测只验证了旧的正面全量绑定，未验证当前最小默认绑定，需固定条件出图后再提升状态。"
     legacy_keys: {}
 
   shiratama_art:

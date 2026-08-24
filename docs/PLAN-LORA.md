@@ -368,7 +368,7 @@ compile_lora_bindings(prompt_en, resolved_bindings, user_intent=None)
 ```text
 Prompt Compiler：普通画面语义
 LoRA Binding Compiler：LoRA 提供概念 + exact tags
-build_prompt：quality/safety + 已编译 Prompt + workflow 文件/强度/节点注入
+build_prompt：quality + 已编译 Prompt + workflow 文件/强度/节点注入；rating tag 由用户手动控制
 ```
 
 `build_prompt()` 不再承担“从一段任意 trigger 字符串猜怎么补”的职责；旧 config 条目先转换为 legacy Profile，再走同一编译器。

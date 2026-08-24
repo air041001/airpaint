@@ -589,3 +589,23 @@ LoRA 用户可见名称以 versioned `server/lora_registry.yaml` 为单一真相
 **修订关系**：本决定修订 D42 中“旧任务是真实 1024×1536”“300 秒来自高分辨率”“应按像素面积放宽 timeout”三项结论；D42 的布局与尺寸选择器决定继续有效。
 
 **相关文件**：`server/main.py`、`server/workflows/AnimaFull.json`、`.tools/test_prompt_unit.py`、`web/index.html`、`docs/workflow-anatomy.md`、`docs/architecture.md`、`docs/api.md`。
+
+## D44. 取消自动 rating 推断，并把 DeepSeek 长触发词改为条件配方
+
+**背景**：DeepSeek 女仆请求的最终语义只有 `exposing crotch`，没有命中 `build_prompt()` 的英文 NSFW 关键词集合，于是后端自动追加 `safe`。同时 `deepseek_maid` Registry 把作者说明里的“正面/三分之四身份段 + 正面全身服装段”平铺成 30 余个通用 `default_tags`，无论视角和动作都强制注入完整服装、袜子与鞋子。
+
+**问题**：rating 不是可靠的关键词分类问题。翻译的同义改写、漏译和中文原意都会让固定英文词表误判；`safe`/`explicit` 一旦被错误加入，还会与真实画面意图冲突。DeepSeek 作者说明本身按正面身份、正面全身、正面腰上、纯背面和侧面分段，旧 Registry 将条件配方误写成了全局默认值。
+
+**决定**：删除 `build_prompt()` 的自动 `safe/explicit` 推断。LLM 不自行输出 rating tag；用户在可编辑英文 Prompt 中手动加入的 `safe/sensitive/questionable/explicit` 原样保留。`_prepare_painter_tags()` 对用户明确裸体意图的内容词保真和构图护栏继续存在，它不再被称为 rating 判定。
+
+`deepseek_maid/maid` 默认只注入作者明确的 `deepseek_whale_girl + deepseek_maid_outfit`。作者给出的五类长清单进入白名单 optional 配方，仅在原文 alias 或 LoRA-aware LLM 判断用户明确要求对应视角时加入。Profile 改为 `candidate`：旧三张图片只验证过正面全量绑定，不能证明新的最小默认绑定质量。
+
+**原因**：rating 控制权已经在生成前的英文 Prompt 编辑器中，后端猜测没有增加用户能力，反而引入静默冲突。LoRA Registry 应保存 exact trigger、已提供概念和条件知识，不应把某一构图示例伪装成所有请求都需要的 minimal tags。
+
+**代价与风险**：未手动填写 rating tag 的请求将不再带 rating；如果 Anima 对 rating tag 有显著偏好，需要用户明确添加。最小 DeepSeek binding 可能降低身份或服装细节稳定性，必须用固定工作流/seed 的真实图片与旧全量绑定比较后，才能提升为 verified 或调整最小集合。
+
+**验证**：确定性测试覆盖普通/裸体 Prompt 均不自动追加 rating、手动 `safe` 只保留一次、DeepSeek 默认仅两个 exact trigger，以及“正面全身”同时选中身份与全身服装配方。结构测试不构成图像质量结论。
+
+**修订关系**：本决定废止 D28 第 6 项的动态 safety 标签，修订 D33 中 `build_prompt()` 的 quality/safety 职责；其余决定继续有效。
+
+**相关文件**：`server/main.py`、`server/lora_registry.yaml`、`.tools/test_prompt_unit.py`、`docs/architecture.md`、`docs/PLAN-LORA.md`。

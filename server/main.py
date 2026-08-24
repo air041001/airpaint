@@ -948,7 +948,7 @@ PAINTER_SYSTEM_PROMPT = (
     "- For mood-only input, choose one concrete setting and one clear focal anchor that actually communicates the mood. A bare empty street or vague atmosphere is not enough; if a person is added, do not make them tiny or hide them in black space.\n"
     "- For explicit NSFW input, keep the human body and readable pose present. Prefer a medium/full-body or three-quarter composition over a default close-up unless the user asks for a close-up. Improve quality with gaze, facial expression, body language, fabric/skin material and reveal pacing. Do not add age labels, extra people or a new sex act.\n"
     "- Active LoRA capabilities are already supplied by weights and the backend binding. Plan around them; do not invent a conflicting identity, outfit, appearance, or style, and do not repeat provided LoRA details in PROMPT.\n"
-    "- Do not output quality/score tags, negative tags, text/watermark, realistic/photorealistic/3d/render terms, or a TAGS/NL section.\n"
+    "- Do not output quality/score tags, rating tags (safe/sensitive/questionable/explicit), negative tags, text/watermark, realistic/photorealistic/3d/render terms, or a TAGS/NL section. Rating tags are controlled manually by the user.\n"
 )
 
 # LLM 结构化输出的字段 (顺序即展示顺序). TAGS 行单独解析为最终 tag.
@@ -1003,7 +1003,7 @@ VISION_SYSTEM_PROMPT = (
     "1. Follow the user's instruction to decide what to extract from the image vs. what to take from the text.\n"
     "2. Do NOT repeat tags already listed in Known character tags.\n"
     "3. Put a count tag (1girl/1boy/solo) FIRST in TAGS if a person is implied.\n"
-    "4. Do NOT output quality/score tags (masterpiece, best quality, score_*, safe, absurdres) - handled separately.\n"
+    "4. Do NOT output quality/score/rating tags (masterpiece, best quality, score_*, safe, sensitive, questionable, explicit, absurdres). Rating tags are controlled manually by the user.\n"
     "5. Use lowercase danbooru tags; spaces preferred over underscores. "
     "Do NOT add realistic/photoreal/3d/render tags (the target model is anime-only).\n"
     "6. TAGS collects every concrete tag from the 5 fields above. Keep under ~200 chars.\n"
@@ -1030,7 +1030,7 @@ VISION_ITERATE_SYSTEM_PROMPT = (
     "variation of the same image, not a new concept.\n"
     "2. If the text gives an adjustment (e.g. 白天, 更亮, 换姿势), apply it on top of the image's base.\n"
     "3. Put a count tag (1girl/1boy/solo) FIRST in TAGS.\n"
-    "4. Do NOT output quality/score tags (masterpiece, best quality, score_*, safe, absurdres) - handled separately.\n"
+    "4. Do NOT output quality/score/rating tags (masterpiece, best quality, score_*, safe, sensitive, questionable, explicit, absurdres). Rating tags are controlled manually by the user.\n"
     "5. Use lowercase danbooru tags; spaces over underscores. Do NOT add realistic/photoreal/3d/render tags (anime-only).\n"
     "6. TAGS collects every concrete tag from the 5 fields above. Keep under ~200 chars.\n"
     "7. If ACTIVE LORA CONTEXT is present, add a LORA JSON line immediately before TAGS using only supplied key/profile/optional IDs. "
@@ -1587,7 +1587,7 @@ def compile_prompt(char_tags: list[str], other_tags: list[str], nl: str = "",
                    profile: str = "relation_hybrid") -> str:
     """把已知 tag、候选 tag 和可选 NL 编译成模型语义 prompt body.
 
-    quality prefix、safety、LoRA trigger 和 workflow 注入仍由 build_prompt 负责。
+    quality prefix、LoRA trigger 和 workflow 注入仍由 build_prompt 负责；rating tag 由用户手动控制。
     """
     cleaned_tags = [tag.strip() for tag in other_tags if tag and tag.strip()]
     cleaned_tags = _strip_char_bare_names(cleaned_tags, char_tags)
@@ -1902,12 +1902,9 @@ def build_prompt(wf_name: str, prompt_en: str, width: int | None, height: int | 
         set_input("lora_node", "loras", {"__value__": lora_entries})
         prompt_en = compile_lora_bindings(prompt_en, effective_bindings)
 
-    # safety 标签: Anima 要求明确 safe/sensitive/nsfw/explicit. 检测 prompt_en 里的 NSFW 关键词.
-    _NSFW_KW = {"nipples", "pussy", "penis", "sex", "nude", "naked", "cum", "anus", "areola",
-                "breasts out", "panty pull", "explicit", "questionable"}
-    safety = "explicit, " if any(kw in prompt_en.lower() for kw in _NSFW_KW) else "safe, "
-
-    full_prompt = wcfg.get("quality_prefix", "") + safety + prompt_en
+    # rating tag (safe/sensitive/questionable/explicit) 不再由关键词启发式推断。
+    # 用户可在生成前编辑英文 Prompt 明确加入，后端原样保留。
+    full_prompt = wcfg.get("quality_prefix", "") + prompt_en
     set_input("prompt_node", "text", full_prompt)
     if "negative_node" in wcfg:
         set_input("negative_node", "text", wcfg.get("negative_prefix", "") + wcfg.get("negative_extra", ""))

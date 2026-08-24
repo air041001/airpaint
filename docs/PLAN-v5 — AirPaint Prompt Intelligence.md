@@ -247,7 +247,7 @@ LLM 不直接负责最终 Prompt。建议输出：
 - 定义 Prompt IR（12 字段 JSON）
 - 改 LLM 输出协议：breakdown 5 字段 → Prompt IR JSON
 - 验证 DeepSeek-V4-Flash 输出 12 字段 JSON 稳定性（先跑 20-50 条测试，降级兜底保留）
-- Prompt Compiler 初版：`normalize_tag_order`(L609) + `build_prompt`(L834) 扩展成统一编译（canonicalization/去重/tag排序/TAG-NL合并/quality/safety/模型规则）
+- Prompt Compiler 初版：`normalize_tag_order`(L609) + `build_prompt`(L834) 扩展成统一编译（canonicalization/去重/tag排序/TAG-NL合并/quality/模型规则；自动 rating 后由 D44 取消，改为用户手动控制）
 - 破坏性冲突：`_parse_structured_output`(L431) 解析逻辑改（保留旧 5 字段降级路径）；HotDict **不动**
 - 验收：结构回归通过；第二层视觉质量由 Phase 1.5 重新按人眼 A/B 实验判定。Phase 1 的 IR/Compiler 通过，但不宣称固定渲染格式已经证明能画好图。
 

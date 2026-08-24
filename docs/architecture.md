@@ -51,7 +51,7 @@ ComfyUI  127.0.0.1:8188  (不对公网开放)
 2. **词典匹配** (`dict.yaml`, 当前约 1044 条): 剩余文本**子串匹配** (最长优先, len>=2), 分 hits / misses (见 D26)。
 3. 全命中且无 active LoRA: 裸角色名 (只有角色无描述) -> `tag, 1girl, solo` 跳过 LLM; 否则 `角色tag + 词典tag` 拼接。active LoRA 会覆盖此快速路径。
 4. 有未命中 -> 按后端:
-    - `siliconflow`: 构造上下文 (Known character tags / Known attribute tags / Remaining misses) 送 DeepSeek-V4-Flash (config `siliconflow_model`)。生产文本 LLM 输出单行 12 字段 `IR` + `PROMPT`，未知角色候选优先从 `IR.subject` 取得，解析器兼容可选 `CHAR` 行；`PROMPT` 是约 20 个元素以内的紧凑最终画师 Prompt；`_parse_structured_output` 仍兼容旧 `IR + TAGS + NL` 和旧 5 字段协议。5 个前端 breakdown 字段由 IR 派生。画师协议优先保证主体可读性、动作/姿态、场景、构图、光影/材质，并由代码层补主体计数、抑制未请求剪影、默认风格污染和 NSFW close-up；未知角色查询 Danbooru exact tag + category/post_count，`likely_supported` 才写独立平铺 auto cache，正式 `char_dict` 优先；`unavailable` 不缓存以便下次重试；`/api/translate` 以 additive `prompt_ir_meta` 标注补全和 lookup 来源；reroll 使用新的补全方案。`compile_prompt` 统一做角色裸名清理、去重、count→character→general 排序和 Prompt 拼接；`build_prompt` 再负责 quality/safety/LoRA/workflow。`/no_think` + 顶层 `enable_thinking:False`(config `translate_enable_thinking` 可翻, 见 D18) 关思考, max_tokens 550 / temp 0.4, 失败抛 502。LRU 缓存 500 (key=上下文, 值为 `(prompt_en, breakdown, prompt_ir)`)。
+    - `siliconflow`: 构造上下文 (Known character tags / Known attribute tags / Remaining misses) 送 DeepSeek-V4-Flash (config `siliconflow_model`)。生产文本 LLM 输出单行 12 字段 `IR` + `PROMPT`，未知角色候选优先从 `IR.subject` 取得，解析器兼容可选 `CHAR` 行；`PROMPT` 是约 20 个元素以内的紧凑最终画师 Prompt；`_parse_structured_output` 仍兼容旧 `IR + TAGS + NL` 和旧 5 字段协议。5 个前端 breakdown 字段由 IR 派生。画师协议优先保证主体可读性、动作/姿态、场景、构图、光影/材质，并由代码层补主体计数、抑制未请求剪影、默认风格污染和 NSFW close-up；未知角色查询 Danbooru exact tag + category/post_count，`likely_supported` 才写独立平铺 auto cache，正式 `char_dict` 优先；`unavailable` 不缓存以便下次重试；`/api/translate` 以 additive `prompt_ir_meta` 标注补全和 lookup 来源；reroll 使用新的补全方案。`compile_prompt` 统一做角色裸名清理、去重、count→character→general 排序和 Prompt 拼接；`build_prompt` 再负责 quality/LoRA/workflow。rating tag 不由 LLM 或关键词启发式推断，用户可在生成前编辑英文 Prompt 手动加入。`/no_think` + 顶层 `enable_thinking:False`(config `translate_enable_thinking` 可翻, 见 D18) 关思考, max_tokens 550 / temp 0.4, 失败抛 502。LRU 缓存 500 (key=上下文, 值为 `(prompt_en, breakdown, prompt_ir)`)。
    - `google`: gtx 逐词翻 misses (本机需翻墙, 已弃用)。
    - `none`: misses 原样保留。
 
@@ -77,7 +77,7 @@ Active LoRA 时，文本快速路径也强制进入 LoRA-aware painter；Reasoni
 3. **统一 seed**: 扫描所有 int 型 `seed`/`noise_seed` 输入, 全写成同一正整数 (跳过列表型的节点连接)。修复 Impact Pack `np.random.default_rng(-1)` 崩溃 → FaceDetailer 人脸修复能正常跑。
 4. **LoRA binding 重解析**：有 snapshot 时只取 key/profile/optional，按同一 `registry_revision` 从当前 Registry 重建；旧 `lora_keys` 走 legacy adapter。随后由 Binding Compiler 补回被编辑删除的 required/default exact tags。
 5. **LoRA workflow 注入**：写 `lora_node.loras = {"__value__":[{name,strength,clipStrength,active:true}, ...]}`。文件名与默认强度来自 Registry，角色/风格滑块只允许 0~1 覆盖；LoraManager 的 `text` 字段执行时会被 `del`，不能依赖它加载权重。
-6. 注入 `prompt_node.text = quality_prefix + safety + compiled prompt` 与尺寸；不再把 Civitai 全量 trainedWords 在生成阶段盲拼。负面继续使用工作流固化模板。
+6. 注入 `prompt_node.text = quality_prefix + compiled prompt` 与尺寸；`safe/sensitive/questionable/explicit` 等 rating tag 仅保留用户手动编辑结果，不自动推断。不再把 Civitai 全量 trainedWords 在生成阶段盲拼。负面继续使用工作流固化模板。
 7. **生成分支与 detailer**：每次构建都显式写 ImpactSwitch：txt2img=`input1`（节点 56 EmptyLatent，使用请求宽高），img2img=`input2`（节点 33 VAEEncode）并覆盖主 KSampler denoise。若有 `detailer:{face,hand,nsfw,eyes}`，删未选 detailer 节点并重连（删掉的节点不可达，不执行）。
 8. 返回 `{prompt, client_id, _seed}`。
 

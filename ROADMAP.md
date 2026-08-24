@@ -54,7 +54,7 @@ Phase 2.6 收尾后不开新扩写子阶段；下一步由真实使用反馈决�
 - [x] `CHAR` 候选协议、post_count 分类和独立 auto cache 基础实现
 - [x] 未知角色运行时联调：likely_supported 自动缓存，weak/absent/unavailable 不污染正式词典
 - [x] 长门有希/御坂美琴查询：分别得到 `nagato_yuki`/`misaka_mikoto`，post_count 9254/10778
-- [x] 30 条 SFW / 8 条 NSFW 结构与 safety smoke
+- [x] 30 条 SFW / 8 条 NSFW 结构与当时的 safety smoke（自动 rating 已由 D44 取消）
 - [x] 长门固定 Prompt 图片人眼确认，Phase 3 ready to push
 - [x] D38/DEVLOG/PLAN-v5/BUILDHANDOFF 定稿并 push
 

@@ -113,6 +113,21 @@ def test_build_prompt_routes_txt2img_and_img2img_explicitly():
     assert img2img["6"]["inputs"]["denoise"] == 0.35
 
 
+def test_build_prompt_keeps_rating_tags_manual():
+    prompt_node = str(main.WORKFLOWS["anima"]["prompt_node"])
+    plain = main.build_prompt("anima", "1girl, sitting", 832, 1216)["prompt"]
+    plain_text = plain[prompt_node]["inputs"]["text"]
+    assert "safe" not in plain_text and "explicit" not in plain_text, plain_text
+
+    adult = main.build_prompt("anima", "1girl, nude", 832, 1216)["prompt"]
+    adult_text = adult[prompt_node]["inputs"]["text"]
+    assert "explicit" not in adult_text, adult_text
+
+    manual = main.build_prompt("anima", "safe, 1girl, sitting", 832, 1216)["prompt"]
+    manual_text = manual[prompt_node]["inputs"]["text"]
+    assert manual_text.count("safe") == 1, manual_text
+
+
 def test_render_profile_inference():
     simple = {"subject": ["1girl"], "action": ["standing"], "pose": [], "interaction": []}
     nsfw_simple = {"subject": ["1girl"], "appearance": ["adult", "nude"],
@@ -187,7 +202,7 @@ def test_painter_tag_guard_keeps_nsfw_body_framing_and_default_anime_style():
     assert "three-quarter view" in tags, tags
 
 
-def test_painter_tag_guard_preserves_explicit_safety_marker():
+def test_painter_tag_guard_preserves_explicit_user_intent():
     tags = main._prepare_painter_tags(
         ["1girl", "black lace lingerie", "seductive"],
         {"subject": ["1girl"], "constraints": ["nsfw"]},
@@ -358,8 +373,11 @@ def test_lora_registry_preserves_nested_profiles():
     assert denia["profiles"]["black"]["optional_tags"]["arm_tattoo"]["tags"] == ["arm tattoo"]
     assert denia["registry_revision"] == main.LORA_REGISTRY.snapshot()[1]
     deepseek = registry["deepseek_maid"]["profiles"]["maid"]
-    assert "very long hair" in deepseek["default_tags"]
-    assert "black mary janes" in deepseek["default_tags"]
+    assert deepseek["required_tags"] == ["deepseek_whale_girl", "deepseek_maid_outfit"]
+    assert deepseek["default_tags"] == []
+    assert "very long hair" in deepseek["optional_tags"]["identity_front"]["tags"]
+    assert "black mary janes" in deepseek["optional_tags"]["maid_front_full"]["tags"]
+    assert deepseek["verified"] == "candidate"
     assert registry["deepseek_maid"]["strength_model"] == 0.85
 
 
@@ -432,6 +450,24 @@ def test_lora_intent_alias_locks_profile_and_optional_ids():
     assert not warnings, warnings
     assert bindings[0]["resolved_by"] == "intent_alias"
     assert "arm tattoo" in bindings[0]["injected_tags"]
+
+
+def test_deepseek_view_recipes_are_conditional():
+    base, warnings, _ = main.resolve_lora_selections([
+        {"key": "deepseek_maid", "profile": "maid", "mode": "explicit"}
+    ])
+    assert not warnings, warnings
+    assert base[0]["injected_tags"] == ["deepseek_whale_girl", "deepseek_maid_outfit"]
+
+    selections = main.apply_lora_intent_hints(
+        "deepseek正面全身站立",
+        [{"key": "deepseek_maid", "profile": "maid", "mode": "explicit"}],
+    )
+    assert selections[0]["optional"] == ["identity_front", "maid_front_full"], selections
+    detailed, warnings, _ = main.resolve_lora_selections(selections)
+    assert not warnings, warnings
+    assert "very long hair" in detailed[0]["injected_tags"]
+    assert "black mary janes" in detailed[0]["injected_tags"]
 
 
 def test_lora_registry_revision_rejects_stale_binding():
@@ -719,6 +755,7 @@ def main_test():
         test_compile_prompt_merges_tags_and_nl,
         test_experiment_negative_override_is_opt_in,
         test_build_prompt_routes_txt2img_and_img2img_explicitly,
+        test_build_prompt_keeps_rating_tags_manual,
         test_render_profile_inference,
         test_tag_first_profile_drops_nl,
         test_prompt_ir_meta_is_additive,
@@ -726,7 +763,7 @@ def main_test():
         test_painter_prompt_protocol_is_final_prompt,
         test_painter_tag_guard_preserves_woman_and_suppresses_unrequested_silhouette,
         test_painter_tag_guard_keeps_nsfw_body_framing_and_default_anime_style,
-        test_painter_tag_guard_preserves_explicit_safety_marker,
+        test_painter_tag_guard_preserves_explicit_user_intent,
         test_character_hint_protocol_parser,
         test_character_hint_ir_fallback,
         test_character_bare_name_space_variant_is_removed,
@@ -741,6 +778,7 @@ def main_test():
         test_lora_auto_profile_and_optional_ids_are_whitelisted,
         test_lora_explicit_profile_still_accepts_semantic_optional_choice,
         test_lora_intent_alias_locks_profile_and_optional_ids,
+        test_deepseek_view_recipes_are_conditional,
         test_lora_registry_revision_rejects_stale_binding,
         test_scan_force_skips_known_wan_without_hashing,
         test_scan_uses_local_civitai_info_before_hash_or_network,
