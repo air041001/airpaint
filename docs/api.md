@@ -84,29 +84,34 @@ Authorization: Bearer <token>
 ```
 
 ### POST /api/translate
-只翻译不排队 (需鉴权, 不计入 image 限额): 中文/参考图 + 可选 LoRA selection -> LoRA-aware 英文 Prompt。前端「先看翻译」和「生成」都先调它拿 prompt_en 与 binding snapshot。
+只编译不排队 (需鉴权, 不计入 image 限额)：中文/参考图 + 补全程度 + 可选 LoRA selection -> LoRA-aware 英文 Prompt。前端「先看构思」和「生成」都先调用它；文本 Composer 同时返回可编辑中文 `concept` 与 binding snapshot。
 
 请求体:
 ```json
 {
   "prompt": "达妮娅穿白裙站在樱花树下",
+  "completion_level": "auto",
+  "concept_override": "用户锁定：达妮娅、白裙｜模型补全：樱花河岸、回眸动作、清晨逆光",
   "reroll": false,
   "lora_selections": [
     {"key":"denia","profile":"white","mode":"explicit","optional":["white_dress"]}
   ]
 }
 ```
-- `prompt`: 选填, ≤500 字符, 经内容过滤 (与 `image` 至少一项)。
+- `prompt`: 选填, ≤4000 字符, 经内容过滤 (与 `image` 至少一项)。输入长度不自动决定补全档。
+- `completion_level`: 可选，`auto | faithful | free`，默认 `auto`。仅控制 SiliconFlow 普通文本 Composer：`auto` 按语义覆盖度补重要空位，`faithful` 只补成图必需项，`free` 在保留明确锁定后自由设计未指定部分。
+- `concept_override`: 可选, ≤4000 字符，必须保持 `用户锁定：…｜模型补全：…` 结构。用于把用户编辑后的中文构思作为权威蓝图重新编译；它不是直接注入工作流的 Prompt，也不是跨轮 PromptState。当前只对普通文本 Composer 有效。
 - `image`: 可选, 参考图 base64 (data URI, ≤5MB)。有图走视觉 LLM 提氛围, 不走文本 LLM (③, 见 D23); 图不进 ComfyUI, 仍走 txt2img。
-- `reroll`: 可选, 默认 `false`。`true` 时文本 LLM 高温重出一版**不同画师补全方案** (抽卡再抽, 跳过 LRU 缓存); 对视觉 LLM 路径仍是不同图像解读, 快速路径(全命中词典)仍返回同一结果。
+- `reroll`: 可选, 默认 `false`。`true` 时文本 LLM 在同一 `completion_level` 内高温重出一版**不同构思** (跳过 LRU 缓存)；对视觉 LLM 路径仍是不同图像解读。纯角色 canonical 快路不调用 LLM，因此仍返回同一结果。
 - `lora_selections`: 可选数组。元素为 `{key, profile?, mode:"auto|explicit", optional?:[]}`；单 Profile 通常 explicit，多 Profile 可让 `mode=auto` 由模型只在 Registry 候选 ID 中选择。向后兼容 `loras:[key]` 与 `lora:key`。
 
-翻译失败: `502 {"detail":"翻译失败, 请稍后重试 (...)"}`。
+SiliconFlow 文本必须返回 `CONCEPT + 精确 12 字段 IR + [LORA] + PROMPT`；有 active LoRA 时 `LORA` 行必需。协议错误自动修复一次，仍不合法则失败，不会把原始响应当 Prompt。翻译失败: `502 {"detail":"翻译失败, 请稍后重试 (...)"}`。
 
 响应 `200`:
 ```json
 {
-  "prompt_en": "1girl, white hair, blue eyes, cat ears, smile, ...",
+  "concept": "用户锁定：达妮娅、白裙、樱花树｜模型补全：河岸回眸、清晨逆光与花瓣前景",
+  "prompt_en": "1girl, white dress, cherry blossoms, looking back over her shoulder, morning backlight traces the petals and dress hem, ...",
   "breakdown": {
     "scene": "outdoors, cherry blossoms",
     "composition": "standing, looking at viewer",
@@ -122,14 +127,18 @@ Authorization: Bearer <token>
     "style": ["anime style"], "constraints": []
   },
   "prompt_ir_meta": {
-    "mode": "painter_expansion",
+    "mode": "visual_composer",
     "source": {
       "user_intent": "remaining_input",
       "character_tags": "dictionary",
-      "attribute_tags": "dictionary",
-      "default_completion": "painter"
+      "attribute_tags": null,
+      "default_completion": "visual_composer"
     },
     "expansion_applied": true,
+    "completion_level": "auto",
+    "concept": "用户锁定：达妮娅、白裙、樱花树｜模型补全：河岸回眸、清晨逆光与花瓣前景",
+    "concept_override_applied": true,
+    "repetition_collapsed": false,
     "reroll": false,
     "reroll_strategy": null,
     "prompt_ir_available": true,
@@ -147,16 +156,17 @@ Authorization: Bearer <token>
   "registry_revision": "16-char-content-hash"
 }
 ```
-- `prompt_en`: 翻译后的英文 danbooru tag。
+- `concept`: 文本 Composer 的中文构思控制面，结构为 `用户锁定：…｜模型补全：…`。纯角色 canonical 快路也会返回“模型补全：无”；当前 Vision/legacy 路径可能为 `null`。
+- `prompt_en`: 已编译的英文 Anima 正向 Prompt，可由 canonical tag、英文短句、自然语言或三者混合组成，不设固定 tag 数。用户仍可在生成前直接编辑。
 - `breakdown`: 供前端预览展示「AI 理解」的 5 个维度 (scene/composition/mood/lighting/style)。文本 LLM 路径由 `prompt_ir` 派生；旧协议/快速路径没有时为 `null`。
 - `prompt_ir`: 12 字段 Prompt IR。每个字段都是字符串数组；文本 LLM 成功解析时返回，快速路径和当前视觉 LLM 旧协议路径为 `null`。IR 是语义计划，不是可直接注入工作流的文件名、节点 ID 或数值。
-- `prompt_ir_meta`: additive 来源与补全元数据。`mode=painter_expansion` 表示当前文本 LLM 使用画师级默认补全；`source` 区分用户剩余输入、词典命中和默认补全；`reroll_strategy=new_painter_plan` 表示 reroll 会换一套补全方案。旧客户端可忽略此字段。
+- `prompt_ir_meta`: additive 来源与补全元数据。`mode=visual_composer` 表示新文本协议；`completion_level` 是本次档位；`concept_override_applied` 表示是否按编辑后的构思重编译；`repetition_collapsed` 表示后端是否折叠了完整 Prompt 的机械重复；`reroll_strategy=new_visual_concept` 表示 reroll 会在同一档位换构思。旧客户端可忽略此字段。
 - `character_lookup`: 本次文本翻译触发的未知角色查询结果；`likely_supported` 才会进入独立 auto cache，`weak`/`absent`/`unavailable` 不会污染正式 `char_dict.yaml`。Danbooru 不可达时（`unavailable`）会将 LLM 归一化候选 tag 补进本次 `prompt_en`，但不会写入任何缓存。
 - `lora_bindings`: 本次翻译解析出的 Asset/Profile/optional snapshot；`prompt_en` 已由代码幂等合入 Registry exact tags。
 - `lora_warnings`: default Profile、未知 optional 等可恢复提醒。
 - `registry_revision`: versioned Registry 内容 hash。客户端提交 job 时一并回传；Registry 改动后旧 binding 返回 409，要求重新翻译。
 
-文本 LLM 当前生产输出协议为 `IR + PROMPT`；旧 `IR + TAGS + NL` 和旧 5 字段响应仍保留解析降级，但不再与画师协议同时要求模型输出两套最终 Prompt。
+严格 `CONCEPT + IR + [LORA] + PROMPT` 只约束 SiliconFlow 普通文本 Composer。参考图 Vision 和 `google`/`none` legacy 路径继续保留旧协议与 ordinary `dict.yaml` 行为；纯角色名且无 LoRA/构思覆盖时保留 deterministic canonical 快路。
 
 ### POST /api/jobs
 提交生图任务 (需鉴权)。**接收已翻译的 `prompt_en`** (前端先用 `/api/translate` 翻译, 可在「预览提示词」里编辑后再提交), 后端不再翻译。
@@ -167,6 +177,8 @@ Authorization: Bearer <token>
   "workflow": "anima",
   "prompt_en": "1girl, white hair, blue eyes, cat ears, smile",
   "prompt": "白发蓝眼睛的猫耳少女, 微笑, 站在樱花树下",
+  "concept": "用户锁定：白发蓝眼猫耳少女、微笑｜模型补全：樱花树下的站姿与柔和日光",
+  "completion_level": "auto",
   "size": "832x1216",
   "lora_selections": [
     {"key":"denia","profile":"white","mode":"explicit","optional":["white_dress"]}
@@ -181,8 +193,10 @@ Authorization: Bearer <token>
   "denoise": 0.35
 }
 ```
-- `prompt_en`: 必填, 已翻译英文 tag (可经用户编辑), ≤800 字符, 经内容过滤。
-- `prompt`: 可选, 原始中文 (仅存档展示, ≤500); 不传则 prompt_raw 同 prompt_en。
+- `prompt_en`: 必填，已编译英文 Prompt（可经用户编辑），≤6000 字符，经内容过滤。LoRA required/default tags 由后端重新绑定后，最终编译 Prompt 上限为 8000 字符。
+- `prompt`: 可选，原始中文（仅存档展示），≤4000 字符；不传则 `prompt_raw` 同 `prompt_en`。
+- `concept`: 可选，≤4000 字符，保持 `用户锁定：…｜模型补全：…` 结构；用于在 job、状态与暗房之间追踪本次生成蓝图，不直接写入 ComfyUI 正向 Prompt。
+- `completion_level`: 可选，`auto | faithful | free`，默认 `auto`；与 `concept` 一起保存，供后续暗房迭代沿用。
 - `size`: 可选, 必须是该工作流 `sizes` 之一; 不传取第一个。后端把该尺寸写入 txt2img 的 EmptyLatent 节点，并显式选择 txt2img 分支；所有尺寸共用配置项 `timeout_seconds`。
 - `lora_selections`: 新客户端的选择真相。支持角色×1 + 风格×1；Profile/optional 只能使用 Registry ID。
 - `lora_bindings` + `registry_revision`: 推荐原样回传 translate 结果。后端不信任客户端的 file/tags/strength，而是从 binding 的 key/profile/optional 重新解析；revision 过期返回 409。
@@ -197,7 +211,7 @@ Authorization: Bearer <token>
 
 响应 `200`:
 ```json
-{ "id": "cbf274b7e5", "prompt_en": "...", "lora_bindings": [], "lora_warnings": [], "registry_revision": null }
+{ "id": "cbf274b7e5", "prompt_en": "...", "concept": "用户锁定：…｜模型补全：…", "completion_level": "auto", "lora_bindings": [], "lora_warnings": [], "registry_revision": null }
 ```
 
 ### GET /api/jobs/{job_id}
@@ -209,35 +223,36 @@ Authorization: Bearer <token>
 
 queued (排队中):
 ```json
-{ "id": "...", "status": "queued", "prompt_raw": "...", "prompt_en": "...", "workflow": "anima", "position": 2 }
+{ "id": "...", "status": "queued", "prompt_raw": "...", "prompt_en": "...", "concept": "用户锁定：…｜模型补全：…", "completion_level": "auto", "workflow": "anima", "position": 2 }
 ```
 running (生成中):
 ```json
-{ "id": "...", "status": "running", "prompt_raw": "...", "prompt_en": "...", "workflow": "anima" }
+{ "id": "...", "status": "running", "prompt_raw": "...", "prompt_en": "...", "concept": "用户锁定：…｜模型补全：…", "completion_level": "auto", "workflow": "anima" }
 ```
 done (完成):
 ```json
-{ "id": "...", "status": "done", "prompt_raw": "...", "prompt_en": "...", "workflow": "anima", "image": "/images/4f2fdd03f1e5.png" }
+{ "id": "...", "status": "done", "prompt_raw": "...", "prompt_en": "...", "concept": "用户锁定：…｜模型补全：…", "completion_level": "auto", "workflow": "anima", "image": "/images/4f2fdd03f1e5.png" }
 ```
 failed (失败):
 ```json
-{ "id": "...", "status": "failed", "prompt_raw": "...", "prompt_en": "...", "workflow": "anima", "error": "生成超时" }
+{ "id": "...", "status": "failed", "prompt_raw": "...", "prompt_en": "...", "concept": "用户锁定：…｜模型补全：…", "completion_level": "auto", "workflow": "anima", "error": "生成超时" }
 ```
 
-`image` 是相对路径, 拼接 Base URL 取图。任务状态同时返回 `lora_bindings/lora_warnings/registry_revision`，便于诊断 Prompt 与实际权重。
+`image` 是相对路径, 拼接 Base URL 取图。任务状态同时返回 `concept/completion_level/lora_bindings/lora_warnings/registry_revision`，便于诊断构思、Prompt 与实际权重。
 
 ### POST /api/dialog/turn
 ⑤ 对话迭代: 每轮一次出图 (需鉴权, 计入日限)。显式路由不猜意图: `action` 由前端按钮决定 (见 D25)。
 
 请求体:
 ```json
-{ "session_id": "可选, 首轮省略", "action": "start|start-image|redo|vibe|tweak", "prompt": "首轮中文描述", "delta": "可选改动", "workflow": "anima", "size": "832x1216", "lora_selections": [{"key":"denia","mode":"auto"}], "strength_char": 1.0 }
+{ "session_id": "可选, 首轮省略", "action": "start|start-image|redo|vibe|tweak", "prompt": "首轮中文描述", "delta": "可选改动", "completion_level": "auto", "workflow": "anima", "size": "832x1216", "lora_selections": [{"key":"denia","mode":"auto"}], "strength_char": 1.0 }
 ```
-- `start`: 建会话 + 首图。
+- `start`: 建会话 + 首图。`prompt` 必填且 ≤4000 字符；`completion_level` 可选并沿用到后续重翻译。
+- `delta`: 可选改动，≤2000 字符。
 - `redo` (换一版): `delta` 有则累积重翻译, 无则复用当前 prompt_en 换 seed。`delta` 含替换意图(换成/替换/改成/换为/改为)时, 先删原 raw 里的旧角色名再重翻译, 防 char_dict 双命中(D31)。
 - `tweak` (微调/img2img): 上一张图上传 ComfyUI -> 合并工作流 `anima` (img2img 由 image_filename 触发, D32) + 低 denoise。`delta` 有则累积重翻译, 无则复用 current_en。`denoise` 控制偏离度 (默认 0.35)。
 - `start` 时解析 selection 并把 binding/revision 保存进 session；`redo/vibe/tweak` 重翻译继续使用该 selection，不能从页面当前全局选择重新猜。
-- `start-image` 从已完成源 job 复制 binding snapshot，不重新生成首图。
+- `start-image` 从已完成源 job 复制 binding snapshot、`concept` 与 `completion_level`，不重新生成首图。
 
 响应 `200`:
 ```json
@@ -249,9 +264,9 @@ failed (失败):
 
 响应 `200`:
 ```json
-{ "session_id": "...", "raw": "累积中文描述", "current_en": "最新 prompt_en",
+{ "session_id": "...", "raw": "累积中文描述", "current_en": "最新 prompt_en", "concept": "用户锁定：…｜模型补全：…", "completion_level": "auto",
   "lora_bindings": [], "lora_warnings": [], "registry_revision": null,
-  "turns": [ { "action": "start", "delta": "", "prompt_en": "...", "status": "done", "image": "/images/x.png", "error": null } ] }
+  "turns": [ { "action": "start", "delta": "", "prompt_en": "...", "concept": "用户锁定：…｜模型补全：…", "completion_level": "auto", "status": "done", "image": "/images/x.png", "error": null } ] }
 ```
 `image` 在对应 job 完成后才有值 (worker 写回)。
 

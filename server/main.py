@@ -171,6 +171,28 @@ DAILY_LIMIT = int(CFG.get("daily_limit", 30))
 BANNED = [w.lower() for w in CFG.get("banned_words", [])]
 WORKFLOWS = CFG.get("workflows", {})
 
+# Prompt/Composer 输入输出上限。用户构思与最终 Anima Prompt 是不同层，分别校验，
+# 避免旧的 500/800 字符限制把正常的详细插画构思或混合 Prompt 截断。
+MAX_USER_PROMPT_CHARS = 4_000
+MAX_CONCEPT_CHARS = 4_000
+MAX_PROMPT_EN_CHARS = 6_000
+MAX_COMPILED_PROMPT_CHARS = 8_000
+MAX_DIALOG_DELTA_CHARS = 2_000
+COMPLETION_LEVELS = ("auto", "faithful", "free")
+DEFAULT_COMPLETION_LEVEL = "auto"
+
+
+def _normalize_completion_level(value) -> str:
+    """把 API/内部调用的补全程度归一化为稳定的三值协议。"""
+    if value is None or value == "":
+        return DEFAULT_COMPLETION_LEVEL
+    if not isinstance(value, str):
+        raise HTTPException(400, "completion_level 必须是 auto、faithful 或 free")
+    level = value.strip().lower()
+    if level not in COMPLETION_LEVELS:
+        raise HTTPException(400, "completion_level 必须是 auto、faithful 或 free")
+    return level
+
 # ---------- LoRA 注册表: config 手动 + 自动扫描 Civitai ----------
 # 三层叠加 (优先级高->低): config.yaml 手动配置 > Civitai hash lookup 自动补全 > 裸文件名
 # config 里有的条目: 用 config 的 trigger/type/name (人判断最准, 含服装变体)
@@ -921,35 +943,58 @@ LEGACY_SILICONFLOW_SYSTEM_PROMPT = (
     "NL: A sense of gentle renewal pervades the scene.\n"
 )
 
-# Phase 2.6 production protocol. Keep the legacy prompt above as a parser-compatible
-# fallback reference, but make the final painter prompt a first-class output instead
-# of asking the model to satisfy the old TAGS/NL split and painter expansion at once.
-PAINTER_SYSTEM_PROMPT = (
-    "You are a professional painter-style prompt planner for the base Anima anime image model. "
-    "You receive known canonical tags and the remaining Chinese user idea. Preserve the known tags in the final prompt through the backend; "
-    "do not repeat known character or attribute tags in your PROMPT line.\n\n"
-    "Normally output EXACTLY these two lines, nothing else (no markdown, no explanation):\n"
-    "IR: <one-line valid compact JSON object with exactly these 12 array fields: subject, appearance, clothing, action, pose, interaction, scene, composition, lighting, mood, style, constraints>\n"
-    "PROMPT: <one compact comma-separated positive prompt in lowercase English>\n"
-    "If ACTIVE LORA CONTEXT is present, insert one LORA JSON line between IR and PROMPT. "
-    "Use only the supplied LoRA key/profile/optional IDs. Echo a locked explicit profile unchanged; "
-    "for auto mode select the best allowed profile. Never put trigger strings, filenames, or weights in LORA or PROMPT.\n\n"
-    "Build the prompt in five layers, in this order:\n"
-    "1. Lock the explicit subject, count, named character, core object, action and location.\n"
-    "2. Add only coherent appearance, clothing, pose and body-language details that support the explicit idea.\n"
-    "3. Add a concrete scene anchor and at most one or two conservative supporting props.\n"
-    "4. Choose one readable camera/framing/composition; do not add competing camera directions.\n"
-    "5. Add restrained lighting, mood, material and anime line/shading details.\n\n"
-    "Hard rules:\n"
-    "- Use Danbooru-like lowercase tags plus short drawable English clauses. Keep PROMPT to about 20 concrete comma-separated elements or fewer.\n"
-    "- Preserve every explicit constraint. Never add an unrelated character, weapon, named IP, towel, accessory or new main action.\n"
-    "- If a person is explicit or naturally implied, make the person readable in the composition. Do not let scenery, black shadow, silhouette or a tiny distant figure replace the person unless the user explicitly asks for that.\n"
-    "- If the input names a girl or woman, do not invent a school uniform, see-through clothing or a different hairstyle. If a named character has known canonical tags, keep them unchanged. For an unknown named character, put the best candidate tag in IR.subject so the backend can verify it.\n"
-    "- For mood-only input, choose one concrete setting and one clear focal anchor that actually communicates the mood. A bare empty street or vague atmosphere is not enough; if a person is added, do not make them tiny or hide them in black space.\n"
-    "- For explicit NSFW input, keep the human body and readable pose present. Prefer a medium/full-body or three-quarter composition over a default close-up unless the user asks for a close-up. Improve quality with gaze, facial expression, body language, fabric/skin material and reveal pacing. Do not add age labels, extra people or a new sex act.\n"
-    "- Active LoRA capabilities are already supplied by weights and the backend binding. Plan around them; do not invent a conflicting identity, outfit, appearance, or style, and do not repeat provided LoRA details in PROMPT.\n"
-    "- Do not output quality/score tags, rating tags (safe/sensitive/questionable/explicit), negative tags, text/watermark, realistic/photorealistic/3d/render terms, or a TAGS/NL section. Rating tags are controlled manually by the user.\n"
-)
+# Visual Composer production protocol. Prompt shape is chosen for Anima by the
+# reasoning model; the backend keeps only deterministic identity/binding/validation work.
+PAINTER_SYSTEM_PROMPT = """You are an expert prompt composer for Anima, an anime image model trained to understand Danbooru-style concepts, ordinary English image phrases, natural-language captions, and mixtures of them.
+
+Turn the user's complete Chinese image idea into one production-ready English positive prompt for Anima. This is not a literal translation task. When the input is sparse, complete it into one coherent anime illustration with a clear central appeal. When the input is already detailed, preserve it and add only what is needed to make the requested picture drawable.
+
+The user message declares one COMPLETION LEVEL:
+- AUTO: judge semantic coverage rather than sentence or character count. Preserve every supplied visual decision, then creatively fill only the important decisions that remain open.
+- FAITHFUL: stay close to the supplied intent. Add only small drawable details needed for a coherent image; do not invent a new theme, location, major prop, outfit concept, or narrative event.
+- FREE: preserve explicit locks, then freely design one complete anime illustration premise for all unspecified decisions.
+
+The Chinese CONCEPT line is a pre-generation control surface, not praise or analysis. It must distinguish what came from the user from what you invented:
+- 用户锁定: only concrete visual requirements explicitly present in USER IDEA. An explicitly selected ACTIVE LORA CONTEXT is also a user lock; mention every supplied identity, outfit, or style capability concisely, without exposing trigger strings, filenames, weights, or internal IDs.
+- Requests such as 画得好看, 更漂亮, 高质量, 有氛围, 有情景, or 有张力 are aesthetic goals, not concrete visual locks. Realize them through visible decisions under 模型补全.
+- 模型补全: a concise natural Chinese summary of every major invented decision that materially changes the picture. Include the chosen theme, outfit/prop/action, setting/composition, and light/palette when you supplied them. Say 无 when nothing material was added.
+- If CONCEPT OVERRIDE is present, it is the user's edited authoritative blueprint. Follow it when compiling PROMPT and copy it unchanged after CONCEPT:.
+
+SPARSE-INPUT RULE: A subject plus a request such as "make it beautiful" requires an actual illustration premise, not a neutral stock portrait or a bundle of loud genre clichés. Silently consider several genuinely different premises, discard the interchangeable ones, and output only the most visually coherent choice.
+
+When the user provides no theme, use this anime-illustration appeal prior:
+- choose a designed, motif-driven outfit rather than a school uniform, plain blouse, or generic everyday clothing;
+- give the hands and body a graceful interaction with one non-weapon prop, garment element, creature, plant, magical object, or environmental feature;
+- use asymmetry, foreground overlap, foreshortening, flowing shapes, or another purposeful composition hook;
+- build a controlled palette with one accent color and a clear light source;
+- echo at least one shape, color, or material between the character design and surrounding motif.
+
+Do not default to bedrooms, neon alleys, cyberpunk scenery, school uniforms, combat poses, swords, katanas, or other weapons when the user did not ask for them. Bokeh, glow, petals, particles, and dramatic lighting may support an established motif but cannot be the motif by themselves.
+
+Compose the picture around one dominant visual motif. Make character design, expression, gaze, pose, hand interaction, framing, setting structure, lighting direction, palette, depth, and effects support that motif instead of becoming an inventory.
+
+ANATOMY-READABILITY DEFAULT: When the user has not locked a difficult pose or camera angle, use at most one major anatomy challenge. Give each visible hand one simple readable purpose and clear contact with its prop or garment. Keep leg silhouettes and joints distinguishable in full-body views. Create motion through hair, sleeves, ribbons, fabric, plants, weather, or light before forcing the body into an extreme pose. Do not output generic claims such as perfect anatomy or perfect hands.
+
+Write in Anima-native prompt language. Use familiar anime/Danbooru concepts for common attributes, clothing, poses, objects, framing, lighting, and effects. Use short English clauses or complete sentences when they express relationships, continuous actions, unusual composition, or designed interaction more clearly than isolated tags. The final PROMPT may be tag-only, clause-heavy, or freely mixed. Do not create TAGS or NL sections and do not force prose into lowercase fragments.
+
+Use useful Anima count tags. For one unnamed female character, normally begin with 1girl, solo; use the count and subject actually requested for other cases. Meaningful reinforcement is allowed when a clause binds a few important tags into a relationship or composition. Never mechanically paraphrase or repeat the whole prompt.
+
+Preserve every explicit user fact and constraint. Do not change a named character, subject count, requested clothing state, action, location, camera instruction, or core mood. Do not invent another main character, named IP, incompatible outfit, weapon, sex act, or unrelated spectacle. For an unknown named character, put the best canonical-tag candidate in IR.subject so the backend can verify it. Do not add age labels, safety wording, policy language, or content classifications.
+
+For erotic input, use the same illustration principles. Sensuality may come from clothing design and exposure, pose, gaze, expression, body line, framing, fabric/skin contrast, lighting, or interaction. Do not automatically turn erotic intent into nudity, and do not suppress nudity or explicit content when the user actually requests it.
+
+The backend supplies the standard quality prefix, rating control, negative prompt, exact known character tags, and all LoRA filenames, weights, and required triggers. Do not output or guess any of those. Plan around KNOWN CANONICAL TAGS without repeating them in PROMPT. Treat every ACTIVE LORA `Already provides` capability as present; do not redundantly re-author or conflict with its character identity, outfit, or style. When a style LoRA is active, do not add a vague replacement style phrase.
+
+IR is a compact semantic inventory for backend inspection. Output a valid one-line JSON object with exactly these 12 array fields: subject, appearance, clothing, action, pose, interaction, scene, composition, lighting, mood, style, constraints.
+
+FINAL CHECK: remove quality/score tokens, rating labels, negative tags, generation metadata, XML wrappers, filenames, weights, and explanations. Remove contradictory framing. In particular, full body or entire figure visible cannot coexist with mid-shot, medium shot, upper body, close-up, cropped, or out of frame. There is no target tag count, sentence count, word count, or character count: use as much concrete visible information as the picture benefits from, then stop.
+
+Normally output exactly three non-empty lines, with no markdown or other text:
+CONCEPT: 用户锁定：<explicit Chinese locks>｜模型补全：<major Chinese additions or 无>
+IR: <one-line compact JSON with all 12 required array fields>
+PROMPT: <one English positive prompt ready for Anima>
+
+If ACTIVE LORA CONTEXT is present, insert exactly one LORA JSON line between IR and PROMPT. Use only supplied key/profile/optional IDs, echo locked explicit profiles unchanged, and never put trigger strings, filenames, or weights in LORA or PROMPT."""
 
 # LLM 结构化输出的字段 (顺序即展示顺序). TAGS 行单独解析为最终 tag.
 _STRUCTURED_FIELDS = ("scene", "composition", "mood", "lighting", "style")
@@ -962,20 +1007,30 @@ _IR_FIELDS = (
 def _prompt_ir_meta(mode: str, reroll: bool = False, prompt_ir: dict | None = None,
                     char_tags: list[str] | None = None,
                     attribute_tags: list[str] | None = None,
-                    character_lookup: list[dict] | None = None) -> dict:
+                    character_lookup: list[dict] | None = None,
+                    completion_level: str = DEFAULT_COMPLETION_LEVEL,
+                    concept: str | None = None,
+                    concept_override_applied: bool = False,
+                    repetition_collapsed: bool = False) -> dict:
     """为 API 增加来源/补全元数据，不污染 12 字段 Prompt IR 结构。"""
-    expansion = mode == "painter_expansion"
+    expansion = mode in {"painter_expansion", "visual_composer"}
     return {
         "mode": mode,
         "source": {
             "user_intent": "remaining_input",
             "character_tags": "dictionary" if char_tags else None,
             "attribute_tags": "dictionary" if attribute_tags else None,
-            "default_completion": "painter" if expansion else None,
+            "default_completion": "visual_composer" if mode == "visual_composer" else (
+                "painter" if expansion else None),
         },
         "expansion_applied": expansion,
+        "completion_level": completion_level,
+        "concept": concept,
+        "concept_override_applied": bool(concept_override_applied),
+        "repetition_collapsed": bool(repetition_collapsed),
         "reroll": bool(reroll),
-        "reroll_strategy": "new_painter_plan" if expansion and reroll else None,
+        "reroll_strategy": ("new_visual_concept" if mode == "visual_composer" and reroll else
+                            "new_painter_plan" if expansion and reroll else None),
         "prompt_ir_available": prompt_ir is not None,
         "character_lookup": character_lookup or [],
     }
@@ -1299,6 +1354,88 @@ def _parse_structured_output(out: str) -> tuple[str, dict | None, str, dict | No
     return tags, breakdown or None, nl, prompt_ir
 
 
+def _canonicalize_concept(value: str | None) -> str | None:
+    """归一化可编辑中文构思；只有同时包含用户锁定/模型补全才算有效。"""
+    if not isinstance(value, str):
+        return None
+    concept = value.strip()
+    if concept.lower().startswith("concept:"):
+        concept = concept.split(":", 1)[1].strip()
+    concept = re.sub(r"\s+", " ", concept)
+    match = re.fullmatch(
+        r"用户锁定\s*[：:]\s*(.+?)\s*[｜|]\s*模型补全\s*[：:]\s*(.+)",
+        concept,
+    )
+    if not match:
+        return None
+    locked, added = (part.strip() for part in match.groups())
+    if not locked or not added:
+        return None
+    return f"用户锁定：{locked}｜模型补全：{added}"
+
+
+def _normalize_optional_concept(value, field_name: str = "concept") -> str | None:
+    """校验来自 API 的 concept/concept_override，返回统一可追踪形式。"""
+    if value is None or value == "":
+        return None
+    if not isinstance(value, str):
+        raise HTTPException(400, f"{field_name} 必须是字符串")
+    if len(value) > MAX_CONCEPT_CHARS:
+        raise HTTPException(400, f"{field_name} 过长(>{MAX_CONCEPT_CHARS})")
+    concept = _canonicalize_concept(value)
+    if concept is None:
+        raise HTTPException(400, f"{field_name} 必须包含‘用户锁定：…｜模型补全：…’")
+    return concept
+
+
+def _parse_concept(out: str) -> str | None:
+    """从 Composer 响应提取 CONCEPT；旧协议没有该行时返回 None。"""
+    for line in out.splitlines():
+        if line.strip().lower().startswith("concept:"):
+            return _canonicalize_concept(line.strip())
+    return None
+
+
+def _parse_composer_output(out: str, active_lora: bool = False) -> tuple:
+    """严格解析 Visual Composer 的 CONCEPT + IR + [LORA] + PROMPT 协议。"""
+    text = out.strip().strip("`").strip()
+    lines = [line.strip() for line in text.splitlines() if line.strip()]
+    expected_count = 4 if active_lora else 3
+    expected_prefixes = ["concept:", "ir:"]
+    if active_lora:
+        expected_prefixes.append("lora:")
+    expected_prefixes.append("prompt:")
+    if len(lines) != expected_count or any(
+            not line.lower().startswith(prefix)
+            for line, prefix in zip(lines, expected_prefixes)):
+        raise RuntimeError("Composer 输出未遵守 CONCEPT + IR + [LORA] + PROMPT 行协议")
+
+    concept = _canonicalize_concept(lines[0])
+    try:
+        raw_ir = json.loads(lines[1].split(":", 1)[1].strip())
+    except (json.JSONDecodeError, TypeError):
+        raw_ir = None
+    tags, breakdown, nl, prompt_ir = _parse_structured_output(text)
+    prompt_line = lines[-1].split(":", 1)[1].strip()
+    if concept is None:
+        raise RuntimeError("Composer CONCEPT 未区分用户锁定与模型补全")
+    if len(concept) > MAX_CONCEPT_CHARS:
+        raise RuntimeError(f"Composer CONCEPT 过长(>{MAX_CONCEPT_CHARS})")
+    if (prompt_ir is None or not isinstance(raw_ir, dict) or
+            set(raw_ir) != set(_IR_FIELDS)):
+        raise RuntimeError("Composer IR 缺失、字段不全或不是有效 JSON")
+    if not prompt_line or tags != prompt_line:
+        raise RuntimeError("Composer PROMPT 缺失或无法解析")
+    lora_choices = _parse_lora_choices(text)
+    if active_lora and not lora_choices:
+        raise RuntimeError("Composer 缺少有效 LORA 选择")
+    prompt_line, repetition_collapsed = collapse_exact_prompt_repetition(prompt_line)
+    if len(prompt_line) > MAX_PROMPT_EN_CHARS:
+        raise RuntimeError(f"Composer PROMPT 过长(>{MAX_PROMPT_EN_CHARS})")
+    return (prompt_line, breakdown, nl, prompt_ir, _parse_character_hints(text),
+            lora_choices, concept, repetition_collapsed)
+
+
 def match_characters(text: str) -> tuple[list[str], str]:
     """子串匹配正式/自动确认角色名. 正式词典优先, 返回 canonical tag 列表和剩余文本."""
     found_tags: list[str] = []
@@ -1325,11 +1462,13 @@ def match_dict_words(text: str) -> tuple[list[str], str]:
     return hits, remaining
 
 
-async def siliconflow_translate(context: str, reroll: bool = False) -> tuple[str, dict | None, str, dict | None, list[dict], dict]:
-    """走硅基流动 Qwen 翻译/扩写. context 是结构化上下文 (Known tags + Remaining).
-    返回 (LLM 新增 tag, 结构化拆解 dict). tag 不含已知 tag (由 translate 拼接).
-    breakdown 供前端预览展示 AI 理解, prompt_ir 保存 12 字段语义计划. 失败抛异常 (上层转 HTTPException).
-    reroll=True: 提高温度 + 前置发散指令, 让模型给一版不同创意解读 (抽卡再抽, 见 D19)."""
+async def siliconflow_translate(context: str, reroll: bool = False,
+                                completion_level: str | None = None) -> tuple:
+    """走 Reasoning Model 生成 Visual Composer 协议。
+
+    返回 (prompt, breakdown, nl, prompt_ir, character_hints, lora_choices,
+    concept, repetition_collapsed)。失败会修复一次，再把协议错误交给上层。
+    """
     api_key = CFG.get("siliconflow_api_key", "").strip()
     model = CFG.get("siliconflow_model", "deepseek-ai/DeepSeek-V4-Flash")
     if not api_key:
@@ -1339,25 +1478,34 @@ async def siliconflow_translate(context: str, reroll: bool = False) -> tuple[str
     # 隐喻/场景仍弱时 config 翻 translate_enable_thinking: true 重测, 不动代码 (见 D18).
     thinking = bool(CFG.get("translate_enable_thinking", False))
 
-    # reroll: 高温 + 发散指令. /no_think 仍是 user 首token (thinking 开则不前置), nudge 跟在后面.
-    temperature = float(CFG.get("reroll_temperature", 0.9)) if reroll else 0.4
-    nudge = ("Generate a DIFFERENT painter completion plan from the previous one. "
-             "Vary the composition, lighting, mood or concrete setting only when coherent; "
-             "keep every explicit subject, action, location and constraint, and preserve subject readability. "
-             "Still follow the output format and the known-tags rule.\n\n") if reroll else ""
+    if completion_level is None:
+        level_match = re.search(r"^COMPLETION LEVEL:\s*(auto|faithful|free)\s*$",
+                                context, flags=re.IGNORECASE | re.MULTILINE)
+        completion_level = level_match.group(1).lower() if level_match else DEFAULT_COMPLETION_LEVEL
+    completion_level = _normalize_completion_level(completion_level)
+
+    # 补全程度控制创意幅度，不再用输入长度推断。reroll 只改变同一程度下的方案。
+    temperature = (float(CFG.get("reroll_temperature", 0.9)) if reroll else {
+        "faithful": 0.35,
+        "auto": 0.7,
+        "free": 0.8,
+    }[completion_level])
+    nudge = ("Generate a different coherent illustration premise within the same COMPLETION LEVEL. "
+             "Keep every explicit lock and vary only decisions that remain open. "
+             "Still follow the exact output protocol.\n\n") if reroll else ""
     user_content = ("/no_think " if not thinking else "") + nudge + context
     active_lora = "ACTIVE LORA CONTEXT" in context
 
-    out = ""
-    tags, breakdown, nl, prompt_ir = "", None, "", None
-    lora_choices = {}
+    parsed = None
+    last_protocol_error = None
     for attempt in range(2):
         repair = ""
         if attempt:
             repair = (
-                "\nFORMAT REPAIR: Return one compact valid IR JSON line with all 12 array fields, "
-                + ("then the mandatory LORA JSON line using only the supplied IDs, " if active_lora else "")
-                + "then PROMPT. Do not omit any required line.\n"
+                "\nFORMAT REPAIR: Your previous response was rejected. Return CONCEPT first, then one "
+                "compact valid IR JSON line with all 12 array fields, "
+                + ("then the mandatory LORA JSON line using only supplied IDs, " if active_lora else "")
+                + "then PROMPT. Use exactly one non-empty line for each required field and no other text.\n"
             )
         r = await CLIENT.post(
             "https://api.siliconflow.cn/v1/chat/completions",
@@ -1370,11 +1518,11 @@ async def siliconflow_translate(context: str, reroll: bool = False) -> tuple[str
                     {"role": "user", "content": user_content + repair},
                 ],
                 "temperature": temperature,
-                "max_tokens": 650,
+                "max_tokens": 1800,
                 # ★ 关键: enable_thinking 必须放顶层, 放 extra_body 里硅基流动不认 -> 思考没关掉. (见 D2)
                 "enable_thinking": thinking,
             },
-            timeout=40,
+            timeout=60,
         )
         if r.status_code != 200:
             raise RuntimeError(f"翻译服务返回 {r.status_code}: {r.text[:200]}")
@@ -1386,20 +1534,15 @@ async def siliconflow_translate(context: str, reroll: bool = False) -> tuple[str
         if not out:
             raise RuntimeError("翻译服务返回空内容")
 
-        # 解析结构化输出: IR + PROMPT. 旧协议仍由解析器兼容.
-        tags, breakdown, nl, prompt_ir = _parse_structured_output(out)
-        lora_choices = _parse_lora_choices(out)
-        if (prompt_ir is not None and (not active_lora or lora_choices)) or attempt == 1:
+        try:
+            parsed = _parse_composer_output(out, active_lora=active_lora)
             break
+        except RuntimeError as exc:
+            last_protocol_error = exc
 
-    # 兜底: 检测重复 tag (模型复读), 出现3次以上相同 tag 说明输出异常
-    tag_list = [t.strip() for t in tags.split(",")]
-    from collections import Counter
-    dupes = [t for t, c in Counter(tag_list).most_common(3) if c >= 3 and t]
-    if dupes:
-        raise RuntimeError(f"翻译输出异常(重复tag: {dupes[0]}), 请重试")
-
-    return tags, breakdown, nl, prompt_ir, _parse_character_hints(out), lora_choices
+    if parsed is None:
+        raise RuntimeError(f"Composer 协议修复失败: {last_protocol_error}")
+    return parsed
 
 
 async def siliconflow_vision_translate(image_b64: str, context: str, reroll: bool = False, mode: str = "reference") -> tuple[str, dict | None, str, dict | None, dict]:
@@ -1465,6 +1608,60 @@ _COUNT_TAG_RE = re.compile(
     r"\d+\+(girls|boys|others)|"   # 6+girls
     r"multiple (girls|boys|others))$"
 )
+
+
+def collapse_exact_prompt_repetition(prompt: str) -> tuple[str, bool]:
+    """只折叠整段完全相同的 comma-segment 序列，不删除有意义的局部强化。"""
+    segments = [segment.strip() for segment in prompt.strip().rstrip(".").split(",")
+                if segment.strip()]
+    count = len(segments)
+    for unit_size in range(1, count // 2 + 1):
+        if count % unit_size:
+            continue
+        unit = segments[:unit_size]
+        if all(segments[index:index + unit_size] == unit
+               for index in range(0, count, unit_size)):
+            return ", ".join(unit), True
+    return prompt.strip(), False
+
+
+_FULL_BODY_LOCK_TERMS = (
+    "全身", "完整可见", "从头到脚", "full body", "entire figure visible",
+)
+_FULL_BODY_CONFLICT_TERMS = (
+    "mid-shot", "mid shot", "medium shot", "upper body", "close-up", "close up",
+    "cropped", "out of frame",
+)
+
+
+def _prepare_composer_tags(tags: list[str], prompt_ir: dict | None,
+                           original_text: str, char_tags: list[str]) -> list[str]:
+    """Visual Composer 的最小代码护栏：主体计数 + 显式全身构图一致性。
+
+    不继承旧 Painter 的 nude、默认镜头、剪影或风格删改启发式；这些视觉决定
+    由 Composer 根据用户构思负责。
+    """
+    result = [tag.strip() for tag in tags if tag and tag.strip()]
+    source = original_text.lower()
+    full_body_locked = any(term in source for term in _FULL_BODY_LOCK_TERMS)
+    if full_body_locked:
+        result = [tag for tag in result
+                  if not any(term in tag.lower() for term in _FULL_BODY_CONFLICT_TERMS)]
+        if not any(term in tag.lower() for term in ("full body", "entire figure")
+                   for tag in result):
+            result.append("full body")
+
+    if any(_COUNT_TAG_RE.match(tag.lower()) for tag in result):
+        return result
+    subject = " ".join(str(item).lower() for item in (prompt_ir or {}).get("subject", []))
+    subject_words = set(re.findall(r"[a-z]+", subject))
+    if subject_words & {"boy", "boys", "male", "man", "men"} or any(
+            term in source for term in ("男孩", "男性", "男人")):
+        result.insert(0, "1boy")
+    elif char_tags or subject_words & {"girl", "girls", "woman", "women", "female", "person"} or any(
+            term in source for term in ("女孩", "少女", "女性", "女人", "女生", "巫女")):
+        result.insert(0, "1girl")
+    return result
 
 
 def _prepare_painter_tags(tags: list[str], prompt_ir: dict | None,
@@ -1599,14 +1796,26 @@ def compile_prompt(char_tags: list[str], other_tags: list[str], nl: str = "",
 
 
 async def translate(text: str, reroll: bool = False, image_b64: str | None = None,
-                    lora_selections=None, include_meta: bool = False) -> tuple:
-    """中文 -> danbooru tag. 三层: 角色匹配 -> 词典匹配 -> LLM 扩写(只处理未命中).
+                    lora_selections=None, include_meta: bool = False,
+                    completion_level: str = DEFAULT_COMPLETION_LEVEL,
+                    concept_override: str | None = None) -> tuple:
+    """中文构思 -> Anima Prompt。角色 canonical knowledge 与 Visual Composer 分工。
+
+    参考图/非 Reasoning Model 降级路径继续保留历史字典行为；SiliconFlow 普通文本
+    把完整剩余意图交给 Composer，不再让 ordinary dict 的全命中绕过构思。
     返回 (prompt_en, breakdown, prompt_ir): breakdown 是既有 5 维展示结构,
     prompt_ir 是 12 字段语义计划; 快速路径或旧视觉协议时二者按实际情况为 None.
     include_meta=True 时追加第四项 prompt_ir_meta，供 API additive 返回，不影响旧内部调用。
     reroll=True: 只对 LLM 路径生效, 高温重出一版不同补全方案, 跳过缓存(探索性, 不污染正常缓存).
     image_b64: ③ 参考图 (data URI 或 base64). 有图走视觉 LLM 提氛围.
-    lora_selections: Active LoRA Asset/Profile；存在时所有路径都使用同一 binding context."""
+    lora_selections: Active LoRA Asset/Profile；存在时所有路径都使用同一 binding context.
+    completion_level: auto/faithful/free；concept_override 是用户编辑后的构思控制面。"""
+    if not isinstance(text, str):
+        raise HTTPException(400, "提示词必须是字符串")
+    if len(text) > MAX_USER_PROMPT_CHARS:
+        raise HTTPException(400, f"提示词过长(>{MAX_USER_PROMPT_CHARS})")
+    completion_level = _normalize_completion_level(completion_level)
+    concept_override = _normalize_optional_concept(concept_override, "concept_override")
     backend = CFG.get("translate", "none")
     lora_selections = apply_lora_intent_hints(text, lora_selections)
     lora_context, normalized_loras, lora_revision = build_lora_context(lora_selections)
@@ -1626,11 +1835,13 @@ async def translate(text: str, reroll: bool = False, image_b64: str | None = Non
         return result + (meta,) if include_meta else result
 
     # Layer 0: 角色子串匹配 (移除角色名, 得到剩余文本)
-    char_tags, remaining = match_characters(text)
+    char_tags, char_remaining = match_characters(text)
 
-    # Layer 1: 词典子串匹配 (最长优先, 像 char_dict 一样在文本里找, 不靠逗号精确匹配)
-    # 修: 原精确匹配逗号段, NSFW 词嵌在短语里("裸足少女")不命中 -> 走 LLM -> Qwen3 安全过滤丢词 (见 D26)
-    hits, remaining = match_dict_words(remaining)
+    # 普通文本 Composer 直接读取完整剩余意图；参考图/降级后端继续沿用历史属性词典。
+    if backend == "siliconflow" and not image_b64:
+        hits, remaining = [], char_remaining
+    else:
+        hits, remaining = match_dict_words(char_remaining)
     misses = [p.strip() for p in re.split(r"[,，、;；\n]+", remaining) if p.strip()]
 
     # ③ 参考图: 有图走视觉 LLM 提取氛围 (图 + 文本上下文), 不走下面的文本 LLM/快速路径.
@@ -1658,24 +1869,40 @@ async def translate(text: str, reroll: bool = False, image_b64: str | None = Non
         result = compile_lora_bindings(result, bindings)
         return finish(
             result, breakdown, prompt_ir,
-            _prompt_ir_meta("vision_reference", reroll, prompt_ir, char_tags, hits),
+            _prompt_ir_meta("vision_reference", reroll, prompt_ir, char_tags, hits,
+                            completion_level=completion_level),
             bindings, lora_warnings,
         )
 
-    # 全命中 (无 misses): 不调 LLM
-    if not misses and not has_lora:
-        # 裸角色名快速路径: 只有角色没别的描述 -> 补 1girl, solo
-        # (LLM 对裸角色名会疯狂编场景/武器, 实测 7.9s + 噪声 tag, 见 D13)
+    char_fragments = [p.strip() for p in re.split(r"[,，、;；\n]+", char_remaining)
+                      if p.strip()]
+    # 纯角色名仍走确定性 canonical 快路，避免一句角色名被自动编造新场景；同时补齐构思控制面。
+    if (backend == "siliconflow" and char_tags and not char_fragments and
+            not has_lora and concept_override is None):
+        result = compile_prompt(char_tags, ["1girl", "solo"], profile="tag_first")
+        concept = f"用户锁定：{text.strip()}｜模型补全：无"
+        return finish(
+            result, None, None,
+            _prompt_ir_meta("canonical", reroll, char_tags=char_tags,
+                            completion_level=completion_level, concept=concept),
+        )
+
+    # 参考图/非 Reasoning Model 的旧路径保留 ordinary dict 全命中快路。
+    if backend != "siliconflow" and not misses and not has_lora:
         if char_tags and not hits:
             result = compile_prompt(char_tags, ["1girl", "solo"], profile="tag_first")
+            concept = f"用户锁定：{text.strip()}｜模型补全：无"
             return finish(result, None, None,
-                          _prompt_ir_meta("canonical", reroll, char_tags=char_tags))
+                          _prompt_ir_meta("canonical", reroll, char_tags=char_tags,
+                                          completion_level=completion_level,
+                                          concept=concept))
         all_tags = char_tags + hits
         if all_tags:
             result = compile_prompt(char_tags, hits, profile="tag_first")
             return finish(result, None, None,
                           _prompt_ir_meta("dictionary", reroll,
-                                          char_tags=char_tags, attribute_tags=hits))
+                                          char_tags=char_tags, attribute_tags=hits,
+                                          completion_level=completion_level))
         raise HTTPException(400, "提示词为空")
 
     # Layer 2: 有未命中 -> 后端处理
@@ -1688,18 +1915,25 @@ async def translate(text: str, reroll: bool = False, image_b64: str | None = Non
         result = compile_lora_bindings(result, bindings)
         return finish(result, None, None,
                       _prompt_ir_meta("faithful", reroll,
-                                      char_tags=char_tags, attribute_tags=hits),
+                                      char_tags=char_tags, attribute_tags=hits,
+                                      completion_level=completion_level),
                       bindings, lora_warnings)
 
     if backend == "siliconflow":
-        # 构造上下文: 已知 tag 喂给 LLM, 只让它翻/扩 misses (不重复已知 tag)
-        ctx_lines = []
+        # 普通文本 Composer 接收完整剩余意图；ordinary dict 不再抢先裁掉词语或触发全命中。
+        hits = []
+        misses = char_fragments
+        ctx_lines = [
+            f"COMPLETION LEVEL: {completion_level.upper()}",
+            f"USER IDEA:\n{text}",
+        ]
         if char_tags:
-            ctx_lines.append(f"Known character tags: {', '.join(char_tags)}")
-        if hits:
-            ctx_lines.append(f"Known attribute tags: {', '.join(hits)}")
-        ctx_lines.append(f"Original user intent: {text or '(image-only)'}")
-        ctx_lines.append(f"Remaining: {', '.join(misses) if misses else '(all ordinary terms already resolved; still plan around Active LoRA)'}")
+            ctx_lines.append(f"KNOWN CANONICAL TAGS: {', '.join(char_tags)}")
+        if concept_override:
+            ctx_lines.append(
+                "CONCEPT OVERRIDE (authoritative; copy unchanged into CONCEPT): "
+                + concept_override
+            )
         if lora_context:
             ctx_lines.append(lora_context)
             ctx_lines.append(f"Registry revision: {lora_revision}")
@@ -1711,17 +1945,28 @@ async def translate(text: str, reroll: bool = False, image_b64: str | None = Non
             cached_result, cached_breakdown, cached_ir = cached[:3]
             cached_bindings = cached[3] if len(cached) > 3 else []
             cached_warnings = cached[4] if len(cached) > 4 else []
+            cached_concept = cached[5] if len(cached) > 5 else concept_override
+            cached_repetition = cached[6] if len(cached) > 6 else False
             return finish(
                 cached_result, cached_breakdown, cached_ir,
-                _prompt_ir_meta("painter_expansion", reroll, cached_ir, char_tags, hits),
+                _prompt_ir_meta(
+                    "visual_composer", reroll, cached_ir, char_tags, hits,
+                    completion_level=completion_level, concept=cached_concept,
+                    concept_override_applied=concept_override is not None,
+                    repetition_collapsed=cached_repetition,
+                ),
                 cached_bindings, cached_warnings,
             )
         try:
             translated = await siliconflow_translate(context, reroll=reroll)
             new_tags, breakdown, nl, prompt_ir, character_hints = translated[:5]
             lora_choices = translated[5] if len(translated) > 5 else {}
+            concept = translated[6] if len(translated) > 6 else None
+            repetition_collapsed = bool(translated[7]) if len(translated) > 7 else False
         except Exception as e:
             raise HTTPException(502, f"翻译失败, 请稍后重试 ({e})")
+        if concept_override is not None:
+            concept = concept_override
         lookup_results = []
         resolved_char_tags = list(char_tags)
         known_names = set(_character_names())
@@ -1745,21 +1990,32 @@ async def translate(text: str, reroll: bool = False, image_b64: str | None = Non
             elif lookup.get("status") == "unavailable" and candidate not in resolved_char_tags:
                 # 兜底: Danbooru 不可达时用 LLM 候选（已归一化），不写 auto cache，只服务本次 Prompt
                 resolved_char_tags.append(candidate)
-        # 编译: 已知/自动确认角色 tag + LLM Prompt, 再按 Anima 规范序排。
+        # 编译: canonical 角色 + Composer Prompt；仅保留确定性计数/显式构图护栏。
         new_list = [t.strip() for t in new_tags.split(",") if t.strip()]
-        painter_tags = _prepare_painter_tags(hits + new_list, prompt_ir, text, resolved_char_tags)
-        result = compile_prompt(resolved_char_tags, painter_tags, nl, infer_render_profile(prompt_ir))
+        control_text = text + (("\n" + concept_override) if concept_override else "")
+        composer_tags = _prepare_composer_tags(new_list, prompt_ir, control_text,
+                                               resolved_char_tags)
+        result = compile_prompt(resolved_char_tags, composer_tags, nl,
+                                infer_render_profile(prompt_ir))
         bindings, lora_warnings, _ = resolve_lora_selections(normalized_loras, lora_choices)
         result = compile_lora_bindings(result, bindings)
         # reroll 不写缓存: 探索性结果不应顶掉正常翻译的缓存原版 (见 D19)
         if not reroll:
             if len(_TRANSLATE_CACHE) >= _TRANSLATE_CACHE_MAX:
                 _TRANSLATE_CACHE.pop(next(iter(_TRANSLATE_CACHE)))
-            _TRANSLATE_CACHE[cache_key] = (result, breakdown, prompt_ir, bindings, lora_warnings)
+            _TRANSLATE_CACHE[cache_key] = (
+                result, breakdown, prompt_ir, bindings, lora_warnings,
+                concept, repetition_collapsed,
+            )
         return finish(
             result, breakdown, prompt_ir,
-            _prompt_ir_meta("painter_expansion", reroll, prompt_ir,
-                            resolved_char_tags, hits, lookup_results),
+            _prompt_ir_meta(
+                "visual_composer", reroll, prompt_ir,
+                resolved_char_tags, hits, lookup_results,
+                completion_level=completion_level, concept=concept,
+                concept_override_applied=concept_override is not None,
+                repetition_collapsed=repetition_collapsed,
+            ),
             bindings, lora_warnings,
         )
 
@@ -1775,7 +2031,8 @@ async def translate(text: str, reroll: bool = False, image_b64: str | None = Non
         result = compile_lora_bindings(result, bindings)
         return finish(result, None, None,
                       _prompt_ir_meta("translation", reroll,
-                                      char_tags=char_tags, attribute_tags=hits),
+                                      char_tags=char_tags, attribute_tags=hits,
+                                      completion_level=completion_level),
                       bindings, lora_warnings)
 
     raise HTTPException(500, f"未知的 translate 后端: {backend}")
@@ -2123,9 +2380,9 @@ def _bindings_as_selections(bindings: list[dict] | None) -> list[dict]:
 
 @app.post("/api/translate")
 async def translate_prompt(req: Request, token: str = Depends(verify_token)):
-    """只翻译不排队: 中文 -> 英文 tag (角色->词典->LLM 三层 + 结构化扩写, LRU 缓存). 不计入 image 限额.
-    返回 {prompt_en, breakdown, prompt_ir, prompt_ir_meta}: breakdown 保持 5 维前端展示形状,
-    prompt_ir 是 12 字段语义计划; prompt_ir_meta additive 标注来源、补全模式和 reroll 方案.
+    """只编译不排队: 中文构思 -> Anima Prompt，不计入 image 限额。
+    返回 {concept, prompt_en, breakdown, prompt_ir, prompt_ir_meta}；completion_level 控制补全幅度，
+    concept_override 可把用户编辑后的构思重新编译为 Prompt。
     body.reroll=true: LLM 高温重出一版不同画师补全方案 (抽卡再抽, 跳过缓存, 见 D19).
     body.image: 可选, 参考图 base64 (data URI). 有图走视觉 LLM 提氛围, 不走文本 LLM (③, 见 D23)."""
     body = await req.json()
@@ -2133,16 +2390,22 @@ async def translate_prompt(req: Request, token: str = Depends(verify_token)):
     image = (body.get("image") or "").strip()
     if not prompt and not image:
         raise HTTPException(400, "提示词和参考图不能同时为空")
-    if len(prompt) > 500:
-        raise HTTPException(400, "提示词过长(>500)")
+    if len(prompt) > MAX_USER_PROMPT_CHARS:
+        raise HTTPException(400, f"提示词过长(>{MAX_USER_PROMPT_CHARS})")
     if len(image) > 5_000_000:
         raise HTTPException(400, "参考图过大(>5MB)")
     if prompt:
         check_banned(prompt)
     reroll = bool(body.get("reroll"))
+    completion_level = _normalize_completion_level(body.get("completion_level"))
+    concept_override = _normalize_optional_concept(
+        body.get("concept_override"), "concept_override")
+    if concept_override:
+        check_banned(concept_override)
     prompt_en, breakdown, prompt_ir, prompt_ir_meta = await translate(
         prompt, reroll=reroll, image_b64=(image or None),
-        lora_selections=_extract_lora_selections(body), include_meta=True
+        lora_selections=_extract_lora_selections(body), include_meta=True,
+        completion_level=completion_level, concept_override=concept_override,
     )
     check_banned(prompt_en)
     return {
@@ -2150,6 +2413,7 @@ async def translate_prompt(req: Request, token: str = Depends(verify_token)):
         "breakdown": breakdown,
         "prompt_ir": prompt_ir,
         "prompt_ir_meta": prompt_ir_meta,
+        "concept": prompt_ir_meta.get("concept"),
         "lora_bindings": prompt_ir_meta.get("lora_bindings", []),
         "lora_warnings": prompt_ir_meta.get("lora_warnings", []),
         "registry_revision": prompt_ir_meta.get("registry_revision"),
@@ -2161,9 +2425,13 @@ async def _enqueue(token: str, wf_name: str, prompt_en: str, prompt_raw: str,
                    image_filename: str | None = None, denoise: float | None = None,
                    detailer: dict | None = None,
                    lora_bindings: list[dict] | None = None,
-                   registry_revision: str | None = None) -> str:
+                   registry_revision: str | None = None,
+                   concept: str | None = None,
+                   completion_level: str = DEFAULT_COMPLETION_LEVEL) -> str:
     """校验并入队一次出图 (USAGE+1 / JOBS / QUEUE.put). create_job 与 /api/dialog/turn 共用. 返回 job_id.
     prompt_en/prompt_raw 的 banned 检查由调用方负责 (两处逻辑不同)."""
+    completion_level = _normalize_completion_level(completion_level)
+    concept = _normalize_optional_concept(concept, "concept")
     if wf_name not in WORKFLOWS:
         raise HTTPException(400, "未知工作流")
     wcfg = WORKFLOWS[wf_name]
@@ -2206,8 +2474,8 @@ async def _enqueue(token: str, wf_name: str, prompt_en: str, prompt_raw: str,
         prompt_en = compile_lora_bindings(prompt_en, resolved_bindings)
     else:
         strength_char = strength_style = None
-    if len(prompt_en) > 1200:
-        raise HTTPException(400, "编译后的提示词过长(>1200)")
+    if len(prompt_en) > MAX_COMPILED_PROMPT_CHARS:
+        raise HTTPException(400, f"编译后的提示词过长(>{MAX_COMPILED_PROMPT_CHARS})")
     # detailer 校验 (只允许 face/hand/nsfw/eyes)
     if detailer:
         allowed = {"face", "hand", "nsfw", "eyes"}
@@ -2220,6 +2488,7 @@ async def _enqueue(token: str, wf_name: str, prompt_en: str, prompt_raw: str,
     JOBS[job_id] = {
         "id": job_id, "token": token, "workflow": wf_name,
         "prompt_raw": prompt_raw, "prompt_en": prompt_en,
+        "concept": concept, "completion_level": completion_level,
         "width": width, "height": height,
         "loras": [b["key"] for b in resolved_bindings] or None,
         "lora_bindings": resolved_bindings,
@@ -2243,10 +2512,12 @@ async def create_job(req: Request, token: str = Depends(auth)):
     lora_selections = _extract_lora_selections(body)
     lora_bindings = body.get("lora_bindings") or None
     registry_revision = (body.get("registry_revision") or "").strip() or None
-    if not prompt_en or len(prompt_en) > 800:
-        raise HTTPException(400, "提示词为空或过长(>800)")
-    if prompt_raw != prompt_en and len(prompt_raw) > 500:
-        raise HTTPException(400, "原始提示词过长(>500)")
+    concept = _normalize_optional_concept(body.get("concept"), "concept")
+    completion_level = _normalize_completion_level(body.get("completion_level"))
+    if not prompt_en or len(prompt_en) > MAX_PROMPT_EN_CHARS:
+        raise HTTPException(400, f"提示词为空或过长(>{MAX_PROMPT_EN_CHARS})")
+    if prompt_raw != prompt_en and len(prompt_raw) > MAX_USER_PROMPT_CHARS:
+        raise HTTPException(400, f"原始提示词过长(>{MAX_USER_PROMPT_CHARS})")
     check_banned(prompt_en)
     if prompt_raw != prompt_en:
         check_banned(prompt_raw)
@@ -2267,12 +2538,15 @@ async def create_job(req: Request, token: str = Depends(auth)):
                             body.get("strength_char"), body.get("strength_style"),
                             image_filename, denoise, detailer,
                             lora_bindings=lora_bindings,
-                            registry_revision=registry_revision)
+                            registry_revision=registry_revision,
+                            concept=concept, completion_level=completion_level)
     job = JOBS[job_id]
     return {"id": job_id, "prompt_en": job["prompt_en"],
             "lora_bindings": job.get("lora_bindings", []),
             "lora_warnings": job.get("lora_warnings", []),
-            "registry_revision": job.get("registry_revision")}
+            "registry_revision": job.get("registry_revision"),
+            "concept": job.get("concept"),
+            "completion_level": job.get("completion_level")}
 
 
 @app.get("/api/jobs/{job_id}")
@@ -2283,7 +2557,8 @@ async def job_status(job_id: str, token: str = Depends(auth)):
     queued_ids = list(QUEUE._queue)  # MVP 简单读取
     resp = {k: job[k] for k in (
         "id", "status", "prompt_raw", "prompt_en", "workflow",
-        "lora_bindings", "lora_warnings", "registry_revision") if k in job}
+        "concept", "completion_level", "lora_bindings", "lora_warnings",
+        "registry_revision") if k in job}
     if job["status"] == "queued":
         resp["position"] = queued_ids.index(job_id) + 1 if job_id in queued_ids else 1
     if job["status"] == "done":
@@ -2303,8 +2578,8 @@ async def dialog_turn(req: Request, token: str = Depends(auth)):
     action = (body.get("action") or "").strip()
     session_id = (body.get("session_id") or "").strip()
     delta = (body.get("delta") or "").strip()
-    if len(delta) > 300:
-        raise HTTPException(400, "改动描述过长(>300)")
+    if len(delta) > MAX_DIALOG_DELTA_CHARS:
+        raise HTTPException(400, f"改动描述过长(>{MAX_DIALOG_DELTA_CHARS})")
     wf_name = body.get("workflow", "")
     image_filename = None
     denoise = None
@@ -2312,12 +2587,14 @@ async def dialog_turn(req: Request, token: str = Depends(auth)):
 
     if action == "start":
         prompt = (body.get("prompt") or "").strip()
-        if not prompt or len(prompt) > 500:
-            raise HTTPException(400, "提示词为空或过长(>500)")
+        if not prompt or len(prompt) > MAX_USER_PROMPT_CHARS:
+            raise HTTPException(400, f"提示词为空或过长(>{MAX_USER_PROMPT_CHARS})")
+        completion_level = _normalize_completion_level(body.get("completion_level"))
         check_banned(prompt)
         try:
             prompt_en, _, _, translate_meta = await translate(
-                prompt, lora_selections=requested_lora_selections, include_meta=True)
+                prompt, lora_selections=requested_lora_selections, include_meta=True,
+                completion_level=completion_level)
         except HTTPException:
             raise
         except Exception as e:
@@ -2328,6 +2605,8 @@ async def dialog_turn(req: Request, token: str = Depends(auth)):
         SESSIONS[session_id] = {
             "id": session_id, "token": token, "raw": prompt,
             "current_en": prompt_en, "created": time.time(), "turns": [],
+            "concept": translate_meta.get("concept"),
+            "completion_level": completion_level,
             "lora_selections": _bindings_as_selections(session_bindings),
             "lora_bindings": session_bindings,
             "lora_warnings": translate_meta.get("lora_warnings", []),
@@ -2348,12 +2627,18 @@ async def dialog_turn(req: Request, token: str = Depends(auth)):
             "raw": src_job.get("prompt_raw", ""),
             "current_en": src_job.get("prompt_en", ""),
             "created": time.time(),
+            "concept": src_job.get("concept"),
+            "completion_level": _normalize_completion_level(
+                src_job.get("completion_level")),
             "lora_selections": _bindings_as_selections(src_job.get("lora_bindings")),
             "lora_bindings": src_job.get("lora_bindings", []),
             "lora_warnings": src_job.get("lora_warnings", []),
             "registry_revision": src_job.get("registry_revision"),
             "turns": [{"job_id": src_job_id, "action": "start-image", "delta": "",
-                       "prompt_en": src_job.get("prompt_en", "")}],
+                       "prompt_en": src_job.get("prompt_en", ""),
+                       "concept": src_job.get("concept"),
+                       "completion_level": _normalize_completion_level(
+                           src_job.get("completion_level"))}],
         }
         return {"session_id": session_id, "job_id": src_job_id}
     else:
@@ -2375,7 +2660,9 @@ async def dialog_turn(req: Request, token: str = Depends(auth)):
                 try:
                     prompt_en, _, _, translate_meta = await translate(
                         session["raw"], lora_selections=session.get("lora_selections", []),
-                        include_meta=True)
+                        include_meta=True,
+                        completion_level=session.get("completion_level", DEFAULT_COMPLETION_LEVEL))
+                    session["concept"] = translate_meta.get("concept")
                     session["lora_bindings"] = translate_meta.get("lora_bindings", [])
                     session["lora_warnings"] = translate_meta.get("lora_warnings", [])
                     session["registry_revision"] = translate_meta.get("registry_revision")
@@ -2406,7 +2693,10 @@ async def dialog_turn(req: Request, token: str = Depends(auth)):
                 # 主体由 delta 文字给。不用 iterate(锁主体) -- 用户要"保氛围换主体"=reference, iterate 反而冲突(见 D25 修正)
                 prompt_en, _, _, translate_meta = await translate(
                     delta, image_b64=image_b64,
-                    lora_selections=session.get("lora_selections", []), include_meta=True)
+                    lora_selections=session.get("lora_selections", []), include_meta=True,
+                    completion_level=session.get("completion_level", DEFAULT_COMPLETION_LEVEL))
+                # 视觉路径没有 Composer CONCEPT；不要把上一轮构思错误归因给新 Prompt。
+                session["concept"] = translate_meta.get("concept")
                 session["lora_bindings"] = translate_meta.get("lora_bindings", [])
                 session["lora_warnings"] = translate_meta.get("lora_warnings", [])
                 session["registry_revision"] = translate_meta.get("registry_revision")
@@ -2439,7 +2729,9 @@ async def dialog_turn(req: Request, token: str = Depends(auth)):
                 try:
                     prompt_en, _, _, translate_meta = await translate(
                         session["raw"], lora_selections=session.get("lora_selections", []),
-                        include_meta=True)
+                        include_meta=True,
+                        completion_level=session.get("completion_level", DEFAULT_COMPLETION_LEVEL))
+                    session["concept"] = translate_meta.get("concept")
                     session["lora_bindings"] = translate_meta.get("lora_bindings", [])
                     session["lora_warnings"] = translate_meta.get("lora_warnings", [])
                     session["registry_revision"] = translate_meta.get("registry_revision")
@@ -2464,9 +2756,14 @@ async def dialog_turn(req: Request, token: str = Depends(auth)):
                             body.get("strength_char"), body.get("strength_style"),
                             image_filename, denoise, body.get("detailer"),
                             lora_bindings=session.get("lora_bindings"),
-                            registry_revision=session.get("registry_revision"))
+                            registry_revision=session.get("registry_revision"),
+                            concept=session.get("concept"),
+                            completion_level=session.get(
+                                "completion_level", DEFAULT_COMPLETION_LEVEL))
     session["turns"].append({"job_id": job_id, "action": action, "delta": delta,
-                             "prompt_en": JOBS[job_id]["prompt_en"]})
+                             "prompt_en": JOBS[job_id]["prompt_en"],
+                             "concept": JOBS[job_id].get("concept"),
+                             "completion_level": JOBS[job_id].get("completion_level")})
     return {"session_id": session_id, "job_id": job_id}
 
 
@@ -2481,9 +2778,13 @@ async def dialog_get(session_id: str, token: str = Depends(auth)):
         job = JOBS.get(t["job_id"], {})
         turns.append({
             "action": t["action"], "delta": t["delta"], "prompt_en": t["prompt_en"],
+            "concept": t.get("concept"),
+            "completion_level": t.get("completion_level"),
             "status": job.get("status", "?"), "image": job.get("image"), "error": job.get("error"),
         })
     return {"session_id": session_id, "raw": session["raw"], "current_en": session["current_en"],
+            "concept": session.get("concept"),
+            "completion_level": session.get("completion_level", DEFAULT_COMPLETION_LEVEL),
             "lora_bindings": session.get("lora_bindings", []),
             "lora_warnings": session.get("lora_warnings", []),
             "registry_revision": session.get("registry_revision"), "turns": turns}

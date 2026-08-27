@@ -779,3 +779,24 @@ RTX 4060 Laptop 8GB、无 LoRA/detailer 重新端到端测试：请求 1024×153
 用户真实生成时发现：不先点“先看翻译”而直接点“生成”，后端翻译虽已用于任务提交，左侧英文 Prompt 与五项拆解却保持空白/旧值；同时 896×1152 竖图会把 `canvasMedia` 从设计高度反撑到原图 1152px，24 寸常见桌面视口无法完整看到图片。根因分别是直接生成路径遗漏 UI 渲染调用，以及 `flex-1` 画布在不定高父容器中被图片固有尺寸扩张。
 
 新增统一 `renderTranslation()`，由直接生成、先看翻译、reroll 和 LoRA stale 重翻译共同调用；直接生成仍保持“静默翻译后提交”的产品语义，但结果左栏始终显示本次实际 Prompt。画布改为不参与 flex 伸展，桌面高度使用 `320px～690px` 的视口约束，图片显式 `max-width/max-height:100%` + `object-fit:contain`。浏览器 mock 完整执行 translate→jobs→poll：1920×950 下同一张 896×1152 图完整显示为约 429×552，舞台底部 933px；1920×1080、1365×720、390×844 均无裁切，“先看翻译”回归保持当前图片。静态 JS/DOM、Python compile 与运行日志检查通过；`web/` 提交 `99bb15c` 已推送。
+
+## 第 51 条 2026-08-27 - Visual Composer 生产接入
+
+### 事实与方向修正
+
+用户从 Civitai/Pixiv 样图与 Anima 实际 Prompt 中指出，旧生产画师协议的前提已经不成立：高质量 Anima Prompt 可以是 tag、关系短句、完整自然语言或混合；固定约 20 个元素、预设 TAG/NL 形态和 ordinary `dict.yaml` 全命中短路，会把详细构思压成普通翻译。此前测试里自动强调年龄、裸体或通用画风也不符合本地 Anima 的真实输入习惯。用户认可正常插画和角色+画风 LoRA 定向图片后，同意把新方案接入生产；不再重启无方向的大批量 A/B。
+
+### 实现
+
+- SiliconFlow 普通文本改为三档 Visual Composer：`auto` 按语义覆盖度补空位，`faithful` 只补成图必需项，`free` 在保留锁定项后自由完成画面；档位由用户显式选择，与输入字数无关。
+- 新协议严格为 `CONCEPT + 精确 12 字段 IR + [LORA] + PROMPT`。`CONCEPT` 固定为 `用户锁定：…｜模型补全：…`，可在生成前编辑并通过 `concept_override` 重新编译；协议失败只修复一次，仍失败则 502，不把原始响应直接当 Prompt。
+- `PROMPT` 不设 tag 数、句数、词数或字符数目标，可按 Anima 需要自由混合 canonical tag、英文短句和自然语言。普通文本不再让 `dict.yaml` 删除词语或全命中绕过 Reasoning Model；`char_dict` 的角色 canonical、纯角色快路和 LoRA Registry exact binding 继续由代码确定。
+- 新文本路径移除旧自动裸体、强制三分之四景别、画风删除与年龄/rating 注入。确定性护栏只保留主体计数、角色裸名去重、整段重复折叠，以及用户明确要求全身时删除互斥近景词。
+- 输入边界按用途放宽为原始中文/构思各 4000、客户端英文 Prompt 6000、LoRA 编译后 8000、对话 delta 2000；Reasoning Model `max_tokens=1800`。固定 negative 增加常见坏手、缺/多/粘连手指、多余手臂/腿与坏脚词，但不宣称能解决人体随机失败。
+- 前端在既有三栏工作台内增加 `自动 / 忠于描述 / 自由补全` 与可编辑构思。原文、档位、LoRA/Profile 或构思变化都会令旧翻译失效；直接生成也会先同步本次构思/Prompt，再提交带 `concept` 和 `completion_level` 的 job。dialog/start-image 同步继承这两个字段。
+
+### 验证与边界
+
+`49 prompt unit tests passed`，Python 编译、AnimaFull JSON、当前本机用户维护的 10 项 Registry 校验、前端 2 段内联 JS、132 个唯一 DOM ID 与 109 个静态引用检查通过。该 Registry 修改仍由用户持有，未混入本阶段提交。真实 SiliconFlow 定向 smoke 覆盖普通 auto、编辑构思重编译、角色+画风 LoRA；浏览器 mock 覆盖 1365×720 与 390×844、档位传递、构思 dirty 阻断/应用、job 字段、LoRA 双选择和原文变更 stale 阻断，console 无错误。
+
+这些检查证明协议、状态和绑定闭环，不证明画质。当前画质依据仅是用户已经确认的正常二次元插画与角色+画风 LoRA 图片；后续从真实使用收集可复现失败，避免用 Prompt 长度、IR 完整度或重复跑批代替人眼判断。

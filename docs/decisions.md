@@ -638,3 +638,35 @@ LoRA 用户可见名称以 versioned `server/lora_registry.yaml` 为单一真相
 **验证**：生产内联 JS 语法、122 个 DOM ID、重复/缺失引用检查通过；模拟真实 API 的浏览器验收覆盖 1920×1080 与 390×844、日夜切换、LoRA 多 Profile、首次翻译、确认生成、有图后重翻译、Prompt/参数移动页签和暗房。真实 `127.0.0.1:8000` 鉴权/工作流/LoRA 接口均返回 200，并完成一次 `/api/translate → /api/jobs → /api/jobs/{id}` 真实任务；输出 PNG 为 832×1216。
 
 **相关文件**：`web/index.html`、`docs/architecture.md`、`docs/DEVLOG.md`、`ROADMAP.md`。
+
+## D46. Visual Composer：三档补全、可编辑构思与自由 Anima Prompt
+
+**背景**：真实使用再次暴露出旧画师协议的边界：固定约 20 个元素与历史 TAGS/NL 形态会把详细构思压回短翻译；`dict.yaml` 全命中时甚至完全绕过 Reasoning Model。与此同时，用户提供的高质量 Anima 样本证明，模型可同时理解 canonical tag、短英文关系描述和自然语言段落，Prompt 的有效形态不应由后端预先限定。此前画质实验也已经证明，没有一种 TAG-only、NL-dominant 或固定权重格式能全局胜出。
+
+**问题**：完全放任模型会让稀疏输入的创意方向不可见、详细输入被擅自改写，也可能产生整段复读、互斥景别或与 active LoRA 重复争夺概念；继续依赖普通词典和固定格式，则只能得到“中文换成英文”的 translator，无法成为面向 Anima 的构图器。
+
+**候选**：
+1. 保留旧协议，只提高字符与元素上限；不能解决词典绕过、固定形态和不可见补全。
+2. 删除所有约束，让 Reasoning Model 直接返回任意英文；自由度最高，但用户无法在生成前看见或修订模型新增的关键决定，协议错误也可能直接进入工作流。
+3. 使用三档 Visual Composer：模型自由选择 TAG/NL 表达，同时把“用户锁定”和“模型补全”显式写入可编辑中文 `CONCEPT`，代码只保留确定性协议、角色、LoRA、重复与构图兜底。
+
+**决定**：采用候选 3。
+
+1. SiliconFlow 普通文本路径使用 `auto | faithful | free` 三档补全。`auto` 按语义覆盖度判断缺什么，`faithful` 只补成图必需项，`free` 在保留全部明确锁定项后自由完成画面；输入长短不替用户决定模式。
+2. 文本模型必须严格返回 `CONCEPT + 精确 12 字段 IR + [LORA] + PROMPT`。有 active LoRA 时 `LORA` 行必需，否则不应出现。第一次协议错误只允许一次格式修复；仍失败则 502 fail closed，不把原始模型输出当 Prompt。
+3. `CONCEPT` 固定为 `用户锁定：…｜模型补全：…`，作为生成前的中文控制面。用户编辑后通过 `concept_override` 重新编译，覆盖值保持原结构并作为权威蓝图；这仍是单轮重编译，不等于 Phase 4 PromptState 或字段级历史锁定。
+4. `PROMPT` 可为 tag-only、短英文 clause、自然语言或自由混合，不设 tag 数、句数、词数或字符数目标。继续禁止机械复述整段语义，但允许关系句为了绑定主体、动作和构图而有意义地强化少量 tag。
+5. SiliconFlow 普通文本不再让 ordinary `dict.yaml` 抢先删除词语或以全命中结果绕过 Composer。`char_dict` 仍提供角色 canonical tag；纯角色名且无 LoRA/构思覆盖时保留确定性快路；普通词典仍服务参考图、`google`/`none` 等 legacy 降级路径。
+6. 代码不再对新文本 Composer 使用旧 `_prepare_painter_tags()` 的自动裸体、强制三分之四景别或风格删除。新路径只做可验证兜底：补主体计数、角色裸名去重、折叠完整 Prompt 的机械重复，并在用户明确要求全身/完整可见时删除 `mid-shot`、`medium shot`、`upper body`、`close-up`、`cropped`、`out of frame` 等互斥构图。
+7. active LoRA 的 Profile/provides 继续在翻译前进入上下文，属于用户锁定；模型只能选择允许的 Profile/optional ID，代码仍确定性注入 exact trigger、文件名和强度。Composer 不重复改写 LoRA 已提供的身份、服装或画风。
+8. 输入与输出上限按用途放宽：用户原文与 `concept_override` 各 4000 字符，客户端 `prompt_en` 6000，LoRA 编译后 Prompt 8000，对话 `delta` 2000；Reasoning Model `max_tokens=1800`。这些是防误用边界，不是鼓励 Prompt 越长越好。
+9. 生产固定负面模板增加 `bad hands, missing fingers, extra fingers, fused fingers, extra arms, extra legs, bad feet, malformed feet`。它只提供低成本防御，不能被表述为已经解决人体或手脚质量。
+10. 前端在原三栏骨架内增加补全模式和可编辑构思。原文、补全模式、LoRA 或构思变化都会让旧翻译进入 stale 状态；未把编辑后的构思重新应用前，不允许拿旧英文 Prompt 确认生成。直接生成仍会先翻译并把本次构思/Prompt 同步回检查区。
+
+**修订关系**：本决定修订 D28 的生产 TAGS/NL 输出形态、D34 的文本协议、D36 的普通词典路由、D37 的约 20 元素上限与“冻结输入辅助”结论，以及 D44 中旧 `_prepare_painter_tags()` 对新文本路径的适用范围。D44 的 rating 控制权、D39 的 LoRA exact binding 边界和 D45 的固定三栏几何继续有效。
+
+**代价与风险**：`auto/free` 的具体创意仍带随机性，稀疏输入不可能自动猜中用户未表达的唯一审美答案；更长 Prompt 也可能稀释重点。ordinary dict 不再缩短文本调用，SiliconFlow 普通文本的调用次数和 token 成本会上升。固定负面词与确定性护栏只能减少已知失败，不构成画质保证；复杂人体、多角色关系和 checkpoint 局限仍需真实图片与用户判断。
+
+**验证**：`49 prompt unit tests passed`，`server/main.py` Python 编译通过；前端 2 段内联 JS、132 个 DOM ID、109 个静态引用检查通过，桌面与 390px 浏览器流程无 console error；3 条真实 SiliconFlow 烟测覆盖普通 auto、构思覆盖与角色+画风 LoRA 上下文。结构验证只证明协议和状态边界。画质证据仅为用户已确认的正常插画 `d709b7a58fc9.png` 与角色+画风 LoRA 插画 `695cf21fe007.png`，不从单测推导画质结论。
+
+**相关文件**：`server/main.py`、`server/workflows/AnimaFull.json`、`web/index.html`、`.tools/test_prompt_unit.py`、`docs/api.md`、`docs/architecture.md`。

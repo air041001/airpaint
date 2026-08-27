@@ -46,18 +46,19 @@ ComfyUI  127.0.0.1:8188  (不对公网开放)
 - 对中文原文和翻译后英文各查一次。
 
 ### Prompt Engine (翻译)
-`translate(text, reroll, image_b64, lora_selections)` 三层流程，默认返回 `(prompt_en, breakdown, prompt_ir)`；`/api/translate` 通过 `include_meta=True` additive 返回 `prompt_ir_meta` 与 LoRA binding snapshot：
-1. **角色匹配** (`match_characters`, `char_dict.yaml`): 子串扫描角色名, 返回 tag 列表 + 移除角色名后的剩余文本。
-2. **词典匹配** (`dict.yaml`, 当前约 1044 条): 剩余文本**子串匹配** (最长优先, len>=2), 分 hits / misses (见 D26)。
-3. 全命中且无 active LoRA: 裸角色名 (只有角色无描述) -> `tag, 1girl, solo` 跳过 LLM; 否则 `角色tag + 词典tag` 拼接。active LoRA 会覆盖此快速路径。
-4. 有未命中 -> 按后端:
-    - `siliconflow`: 构造上下文 (Known character tags / Known attribute tags / Remaining misses) 送 DeepSeek-V4-Flash (config `siliconflow_model`)。生产文本 LLM 输出单行 12 字段 `IR` + `PROMPT`，未知角色候选优先从 `IR.subject` 取得，解析器兼容可选 `CHAR` 行；`PROMPT` 是约 20 个元素以内的紧凑最终画师 Prompt；`_parse_structured_output` 仍兼容旧 `IR + TAGS + NL` 和旧 5 字段协议。5 个前端 breakdown 字段由 IR 派生。画师协议优先保证主体可读性、动作/姿态、场景、构图、光影/材质，并由代码层补主体计数、抑制未请求剪影、默认风格污染和 NSFW close-up；未知角色查询 Danbooru exact tag + category/post_count，`likely_supported` 才写独立平铺 auto cache，正式 `char_dict` 优先；`unavailable` 不缓存以便下次重试；`/api/translate` 以 additive `prompt_ir_meta` 标注补全和 lookup 来源；reroll 使用新的补全方案。`compile_prompt` 统一做角色裸名清理、去重、count→character→general 排序和 Prompt 拼接；`build_prompt` 再负责 quality/LoRA/workflow。rating tag 不由 LLM 或关键词启发式推断，用户可在生成前编辑英文 Prompt 手动加入。`/no_think` + 顶层 `enable_thinking:False`(config `translate_enable_thinking` 可翻, 见 D18) 关思考, max_tokens 550 / temp 0.4, 失败抛 502。LRU 缓存 500 (key=上下文, 值为 `(prompt_en, breakdown, prompt_ir)`)。
-   - `google`: gtx 逐词翻 misses (本机需翻墙, 已弃用)。
-   - `none`: misses 原样保留。
+`translate(text, reroll, image_b64, lora_selections, completion_level, concept_override)` 默认返回 `(prompt_en, breakdown, prompt_ir)`；`include_meta=True` 再返回 `prompt_ir_meta`，`/api/translate` 从中 additive 暴露 `concept`、补全/来源元数据与 LoRA binding snapshot。当前生产流程如下：
 
-生产文本 LLM 使用 `PAINTER_SYSTEM_PROMPT` 单次生成 `IR + PROMPT`；旧 `IR + TAGS + NL` 与 5 字段协议只保留解析降级。正向 `quality_prefix` 走 Anima 官方 (`masterpiece, best quality, newest, absurdres`), 负面为工作流固化常量 (WAI-Anima 式 + 构图否定词 multiple views/split view/grid view/cropped/out of frame), 不随输入变。见 D12/D13/D15/D18/D28/D37。
+1. **角色 canonical knowledge** (`match_characters`, `char_dict.yaml`)：子串扫描正式词典和已验证自动缓存，返回精确角色 tag 与移除角色名后的文本。只有纯角色名、无 active LoRA、无 `concept_override` 的 SiliconFlow 请求走确定性快路，返回 `角色tag, 1girl, solo` 与“模型补全：无”。
+2. **文本 Composer 路由**：SiliconFlow 普通文本把完整用户意图与角色 canonical tag 交给 Reasoning Model，ordinary `dict.yaml` 不再抢先删除词语，也不能因全命中绕过 LLM。`dict.yaml` 及 `match_dict_words()` 仍保留给参考图和 `google`/`none` legacy 降级路径；它没有被删除或宣布为无效知识。
+3. **Visual Composer** (`PAINTER_SYSTEM_PROMPT`)：补全程度由显式 `auto | faithful | free` 控制，不根据字数猜测。`auto` 按语义覆盖度补重要空位，`faithful` 只补成图必需项，`free` 在保留用户锁定后自由设计完整插画。稀疏输入会形成一个具体主视觉，详细输入保持用户决定，不强行加入年龄词、rating、质量前缀、负面词或 LoRA exact trigger。
+4. **严格文本协议**：SiliconFlow 文本必须输出 `CONCEPT`、精确 12 字段单行 `IR`、有 active LoRA 时的 `LORA` JSON、`PROMPT`，且没有其他行。`CONCEPT` 固定为 `用户锁定：…｜模型补全：…`；`concept_override` 必须保持该结构并作为用户编辑后的权威蓝图。协议失败只修复一次，第二次仍失败则 502 fail closed，绝不把包含 CONCEPT/IR 的原始响应直接当 Prompt。参考图 Vision 与非 SiliconFlow legacy 路径继续使用原有兼容协议，不受这项严格文本格式约束。
+5. **自由 Anima 表达**：`PROMPT` 可以是 canonical tag、英文短句、自然语言或混合，不设固定 tag/句子/单词/字符数量。关系句可有意义地绑定少量 tag，但禁止机械复述整个 Prompt。5 个前端 breakdown 字段继续由 IR 的 scene/composition/mood/lighting/style 派生。
+6. **确定性 Compiler**：代码补主体计数、清理精确角色的裸名变体、折叠完整逗号序列的机械复读；用户明确写全身/完整可见时，移除 `mid-shot / medium shot / upper body / close-up / cropped / out of frame` 等互斥景别。新文本 Composer 不再经过旧 `_prepare_painter_tags()` 的自动裸体、强制三分之四景别或画风删除启发式。未知角色仍从 `IR.subject` 提取候选，经 Danbooru exact category/post_count 验证后才写 auto cache。
+7. **缓存与模型调用**：LRU 缓存上限 500，key 是完整 Composer 上下文，因此包含补全档、`concept_override`、LoRA selection 与 registry revision；reroll 跳过缓存并在同一补全档内换构思。Reasoning Model `max_tokens=1800`；普通温度为 faithful 0.35 / auto 0.7 / free 0.8，reroll 使用配置的高温。`/no_think` 与 `enable_thinking:false` 默认关闭思考，失败抛 502。
 
-Active LoRA 时，文本快速路径也强制进入 LoRA-aware painter；Reasoning/Vision Model 只看 Asset/Profile 的 `provides` 与允许选择的 ID，不看文件名、强度或 exact trigger。模型输出可选 `LORA` JSON 语义选择，代码再解析 Profile/optional ID。翻译缓存 key 包含 selection 与 registry revision，避免不同 LoRA/Profile 共享 Prompt。
+正向 `quality_prefix` 由工作流代码统一提供 (`masterpiece, best quality, newest, absurdres`)；rating 只保留用户在英文 Prompt 中的明确输入。负面 Prompt 是 `AnimaFull.json` 节点 4 的固定常量，不随输入变化，包含 WAI-Anima 质量项、构图否定词，以及 `bad hands / missing fingers / extra fingers / fused fingers / extra arms / extra legs / bad feet / malformed feet` 的人体防御项。它只能降低部分常见失败概率，不代表人体问题已解决。见 D44/D46。
+
+Active LoRA 时，Reasoning/Vision Model 只看 Asset/Profile 的 `provides` 与允许选择的 ID，不看文件名、强度或 exact trigger。严格文本协议要求 `LORA` JSON 语义选择，代码再解析 Profile/optional ID 并确定性注入 exact binding。翻译缓存 key 包含 selection 与 registry revision，避免不同 LoRA/Profile 共享 Prompt。
 
 ### LoRA Registry / Binding
 
@@ -77,7 +78,7 @@ Active LoRA 时，文本快速路径也强制进入 LoRA-aware painter；Reasoni
 3. **统一 seed**: 扫描所有 int 型 `seed`/`noise_seed` 输入, 全写成同一正整数 (跳过列表型的节点连接)。修复 Impact Pack `np.random.default_rng(-1)` 崩溃 → FaceDetailer 人脸修复能正常跑。
 4. **LoRA binding 重解析**：有 snapshot 时只取 key/profile/optional，按同一 `registry_revision` 从当前 Registry 重建；旧 `lora_keys` 走 legacy adapter。随后由 Binding Compiler 补回被编辑删除的 required/default exact tags。
 5. **LoRA workflow 注入**：写 `lora_node.loras = {"__value__":[{name,strength,clipStrength,active:true}, ...]}`。文件名与默认强度来自 Registry，角色/风格滑块只允许 0~1 覆盖；LoraManager 的 `text` 字段执行时会被 `del`，不能依赖它加载权重。
-6. 注入 `prompt_node.text = quality_prefix + compiled prompt` 与尺寸；`safe/sensitive/questionable/explicit` 等 rating tag 仅保留用户手动编辑结果，不自动推断。不再把 Civitai 全量 trainedWords 在生成阶段盲拼。负面继续使用工作流固化模板。
+6. 注入 `prompt_node.text = quality_prefix + compiled prompt` 与尺寸；`safe/sensitive/questionable/explicit` 等 rating tag 仅保留用户手动编辑结果，不自动推断。不再把 Civitai 全量 trainedWords 在生成阶段盲拼。负面继续使用工作流固化模板，并包含常见手指、手臂、腿脚畸形的紧凑防御词。
 7. **生成分支与 detailer**：每次构建都显式写 ImpactSwitch：txt2img=`input1`（节点 56 EmptyLatent，使用请求宽高），img2img=`input2`（节点 33 VAEEncode）并覆盖主 KSampler denoise。若有 `detailer:{face,hand,nsfw,eyes}`，删未选 detailer 节点并重连（删掉的节点不可达，不执行）。
 8. 返回 `{prompt, client_id, _seed}`。
 
@@ -104,8 +105,8 @@ Active LoRA 时，文本快速路径也强制进入 LoRA-aware painter；Reasoni
 三屏：登录（邀请码）/ 工坊（主界面）/ 暗房（对话迭代）。同一功能层提供两套材质：纸本画室（日间，暖纸底 + 墨绿操作色）与石墨暗房（夜间，暖黑底 + 安灯橙），工坊和暗房同步切换。
 桌面工坊使用固定三栏骨架：画面描述跨左/中两栏，结果态为 `Prompt 检查 324px / 图片 flexible / 成像设置 360px`，最近作品位于左/中两栏下方。首次进入只显示画面描述与成像设置；首次翻译显示跨两栏 Prompt 检查；已有图片后重翻译不移走图片。图片操作位于独立工具栏，媒体余量使用当前图的模糊背景，不覆盖成图。暗房对应为控制左 / 当前图中 / 迭代脉络右。
 移动端按描述 → 图片 → Prompt/参数页签 → 历史纵向排列；暗房按图片 → 控制 → 脉络排列。视图过渡只动画 opacity/translate，`prefers-reduced-motion` 下直接切换，不动画表单或网格尺寸。
-出图两步走 (翻译与生成解耦, 见 D17): 中文 + `lora_selections` -> `/api/translate` 拿 prompt_en/breakdown/prompt_ir + binding/revision -> (可选预览/编辑) -> `/api/jobs` 回传 binding/revision。切换 LoRA/Profile 会使当前翻译过期，确认生成前必须重新翻译，避免 Prompt 与实际权重串线。
-成像设置栏：当前工作流 / 文生图与图生图 / 精修 / 尺寸 / LoRA（角色+风格分组、Profile 自动判断/显式锁定、各自默认强度与滑块、provides/verified 展示、待注册禁用）。参考图入口保留在画面描述区。尺寸为点击展开的画幅选择器，标准档与高分辨率实验档分组；选择后自动收起。当前开放标准 `832x1216 / 896x1152 / 1024x1024 / 1344x768`，高分辨率 `1024x1536 / 1536x864`。
+出图两步走 (翻译与生成解耦, 见 D17/D46)：中文 + 补全模式 + `lora_selections` -> `/api/translate` 拿 concept/prompt_en/breakdown/prompt_ir + binding/revision -> 可选编辑中文构思或英文 Prompt -> `/api/jobs` 回传 concept/completion/binding/revision。中文构思编辑后以 `concept_override` 重新调用翻译，不能直接把中文送入工作流；原文、补全模式、构思或 LoRA/Profile 改变都会使当前翻译过期，确认生成前必须应用或重翻译，避免新意图配旧 Prompt。
+描述区提供 `自动 / 忠于描述 / 自由补全` 三档；Prompt 检查区在五项 breakdown 上方显示可编辑的 `用户锁定｜模型补全` 中文构思。成像设置栏保留当前工作流 / 文生图与图生图 / 精修 / 尺寸 / LoRA（角色+风格分组、Profile 自动判断/显式锁定、各自默认强度与滑块、provides/verified 展示、待注册禁用）。参考图入口保留在画面描述区。尺寸为点击展开的画幅选择器，标准档与高分辨率实验档分组；选择后自动收起。当前开放标准 `832x1216 / 896x1152 / 1024x1024 / 1344x768`，高分辨率 `1024x1536 / 1536x864`。
 轮询 `/api/jobs/{id}` 每 2s, 完成后展示图 + 入历史画廊(localStorage 缩略图, 最近 12 张)。出图后「继续迭代」进暗房: 换一版(txt2img 重抽, D31 替换意图) / 微调(img2img, 低 denoise)。
 
 > `web/` 是独立 git 仓库 → `air041001/air`。但域名迁移后已**不再依赖 GitHub Pages**
@@ -121,7 +122,7 @@ Active LoRA 时，文本快速路径也强制进入 LoRA-aware painter；Reasoni
 
 ## 尚未实现 / 已知限制
 
-- **意图解析**: Phase 1 已有 12 字段 Prompt IR + `compile_prompt`，但 IR 目前主要用于结构化记录、breakdown 派生和回归度量；TAG/NL 细分策略、字段级知识解析和结构化增量修改仍分别留给 Phase 2/4。路线见 `docs/PLAN-v5`。
+- **构思不是 PromptState**：Visual Composer 已有三档补全、12 字段 IR 与单轮可编辑 CONCEPT，但 session 仍保存编译后的字符串；它不能做到“只改 clothing、其余字段永久锁定”的结构化历史。字段级增量修改仍留给真实暗房使用触发的 Phase 4。
 - **多角色构图限制**: base Anima 对复杂双人对峙可能产生分页、黑线或动作绑定错误；当前不做针对单一 case 的自动化特判，用户可在 `/api/translate` 返回的 `prompt_en` 编辑后再提交。
 - **LoRA composition 边界**：首版支持多 Profile 与角色×1 + 风格×1；没有真实跨文件多人 LoRA 资产与人眼验证，不宣称完成自由多角色 composition。
 - 用量/任务状态全内存, 重启清零 (Phase 3 计划 SQLite)。

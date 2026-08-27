@@ -157,6 +157,8 @@ def test_prompt_ir_meta_is_additive():
     assert breakdown is None and prompt_ir is None
     assert meta["mode"] == "canonical", meta
     assert meta["expansion_applied"] is False, meta
+    assert meta["concept"] == "用户锁定：甘雨｜模型补全：无", meta
+    assert meta["completion_level"] == "auto", meta
 
 
 def test_reroll_uses_new_painter_plan_metadata():
@@ -177,6 +179,149 @@ def test_painter_prompt_protocol_is_final_prompt():
     assert nl == "", nl
     assert breakdown["scene"] == "cherry blossom tree", breakdown
     assert prompt_ir and prompt_ir["subject"] == ["1girl"], prompt_ir
+
+
+def test_visual_composer_protocol_is_strict_and_collapses_whole_repeat():
+    output = (
+        "CONCEPT: 用户锁定：蓝发少女｜模型补全：百合花束与窗边逆光\n"
+        'IR: {"subject":["1girl"],"appearance":["blue hair"],"clothing":[],"action":["holding bouquet"],"pose":[],"interaction":[],"scene":["window"],"composition":["upper body"],"lighting":["backlighting"],"mood":["gentle"],"style":[],"constraints":[]}\n'
+        "PROMPT: 1girl, solo, blue hair, holding bouquet, window, backlighting, "
+        "1girl, solo, blue hair, holding bouquet, window, backlighting\n"
+    )
+    prompt, breakdown, nl, prompt_ir, hints, choices, concept, collapsed = (
+        main._parse_composer_output(output)
+    )
+    assert prompt == "1girl, solo, blue hair, holding bouquet, window, backlighting", prompt
+    assert collapsed is True
+    assert concept == "用户锁定：蓝发少女｜模型补全：百合花束与窗边逆光", concept
+    assert prompt_ir["scene"] == ["window"] and breakdown["scene"] == "window"
+    assert nl == "" and hints == [] and choices == {}
+
+    missing_concept = output.split("\n", 1)[1]
+    try:
+        main._parse_composer_output(missing_concept)
+    except RuntimeError as exc:
+        assert "协议" in str(exc), exc
+    else:
+        raise AssertionError("Composer response without CONCEPT must be rejected")
+
+    incomplete_ir = output.replace(',"constraints":[]', "")
+    try:
+        main._parse_composer_output(incomplete_ir)
+    except RuntimeError as exc:
+        assert "IR" in str(exc), exc
+    else:
+        raise AssertionError("Composer IR without all 12 fields must be rejected")
+
+
+def test_composer_guard_only_enforces_count_and_explicit_full_body_lock():
+    tags = main._prepare_composer_tags(
+        ["close-up", "upper body", "painterly", "silhouette", "soft daylight"],
+        {"subject": ["girl"]},
+        "少女从头到脚完整可见",
+        [],
+    )
+    assert tags[0] == "1girl", tags
+    assert "full body" in tags, tags
+    assert "close-up" not in tags and "upper body" not in tags, tags
+    # 新路径不再继承旧 Painter 对画风/剪影的主观删改。
+    assert "painterly" in tags and "silhouette" in tags, tags
+
+
+def test_workflow_negative_contains_compact_anatomy_guard():
+    workflow = json.loads((ROOT / "server" / "workflows" / "AnimaFull.json").read_text(
+        encoding="utf-8"))
+    negative = workflow["4"]["inputs"]
+    required = (
+        "bad anatomy", "bad hands", "missing fingers", "extra fingers",
+        "fused fingers", "extra arms", "extra legs", "bad feet", "malformed feet",
+    )
+    for field in ("wildcard_text", "populated_text"):
+        for term in required:
+            assert term in negative[field], (field, term, negative[field])
+
+
+def test_siliconflow_composer_bypasses_ordinary_dict_and_isolates_completion_cache():
+    old_translate = main.siliconflow_translate
+    old_match_dict = main.match_dict_words
+    old_backend = main.CFG.get("translate")
+    old_cache = dict(main._TRANSLATE_CACHE)
+    calls = []
+
+    def fail_dict(_):
+        raise AssertionError("SiliconFlow text Composer must not call ordinary dict")
+
+    async def fake_translate(context, reroll=False):
+        calls.append(context)
+        output = (
+            "CONCEPT: 用户锁定：黑发少女｜模型补全：玻璃花温室与晨光\n"
+            'IR: {"subject":["1girl"],"appearance":["black hair"],"clothing":[],"action":[],"pose":[],"interaction":[],"scene":["greenhouse"],"composition":["full body"],"lighting":["morning light"],"mood":["gentle"],"style":[],"constraints":[]}\n'
+            "PROMPT: 1girl, solo, black hair, greenhouse, full body, morning light\n"
+        )
+        return main._parse_composer_output(output)
+
+    try:
+        main.CFG["translate"] = "siliconflow"
+        main.siliconflow_translate = fake_translate
+        main.match_dict_words = fail_dict
+        main._TRANSLATE_CACHE = {}
+        auto = asyncio.run(main.translate(
+            "黑发少女，画得好看一点", completion_level="auto", include_meta=True))
+        free = asyncio.run(main.translate(
+            "黑发少女，画得好看一点", completion_level="free", include_meta=True))
+        assert len(calls) == 2, calls
+        assert "COMPLETION LEVEL: AUTO" in calls[0], calls[0]
+        assert "COMPLETION LEVEL: FREE" in calls[1], calls[1]
+        assert auto[3]["mode"] == "visual_composer", auto[3]
+        assert auto[3]["concept"].startswith("用户锁定："), auto[3]
+        assert free[3]["completion_level"] == "free", free[3]
+    finally:
+        main.siliconflow_translate = old_translate
+        main.match_dict_words = old_match_dict
+        if old_backend is None:
+            main.CFG.pop("translate", None)
+        else:
+            main.CFG["translate"] = old_backend
+        main._TRANSLATE_CACHE = old_cache
+
+
+def test_concept_override_is_authoritative_and_validated():
+    old_translate = main.siliconflow_translate
+    old_backend = main.CFG.get("translate")
+    old_cache = dict(main._TRANSLATE_CACHE)
+    override = "用户锁定：黑发少女｜模型补全：雨后荷塘、青色薄纱裙与侧逆光"
+
+    async def fake_translate(context, reroll=False):
+        assert override in context, context
+        output = (
+            "CONCEPT: 用户锁定：错误｜模型补全：错误\n"
+            'IR: {"subject":["1girl"],"appearance":["black hair"],"clothing":["teal dress"],"action":[],"pose":[],"interaction":[],"scene":["lotus pond"],"composition":[],"lighting":["rim light"],"mood":[],"style":[],"constraints":[]}\n'
+            "PROMPT: 1girl, solo, black hair, teal dress, lotus pond, rim light\n"
+        )
+        return main._parse_composer_output(output)
+
+    try:
+        main.CFG["translate"] = "siliconflow"
+        main.siliconflow_translate = fake_translate
+        main._TRANSLATE_CACHE = {}
+        _, _, _, meta = asyncio.run(main.translate(
+            "黑发少女", concept_override=override, include_meta=True))
+        assert meta["concept"] == override, meta
+        assert meta["concept_override_applied"] is True, meta
+    finally:
+        main.siliconflow_translate = old_translate
+        if old_backend is None:
+            main.CFG.pop("translate", None)
+        else:
+            main.CFG["translate"] = old_backend
+        main._TRANSLATE_CACHE = old_cache
+
+    try:
+        main._normalize_optional_concept("只写一段自由文本", "concept_override")
+    except main.HTTPException as exc:
+        assert exc.status_code == 400
+    else:
+        raise AssertionError("unstructured concept override must be rejected")
 
 
 def test_painter_tag_guard_preserves_woman_and_suppresses_unrequested_silhouette():
@@ -695,11 +840,15 @@ def test_enqueue_rebuilds_client_binding_from_registry_snapshot():
                 "file": "evil.safetensors", "injected_tags": ["evil trigger"],
             }],
             registry_revision=revision,
+            concept="用户锁定：少女｜模型补全：海边构图",
+            completion_level="free",
         ))
         job = main.JOBS[job_id]
         assert "evil trigger" not in job["prompt_en"], job
         assert "denia \\(wuthering waves\\)" in job["prompt_en"], job
         assert job["lora_bindings"][0]["file"] == "denia_lorav4-000005.safetensors"
+        assert job["concept"] == "用户锁定：少女｜模型补全：海边构图"
+        assert job["completion_level"] == "free"
         assert asyncio.run(main.QUEUE.get()) == job_id
     finally:
         main.JOBS, main.QUEUE, main.USAGE = old_jobs, old_queue, old_usage
@@ -716,6 +865,7 @@ def test_dialog_start_carries_binding_snapshot_into_job():
             return {
                 "action": "start", "prompt": "达妮娅在海边", "workflow": "anima",
                 "size": "832x1216", "lora_selections": ["denia_white"],
+                "completion_level": "free",
             }
 
     async def fake_translate(*args, **kwargs):
@@ -736,8 +886,10 @@ def test_dialog_start_carries_binding_snapshot_into_job():
         job = main.JOBS[response["job_id"]]
         assert session["registry_revision"] == revision
         assert session["lora_bindings"] == bindings
+        assert session["completion_level"] == "free"
         assert job["registry_revision"] == revision
         assert job["lora_bindings"][0]["profile"] == "white"
+        assert job["completion_level"] == "free"
     finally:
         main.translate = old_translate
         main.JOBS, main.SESSIONS = old_jobs, old_sessions
@@ -761,6 +913,11 @@ def main_test():
         test_prompt_ir_meta_is_additive,
         test_reroll_uses_new_painter_plan_metadata,
         test_painter_prompt_protocol_is_final_prompt,
+        test_visual_composer_protocol_is_strict_and_collapses_whole_repeat,
+        test_composer_guard_only_enforces_count_and_explicit_full_body_lock,
+        test_workflow_negative_contains_compact_anatomy_guard,
+        test_siliconflow_composer_bypasses_ordinary_dict_and_isolates_completion_cache,
+        test_concept_override_is_authoritative_and_validated,
         test_painter_tag_guard_preserves_woman_and_suppresses_unrequested_silhouette,
         test_painter_tag_guard_keeps_nsfw_body_framing_and_default_anime_style,
         test_painter_tag_guard_preserves_explicit_user_intent,

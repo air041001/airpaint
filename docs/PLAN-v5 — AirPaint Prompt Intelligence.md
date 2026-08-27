@@ -1,11 +1,11 @@
 # PLAN-v5 — AirPaint Prompt Intelligence
 
-> 状态：正式路线（2026-08-16 修订，Phase 2.6 Prompt Expansion 已完成）
+> 状态：正式路线（2026-08-27 修订，Phase 2.7 Visual Composer 已完成）
 > 取代 PLAN-v4（v4 已于 2026-08-19 删除，本文件为唯一现行路线）
 > 实施计划批准文件：`.workbuddy/plans/electric-forging-babbage.md`
 >
 > **核心原则**：
-> 1. **NSFW-first，Prompt-first，LoRA 后置** — 首要目标是在当前 base Anima 上把成人虚构内容的 Prompt 与出图质量做到最好；普通绘图 Prompt 是顺带做强的基础能力，LoRA 是 extension layer，不是当前主线。
+> 1. **Anima-first，Prompt-first** — 当前首要目标是在 base Anima 上把普通二次元人物插画的构思与 Prompt 编译做好；NSFW 复用同一构图、光影、材质和关系表达基础，不以年龄词、rating 或裸体 tag 作为默认驱动。LoRA 是扩展层，不替代 Prompt Intelligence。
 > 2. **LLM 是大脑，代码是脊髓** — LLM 负责意图/语义/关系/偏好；代码负责 canonical tag/知识库/LoRA ID/文件/数值/ordering/validation/workflow injection。模型不直接决定 `xxx.safetensors` 或 `CFG=6.7`。
 > 3. **渲染策略必须实证** — Prompt IR 是内部语义表示，不规定固定的最终 Prompt 格式；TAG、NL、权重、空间锚点和语义负面如何组合，必须用固定工作流/seed 的人眼结果验证，不能凭格式整洁推断质量。
 > 4. **单人长期开发，最小可用优先** — 不铺开 8 Phase。先证明核心价值，再扩展 Character Knowledge / LoRA Intelligence / Workflow Intelligence。
@@ -293,6 +293,19 @@ Phase 2 首轮的 case 都是短句翻译或关系失败，没有验证 AirPaint
 - A2 详细中文在部分 case 的优势说明：输入信息量是质量上限。后续不把“继续自动扩写”当作当前阶段主线，也不立即建设详细输入辅助 UX。
 - Phase 2.6 完成后先观察真实使用反馈，再决定是否投入下一阶段。
 
+### Phase 2.7: Visual Composer（已完成 2026-08-27）
+
+真实使用与用户提供的 Anima 高质量样本推翻了 Phase 2.6 的两个生产假设：最终 Prompt 不应固定为约 20 个元素，也不应要求预先确定 TAG/NL 形态；ordinary `dict.yaml` 全命中直接绕过 Reasoning Model，会让系统重新退化成翻译器。D46 因此修订 D28/D34/D36/D37 对普通文本生产路径的适用范围。
+
+- **显式补全而非猜测**：`auto | faithful | free` 三档由用户选择，输入长短不自动决定自由度。稀疏输入允许模型形成一个具体主视觉；详细输入和用户锁定项优先保留。
+- **构思控制面**：Reasoning Model 返回 `用户锁定：…｜模型补全：…`，前端允许编辑后通过 `concept_override` 重编译。它解决单次生成前的“模型到底补了什么”，但不是跨轮 PromptState。
+- **自由 Anima Prompt**：最终输出可以是 canonical tag、英文短句、自然语言或混合，不设 tag 数、句数、词数与字符数目标；关系语义允许少量有意义的重复，不允许整段机械复读。
+- **严格协议、轻量代码护栏**：普通 SiliconFlow 文本必须输出 `CONCEPT + 精确 12 字段 IR + [LORA] + PROMPT`，错误只修复一次，之后 fail closed。代码负责角色 canonical、LoRA exact binding、主体计数、裸名去重、完整重复折叠与明确全身/近景冲突，不再自动补裸体、年龄、rating、三分之四景别或删除画风。
+- **Dictionary 权限收窄**：普通文本不再让 `dict.yaml` 抢先删除词语或全命中短路；`char_dict` 仍负责角色 canonical，普通词典继续服务 Vision 与 `google`/`none` legacy 路径。
+- **验证边界**：49 项单测和真实 SiliconFlow smoke 证明协议、缓存、构思覆盖、LoRA 上下文与状态连续性；正常插画及角色+画风 LoRA 图片由用户确认可生产接入。单测、Prompt 长度或 IR 完整度仍不作为画质证明。
+
+Phase 2.7 完成后不继续开启批量 A/B。下一步只从真实生成中收集可复现失败：若是表达策略问题，做最小定向修订；若是 checkpoint 随机人体问题，先换 seed/查看复现率，不用 Prompt 规则掩盖模型局限。
+
 ### Phase 3: Character Knowledge（Phase 2 后）
 
 - 目标：未知角色名首次出现时，自动提出 Danbooru canonical tag，并用 tag category + `post_count` 判断 base Anima 是否值得裸名触发。
@@ -374,8 +387,9 @@ Phase 4 不永久取消，但在暗房使用数据证明 redo/tweak 高频，或
 - 明确成人 NSFW 单主体简单场景可使用 `tag_first`；普通 SFW 不全局删除 NL。
 - Phase 2.6 v5 生产画师协议相对旧翻译在 5 个固定 case 上取得 3 胜 2 平 0 负。
 - 人眼结果同时确认：自动补全能改善通用构图、光影、材质和可读性，但具体视觉意图仍受用户输入信息量限制。
+- Phase 2.7 已把固定元素数与固定 TAG/NL 形态替换为三档 Visual Composer；用户确认正常插画与角色+画风 LoRA 结果可接入生产。
 
-Phase 2.6 已完成。是否继续 Phase 3-8 不由结构回归自动触发，先根据真实使用反馈决定。
+Phase 2.7 已完成。是否继续 PromptState、多人 LoRA composition 或 Workflow Intelligence 不由结构回归自动触发，先根据真实使用反馈决定。
 
 ---
 

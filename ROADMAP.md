@@ -6,7 +6,7 @@
 
 > 2026-08-13 确立的新主线。完整路线见 [`docs/PLAN-v5 — AirPaint Prompt Intelligence.md`](PLAN-v5%20—%20AirPaint%20Prompt%20Intelligence.md)（取代已删除的 PLAN-v4）。
 >
-> **核心**：NSFW-first + Prompt-first，LoRA 后置。首要目标是把成人虚构内容的 Prompt 与出图质量做到最好，普通绘图能力顺带做强；LLM 是大脑（意图/语义），代码是脊髓（canonical tag/知识库/数值/workflow）。IR 不规定固定最终 Prompt 格式，渲染策略必须用固定变量的人眼实验验证。
+> **核心**：Anima-first + Prompt-first。当前优先把普通二次元人物插画的构思与 Prompt 编译做好，NSFW 复用同一表达基础而不以年龄词、rating 或裸体 tag 作为默认驱动；LLM 是大脑（意图/语义），代码是脊髓（canonical tag/知识库/数值/workflow）。IR 不规定固定最终 Prompt 格式，画质结论必须来自实际图片与人眼判断。
 >
 > 下面 Phase 2-5 是 MVP 之后的工程化补强（多工作流/前端/持久化/高级工作流），与 Prompt Intelligence 主线并行但优先级低。
 
@@ -48,6 +48,17 @@
 - [x] 记录产品边界：自动扩写能改善稀疏输入，但无法替代用户提供具体视觉意图
 
 Phase 2.6 收尾后不开新扩写子阶段；下一步由真实使用反馈决定，不立即建设详细输入辅助功能。
+
+### Phase 2.7: Visual Composer（已完成 2026-08-27）
+- [x] 用 `auto | faithful | free` 显式控制补全程度，不再根据输入长度猜模式
+- [x] 文本路径改为严格 `CONCEPT + 12 字段 IR + [LORA] + PROMPT`；失败修复一次后 fail closed
+- [x] 增加可编辑中文 `用户锁定｜模型补全` 构思，修改后重新编译并防止旧 Prompt 串线
+- [x] SiliconFlow 普通文本绕开 ordinary `dict.yaml` 的全命中短路，角色 canonical knowledge 与 LoRA exact binding 继续由代码掌管
+- [x] 最终 Prompt 允许 tag、短句、自然语言或混合，不设固定元素数和 TAG/NL 形态；代码仅保留重复、主体、角色与明确全身冲突等确定性护栏
+- [x] 放宽分用途输入上限，固定 negative 增加常见手指/四肢/脚部失败词；不把负面词描述为人体质量保证
+- [x] 49 项确定性单测、真实 SiliconFlow 普通/构思覆盖/角色+画风 LoRA smoke、桌面与 390px 前端流程通过；正常插画与角色+画风 LoRA 图片已由用户确认可接入生产
+
+Phase 2.7 是根据真实样图与定向验收完成的生产修订，不重启大批量 A/B。后续先积累真实使用中的失败样本，再决定是否做局部规则或新阶段。
 
 ### Phase 3: Character Knowledge（精简版，已完成 2026-08-18）
 - [x] Danbooru 主 API 连通性验证，确认 exact tag/category/post_count 可用
