@@ -3,6 +3,7 @@
 import contextlib
 import importlib.util
 import io
+import tempfile
 from pathlib import Path
 
 
@@ -210,6 +211,100 @@ def test_civitai_url_branch_is_reachable():
         tool.httpx.get = old_get
     assert result["name"] == "Demo LoRA"
     assert result["versions"][0]["trainedWords"] == ["demo"]
+
+
+class _FakeResponse:
+    def __init__(self, payload, status_code=200):
+        self._payload = payload
+        self.status_code = status_code
+
+    def raise_for_status(self):
+        if self.status_code >= 400:
+            raise RuntimeError(f"HTTP {self.status_code}")
+
+    def json(self):
+        return self._payload
+
+
+def test_manager_refresh_requires_target_in_list():
+    calls = []
+
+    def fake_get(url, **kwargs):
+        calls.append((url, kwargs))
+        if url.endswith("/scan"):
+            return _FakeResponse({"status": "success"})
+        return _FakeResponse({
+            "items": [{
+                "file_name": "demo",
+                "file_path": "E:/ComfyUI/models/loras/demo.safetensors",
+            }],
+            "total_pages": 1,
+        })
+
+    old_get = tool.httpx.get
+    try:
+        tool.httpx.get = fake_get
+        with contextlib.redirect_stdout(io.StringIO()):
+            assert tool.refresh_lora_manager("demo.safetensors") is True
+    finally:
+        tool.httpx.get = old_get
+    assert calls[0][0].endswith("/api/lm/loras/scan")
+    assert calls[1][0].endswith("/api/lm/loras/list")
+
+
+def test_manager_refresh_rejects_cancelled_scan_without_false_success():
+    calls = []
+
+    def fake_get(url, **kwargs):
+        calls.append(url)
+        return _FakeResponse({"status": "cancelled"})
+
+    old_get = tool.httpx.get
+    try:
+        tool.httpx.get = fake_get
+        with contextlib.redirect_stdout(io.StringIO()):
+            assert tool.refresh_lora_manager("demo.safetensors") is False
+    finally:
+        tool.httpx.get = old_get
+    assert len(calls) == 1
+
+
+def test_manager_refresh_rejects_success_when_target_is_missing():
+    def fake_get(url, **kwargs):
+        if url.endswith("/scan"):
+            return _FakeResponse({"status": "success"})
+        return _FakeResponse({"items": [], "total_pages": 1})
+
+    old_get = tool.httpx.get
+    try:
+        tool.httpx.get = fake_get
+        with contextlib.redirect_stdout(io.StringIO()):
+            assert tool.refresh_lora_manager("missing.safetensors") is False
+    finally:
+        tool.httpx.get = old_get
+
+
+def test_agent_aborts_before_llm_when_manager_index_is_not_ready():
+    old_dir = tool.LORA_DIR
+    old_ensure = tool.ensure_lora_manager_index
+    calls = []
+    try:
+        with tempfile.TemporaryDirectory() as folder:
+            tool.LORA_DIR = Path(folder)
+            (tool.LORA_DIR / "demo.safetensors").write_bytes(b"demo")
+            tool.ensure_lora_manager_index = lambda filename: calls.append(filename) or False
+            with contextlib.redirect_stdout(io.StringIO()):
+                result = tool.run_agent_onboarding(
+                    {"schema_version": 1, "loras": {}},
+                    "demo.safetensors",
+                    None,
+                    scan_manager=True,
+                )
+    finally:
+        tool.LORA_DIR = old_dir
+        tool.ensure_lora_manager_index = old_ensure
+    assert result == 1
+    assert calls == ["demo.safetensors"]
 
 
 if __name__ == "__main__":

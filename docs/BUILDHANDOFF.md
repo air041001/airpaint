@@ -19,7 +19,7 @@ Phase 2.6（Prompt Expansion）、Phase 2.7（Visual Composer）、Phase 3（Cha
 - 中文构思固定为 `用户锁定：…｜模型补全：…`，前端可编辑后以 `concept_override` 重编译；它是单轮控制面，不是 PromptState。
 - `compile_prompt()` 与新 Composer 护栏：角色 canonical/裸名去重、主体计数、完整重复折叠、明确全身请求的互斥近景清理；新路径不再自动补裸体、年龄、rating、三分之四景别或删除画风。
 - `/api/translate/jobs/dialog`：贯通 `concept`、`completion_level`、`prompt_ir_meta` 与 LoRA binding snapshot，旧 `breakdown` 契约保持兼容。
-- 结构性回归：由 49 个零依赖单测覆盖 Composer 协议、Prompt/角色知识、LoRA Registry/Binding、API/session 与 workflow，不依赖未验证 baseline。
+- 结构性回归：由 51 个零依赖单测覆盖 Composer 协议、Prompt/角色知识、LoRA Registry/Binding、API/session 与 workflow，不依赖未验证 baseline。
 - Failure taxonomy：已覆盖 counting、entity binding、action/pose、interaction、spatial、lighting、NSFW anatomy、model artifact、semantic misread 等类型。
 - NSFW 结构评测集：8 条明确成人内容，结构与 explicit safety 验证通过。
 - Rendering Strategy 实验工具：固定 Prompt、seed、尺寸、workflow，支持盲评页、manifest、variant 对照。
@@ -48,6 +48,7 @@ Phase 2.6（Prompt Expansion）、Phase 2.7（Visual Composer）、Phase 3（Cha
 - 未验证的 baseline 回归资产已清理（DEVLOG 40）；结构不变量由确定性单测覆盖。
 - PLAN-LORA v2 已落地并通过用户验收：5 组真实 A/B 为 aware 1 胜 4 平 0 负；DeepSeek 换 Anima 后图书馆 pair 平局且用户认为优于旧 IL；Blue Archive 午后光线补测正常。
 - Remielle Dan（base/白/黑/泳装）、Dolphro-kun 风格与无 trigger Light 风格均由用户确认生效并通过验收，Registry 已提升为 verified。LoRA 显示名来自 `server/lora_registry.yaml` 的 Asset/Profile `name`，不要在前端按 key 硬编码别名。
+- 新增 `si_arknights_v2` candidate：作者样图与 safetensors 内嵌训练元数据共同确认 `si_(arknights)` 主触发词及基础外观/白裙标签，已登记为单一 `base` Profile；坐姿、蝴蝶、竹林与作者组合使用的其他 LoRA 不纳入绑定。尚未完成人眼验收，不得提升为 verified。
 - 尺寸路由纠错后，`1024x1536` 在 RTX 4060 Laptop 8GB、无 detailer 下实际输出 1024×1536，端到端 84.16 秒；此前 309.72 秒任务实际误走 `input2` 并输出 832×1216，不是高分辨率性能结论。前端现从成品 `naturalWidth/naturalHeight` 显示真实像素。
 - 生产前端已迁移为状态驱动的三栏工作台：描述跨栏、Prompt 左、成图中、参数右、历史下方；首次翻译使用独立检查态，有图后重翻译保持图片不动。纸本/石墨只改变材质与配色，不改变标题标记语义；LoRA 选中 Profile 在两主题均有明确对比度，角色/风格菜单会按右栏上下空间自动翻转。
 - “生成”会静默调用翻译并把返回的英文 Prompt/五项拆解同步到左栏，再提交任务；不再只有“先看翻译”路径更新 UI。成图舞台脱离 `flex-1` 的固有尺寸反撑，按视口高度在桌面连续缩放并始终使用 contain，896×1152 等竖图不会再把画布撑成 1152px 高。
@@ -63,7 +64,7 @@ Phase 2.6（Prompt Expansion）、Phase 2.7（Visual Composer）、Phase 3（Cha
 |---|---|
 | `server/main.py` | Prompt/Intent/Workflow Engine + LoRA Registry/Scanner/Resolver/Binding/API/session |
 | `server/lora_registry.yaml` | versioned LoRA Asset/Profile/trigger/provides/default strength 人工知识 |
-| `.tools/test_prompt_unit.py` | 49 个零依赖 Composer/Prompt/角色知识/LoRA Registry/Binding/API/session/workflow 单测 |
+| `.tools/test_prompt_unit.py` | 51 个零依赖 Composer/Prompt/角色知识/LoRA Registry/Binding/API/session/workflow 单测 |
 | `server/workflows/AnimaFull.json` | 当前统一 Anima 工作流；固定 negative 含质量、构图及紧凑的人体防御词 |
 | `.tools/register_lora.py` | LoRA sidecar inspection、Registry validate 与原子 onboarding |
 | `.tools/start_lora_onboard_agent.bat` | 双击启动本地 LoRA 入库 Agent；API key 只从 gitignored config 读取 |
@@ -124,8 +125,9 @@ Phase 2.6（Prompt Expansion）、Phase 2.7（Visual Composer）、Phase 3（Cha
 ### 立即下一步
 
 1. 没有自动开启的新大阶段；Visual Composer 已进入生产。下一会话应通过日常真实出图收集可复现失败，记录“输入 → 构思 → Prompt → LoRA/参数 → 图片表现”，只做定向修订；不要恢复无目标的大批量 A/B，也不要用更长 Prompt 或更满 IR 代替图片判断。
-2. 新下载 LoRA 推荐双击 `.tools/start_lora_onboard_agent.bat`：它会尝试调用 LoRA Manager 增量 scan、列出未注册文件、接收多行作者说明并展示候选；输入 `revise` 可自然语言修订，只有 `write` + 最终 `y` 才写 Registry。仍需检查 exact tags/强度，并在真实生图后再提升 verified。
-3. 若 ComfyUI 未运行，Agent 会安全跳过 Manager scan；启动 ComfyUI 后重新运行即可。增量 scan 仍找不到文件时才调用 `?full_rebuild=true`，不要日常全量哈希。
+2. 新下载 LoRA 推荐双击 `.tools/start_lora_onboard_agent.bat`：选择目标文件后，工具会调用 LoRA Manager 增量 scan，并通过 `/api/lm/loras/list` 验证该文件确实已解析为完整路径；验证通过后才接收作者说明和调用 Reasoning Model。输入 `revise` 可自然语言修订，只有 `write` + 最终 `y` 才写 Registry，真实生图后再提升 verified。
+3. 若 ComfyUI 未运行、scan 被取消、返回格式异常或目标文件仍未入列表，Agent 会在调用 LLM/写 Registry 前停止。增量未命中时可由用户明确选择一次全量重建；默认不自动承担大文件哈希成本。只有明确需要离线准备 Registry 时才使用 `--no-manager-scan` 绕过运行时索引验收。
+4. `si_arknights_v2` 首次两次生成在 ComfyUI 节点 5 报 `ModelMMAP allocation failed for si_(arknights)-v2.safetensors`。根因是文件尚未进入 LoRA Manager SQLite 索引：`get_lora_info_absolute()` 查找失败后把原始相对文件名交给 Aimdo，因而 mmap 打不开；这与缺 trigger、文件损坏或显存不足无关。用户手动访问 `/api/lm/loras/scan` 后，Manager 已生成 sidecar 并在 `/api/lm/loras/list` 返回完整绝对路径；修订后的入库 Agent 已用该文件完成真实增量扫描与目标命中 smoke。
 
 ### 条件性未完成项
 
@@ -163,7 +165,7 @@ python .tools/test_prompt_unit.py
 python .tools/register_lora.py --validate
 ```
 
-状态：Python 编译通过；`49 prompt unit tests passed`；当前本机用户维护、未纳入本阶段提交的 Registry 为 `registry valid: 10 assets`。`server/workflows/AnimaFull.json` 可正常解析，正负两个 wildcard 字段包含相同人体防御词。
+状态：Python 编译通过；`51 prompt unit tests passed`、`13 lora onboarding agent tests passed`；当前本机用户维护、未纳入阶段提交的 Registry 为 `registry valid: 12 assets`。`si_(arknights)-v2.safetensors` 的真实 Manager 增量扫描/列表命中 smoke 通过。`server/workflows/AnimaFull.json` 可正常解析，正负两个 wildcard 字段包含相同人体防御词。
 
 ```text
 python .tools/test_lora_onboard_agent.py

@@ -800,3 +800,21 @@ RTX 4060 Laptop 8GB、无 LoRA/detailer 重新端到端测试：请求 1024×153
 `49 prompt unit tests passed`，Python 编译、AnimaFull JSON、当前本机用户维护的 10 项 Registry 校验、前端 2 段内联 JS、132 个唯一 DOM ID 与 109 个静态引用检查通过。该 Registry 修改仍由用户持有，未混入本阶段提交。真实 SiliconFlow 定向 smoke 覆盖普通 auto、编辑构思重编译、角色+画风 LoRA；浏览器 mock 覆盖 1365×720 与 390×844、档位传递、构思 dirty 阻断/应用、job 字段、LoRA 双选择和原文变更 stale 阻断，console 无错误。
 
 这些检查证明协议、状态和绑定闭环，不证明画质。当前画质依据仅是用户已经确认的正常二次元插画与角色+画风 LoRA 图片；后续从真实使用收集可复现失败，避免用 Prompt 长度、IR 完整度或重复跑批代替人眼判断。
+
+## 第 52 条 2026-08-27 - 祀 LoRA 主触发与基础造型候选
+
+用户新增 `si_(arknights)-v2.safetensors` 时因作者页面未写触发词而按 no-trigger 入库，后从作者样图找到了完整 Prompt。复核作者 Prompt 与 safetensors 内嵌训练元数据后确认：`si_(arknights)` 是主触发词；绿色长发、侧发、蓝眼、尖耳、角、龙尾及白裙基础造型是 53 张训练图的固定标注。Registry 因而改为单一 `base` Profile，由代码确定性注入主触发与这些默认标签；坐姿、蝴蝶、竹林以及作者组合使用的其他风格/增强 LoRA 均排除。当前仍为 candidate，等待 AirPaint 实图验收。
+
+本次实际生成错误与 trigger 无关。ComfyUI history 显示两次都在节点 5 `Lora Loader (LoraManager)` 报 `ModelMMAP allocation failed for si_(arknights)-v2.safetensors`。进一步对照 LoRA Manager 第六点、节点源码与时间线后确认：报错时该文件尚未进入 Manager SQLite 索引，`get_lora_info_absolute()` 未命中便返回原始相对文件名，随后 Aimdo 无法打开它；文件本身可被 safetensors 和 ComfyUI 普通加载路径完整读取（840 tensors，约 91.9 MB）。用户手动访问 `/api/lm/loras/scan` 后，22:26 生成 `.metadata.json`，SQLite 与 `/api/lm/loras/list` 均返回完整绝对路径，故无需把问题归因于动态显存或要求重启 ComfyUI。
+
+修复前的入库 Agent 确实会在 `--agent` 模式开头请求增量 scan，但它是 best-effort：非 Agent 模式不调用；请求异常只打印提示并继续；HTTP 200 后不检查响应 `status`，也不验证目标文件是否已出现在 Manager 列表。因此当时“执行过注册脚本”不等于“目标 LoRA 已完成 Manager 索引”。
+
+验证：`registry valid: 12 assets`、`51 prompt unit tests passed`、`python -m py_compile server/main.py` 通过；运行中 `/api/loras` 已热加载 `si_arknights_v2/base`，Binding Compiler 输出主触发及 15 个基础标签且无 warning。结构验证不等于图片验收。
+
+## 第 53 条 2026-08-27 - LoRA 入库索引由 best-effort 改为目标验收
+
+`.tools/register_lora.py` 现在先确定待注册文件，再调用 LoRA Manager 增量 scan；只有响应 `status=success` 且 `/api/lm/loras/list` 的分页结果能按文件名或完整路径命中目标，才继续生成候选和写 Registry。HTTP 200 但 scan 被取消、列表格式异常、请求失败或目标缺失都视为失败，不再显示假成功。
+
+增量未命中时，工具会说明生成阶段必然在 Loader 失败，并由用户决定是否执行一次 `full_rebuild=true`；默认不自动全量哈希。索引仍未就绪则在 LLM 调用前终止，Registry 不修改。普通手工新增路径也执行同一验收；已有 Asset 的编辑不重复扫描。`--no-manager-scan` 保留为显式离线准备开关，不再描述成普通 Agent 模式的默认降级。
+
+新增确定性测试覆盖 scan+目标命中、200/cancelled 拒绝、scan success 但目标缺失拒绝，以及索引失败时在 LLM 前中止。验证为 `13 lora onboarding agent tests passed`、`51 prompt unit tests passed`、相关 Python 编译与 `registry valid: 12 assets` 通过；并以当前 `si_(arknights)-v2.safetensors` 调用真实 Manager 增量 scan，确认目标列表命中。

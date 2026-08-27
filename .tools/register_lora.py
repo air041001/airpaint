@@ -480,17 +480,70 @@ def call_onboard_agent(description: str, filename: str, previous: dict | None = 
     return asset_id, asset, evidence
 
 
-def refresh_lora_manager() -> bool:
-    """刷新 ComfyUI-LoRA-Manager 的后端索引；服务未启动时安全跳过。"""
-    comfy = str(main.CFG.get("comfy_url") or "http://127.0.0.1:8188").rstrip("/")
-    try:
-        response = httpx.get(f"{comfy}/api/lm/loras/scan", timeout=60)
+def _lora_manager_lists_file(comfy: str, filename: str) -> bool:
+    """确认目标文件已经进入 LoRA Manager 当前后端缓存。"""
+    target_name = filename.replace("\\", "/").rsplit("/", 1)[-1].casefold()
+    target_stem = Path(target_name).stem.casefold()
+    page = 1
+    while True:
+        response = httpx.get(
+            f"{comfy}/api/lm/loras/list",
+            params={"page": page, "page_size": 1000},
+            timeout=30,
+        )
         response.raise_for_status()
-        print("LoRA Manager 增量索引已刷新。")
+        payload = response.json()
+        if not isinstance(payload, dict) or not isinstance(payload.get("items"), list):
+            raise RuntimeError("LoRA Manager list 返回格式异常")
+        for item in payload["items"]:
+            if not isinstance(item, dict):
+                continue
+            item_path = str(item.get("file_path") or "").replace("\\", "/")
+            item_name = item_path.rsplit("/", 1)[-1].casefold() if item_path else ""
+            listed_name = str(item.get("file_name") or "").replace("\\", "/").rsplit("/", 1)[-1]
+            listed_stem = Path(listed_name).stem.casefold()
+            if item_name == target_name or listed_stem == target_stem:
+                return True
+        total_pages = max(1, int(payload.get("total_pages") or 1))
+        if page >= total_pages:
+            return False
+        page += 1
+
+
+def refresh_lora_manager(filename: str, *, full_rebuild: bool = False) -> bool:
+    """刷新 Manager 索引，并以目标文件实际出现在列表中作为成功条件。"""
+    comfy = str(main.CFG.get("comfy_url") or "http://127.0.0.1:8188").rstrip("/")
+    mode = "全量重建" if full_rebuild else "增量扫描"
+    try:
+        response = httpx.get(
+            f"{comfy}/api/lm/loras/scan",
+            params={"full_rebuild": "true"} if full_rebuild else None,
+            timeout=600 if full_rebuild else 90,
+        )
+        response.raise_for_status()
+        payload = response.json()
+        if not isinstance(payload, dict) or payload.get("status") != "success":
+            status = payload.get("status") if isinstance(payload, dict) else "invalid response"
+            print(f"LoRA Manager {mode}未完成（status={status}）。")
+            return False
+        if not _lora_manager_lists_file(comfy, filename):
+            print(f"LoRA Manager {mode}结束，但列表中仍没有 {filename}。")
+            return False
+        print(f"LoRA Manager {mode}完成，已确认索引：{filename}")
         return True
-    except Exception:
-        print("LoRA Manager 未运行或刷新失败；启动 ComfyUI 后重新运行本工具即可。")
+    except Exception as exc:
+        print(f"LoRA Manager {mode}失败：{exc}")
         return False
+
+
+def ensure_lora_manager_index(filename: str) -> bool:
+    """优先增量扫描；未命中时由用户决定是否承担全量重建成本。"""
+    if refresh_lora_manager(filename):
+        return True
+    print("目标文件尚未进入 LoRA Manager 索引；此时生成会在 Loader 阶段失败。")
+    if ask_choice("是否执行一次全量重建（可能因大模型文件耗时较长）?", ["y", "n"], "n") != "y":
+        return False
+    return refresh_lora_manager(filename, full_rebuild=True)
 
 
 def read_multiline(label: str) -> str:
@@ -533,8 +586,6 @@ def choose_unregistered_file(raw: dict) -> str | None:
 
 def run_agent_onboarding(raw: dict, filename: str | None, description_file: str | None,
                          scan_manager: bool = True) -> int:
-    if scan_manager:
-        refresh_lora_manager()
     filename = filename or choose_unregistered_file(raw)
     if not filename:
         return 1
@@ -544,6 +595,9 @@ def run_agent_onboarding(raw: dict, filename: str | None, description_file: str 
     registered_files = {asset.get("file") for asset in raw["loras"].values()}
     if filename in registered_files:
         raise SystemExit(f"{filename} 已经注册；请使用 --edit 手工修改现有 Asset")
+    if scan_manager and not ensure_lora_manager_index(filename):
+        print("LoRA Manager 索引未就绪，Registry 未修改。启动 ComfyUI 后重试；若只想离线准备，可使用 --no-manager-scan。")
+        return 1
     show_local_civitai_candidate(filename)
     if description_file:
         description = Path(description_file).read_text(encoding="utf-8").strip()
@@ -700,7 +754,7 @@ def main_cli() -> int:
     parser.add_argument("--civitai", metavar="URL", help="展示 Civitai 候选描述（不自动解析）")
     parser.add_argument("--agent", action="store_true", help="启动 LLM 辅助的 LoRA 入库向导")
     parser.add_argument("--description-file", metavar="PATH", help="Agent 模式从 UTF-8 文件读取作者说明")
-    parser.add_argument("--no-manager-scan", action="store_true", help="Agent 模式不刷新 LoRA Manager 索引")
+    parser.add_argument("--no-manager-scan", action="store_true", help="不刷新或验证 LoRA Manager 索引（仅用于离线准备）")
     args = parser.parse_args()
     raw = load_registry()
     if args.agent:
@@ -730,11 +784,15 @@ def main_cli() -> int:
         filename = existing["file"]
     if not filename:
         raise SystemExit("请提供 filename 或 --edit ASSET_ID")
-    show_local_civitai_candidate(filename)
-    if not (LORA_DIR / filename).exists():
+    local_exists = (LORA_DIR / filename).exists()
+    if not local_exists:
         answer = ask_choice(f"本地未找到 {filename}，仍写入 registry?", ["y", "n"], "n")
         if answer != "y":
             return 1
+    elif existing is None and not args.no_manager_scan and not ensure_lora_manager_index(filename):
+        print("LoRA Manager 索引未就绪，Registry 未修改。可在 ComfyUI 启动后重试，或显式使用 --no-manager-scan 离线准备。")
+        return 1
+    show_local_civitai_candidate(filename)
     new_id, asset = collect_asset(filename, asset_id, existing)
     candidate = {"schema_version": 1, "loras": dict(raw["loras"])}
     candidate["loras"][new_id] = asset
