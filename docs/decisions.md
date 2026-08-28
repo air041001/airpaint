@@ -749,3 +749,27 @@ LoRA 用户可见名称以 versioned `server/lora_registry.yaml` 为单一真相
 **修订关系**：本决定 supersedes D29 的“config > Civitai > 裸文件”自动 inventory 与刷新接口；保留 D29 作为历史记录，并保留 D41/D42/D53 的 Registry、候选证据和目标索引验收原则。
 
 **相关文件**：`server/main.py`、`.tools/register_lora.py`、`.tools/test_prompt_unit.py`、`.tools/test_lora_onboard_agent.py`、`server/config.example.yaml`、`docs/PLAN-LORA.md`、`docs/api.md`、`docs/architecture.md`。
+
+## D50. Visual Composer 内容硬锁：直接表达而不替未说明项作裸体推断
+
+**背景**：真实硬 NSFW 输入暴露出 Composer 的偶发委婉化：用户已明确写出性行为、可见部位或镜头时，输出仍可能改成 `intimate area`、`junction of their bodies`，或用新增衣物和构图遮住锁定内容。隔离文本实验随后用 production、通用 fidelity 与修订规则对照，并追加 3 场景、2 个 seed、共 15 张固定条件成图复核。
+
+**问题**：用户明确写出的行为与暴露需要忠实编译，但“没有说明服装”并不等于“要求裸体”。把所有性行为统一推导为裸体会侵占 Visual Composer 的补全空间，也可能无端覆盖角色 LoRA 服装；为每条请求增加 NSFW 判官则会重新引入隐藏分类、额外延迟和新的误判点。
+
+**候选**：
+
+1. 常驻宽泛 fidelity 块，禁止性场景新增任何衣物或遮挡；能提高直白程度，但会把未说明项误当锁定项。
+2. 先用独立模型判定 none/mild/explicit，再按等级注入协议，并增加前端 explicit 开关；语义检测可绕开固定词表，但小样本判官已有误报，每次未标记请求还增加约 4 秒调用。
+3. 直接细化现有 Preserve 段：只把用户明确写出的服装、暴露、可见身体、行为与镜头作为硬锁；未说明项继续补全，新增决定不得遮挡硬锁；用户明确覆盖 LoRA 服装时只覆盖受影响部位。采用此方案。
+
+**决定**：Composer 必须在 `CONCEPT`、IR 和 PROMPT 中以直接、可绘制的 Anima 语言保留用户硬锁，不得委婉、遮挡、裁掉或替换。未说明的服装与暴露仍是模型补全项，不从性行为单独推导裸体或遮盖。active LoRA 的服装概念默认保留；用户明确的服装/暴露要求只在相关部位优先。暂不增加语义判官、等级注入或前端 NSFW 开关，rating tag 继续由用户手动控制。
+
+**原因**：实验显示根因是 Composer 偶发委婉，不是无法识别显式语义；同一批成图中三个协议变体都能生成显式双人场景，具体暴露细节是否同时兑现主要随 seed 和 Anima 渲染漂移。修订规则与宽泛 fidelity 在图像层面打平，但前者能区分用户锁定与开放补全，也与 LoRA 提供概念的局部覆盖关系一致。
+
+**代价与风险**：系统提示只能约束合成阶段，不能保证 Anima 在每个 seed 都兑现所有暴露细节、人体关系或透视。成图实验只覆盖两个显式骑乘场景和一个 SFW 女仆场景，SFW 未见退化但样本仍小。需要强制某个最终细节时，用户仍应检查并编辑英文 Prompt；rating 仍需手动填写。
+
+**验证**：修订原文已在隔离实验中作为唯一 system prompt 变量参与 15 张固定条件成图。人眼复核确认三变体均能生成目标行为；两轮中暴露细节兑现随渲染变化，未显示修订规则劣于另一 fidelity 块；SFW 对照未见升级或语义漂移。生产接入另以确定性测试锁定规则存在，结构验证不被表述为成图质量证明。
+
+**修订关系**：本决定细化 D46 的用户锁定与自由补全边界、D47 的构图/LoRA 定向护栏；保留 D44 的手动 rating 决定，不恢复自动内容分类。
+
+**相关文件**：`server/main.py`、`.tools/test_prompt_unit.py`、`docs/architecture.md`、`docs/DEVLOG.md`。

@@ -844,3 +844,11 @@ legacy `config.yaml.loras` 没有一并删除：本机运行时核对显示仍�
 验证：Python 编译通过；`51 prompt unit tests passed`、`6 lora composition tests passed`、`14 lora onboarding agent tests passed`、`registry valid: 15 assets`。运行时 `/api/loras` 数据源为 15 个 Registry + 1 个 legacy config，Civitai 自动 inventory 为 0。
 
 同时在 PLAN-LORA 记录风格预览候选：固定模型/workflow/seed/英文 Prompt/画幅并保留无 LoRA baseline，先试 3 个风格；统一强度不适配的资产再用显式 `preview_strength` 例外。人物、多 LoRA 组合和前端图库暂不提前建设，预览质量仍需固定条件图片由人眼验收。
+
+## 第 57 条 2026-08-28 - Visual Composer 显式内容硬锁与开放补全边界
+
+针对 Composer 偶发把明确性行为改成委婉短语、用新增衣物或镜头遮住锁定内容的问题，隔离实验先完成文本变体，再以 3 场景、2 个 seed、15 张固定条件图片复核。三个变体都能生成显式双人行为；具体暴露细节是否同时落地随渲染变化，修订规则与宽泛 fidelity 块在图像层面打平，SFW 女仆对照未见语义升级。该结果只支持修正合成协议，不支持宣称解决 Anima 的人体、透视或细节随机性。
+
+生产 `PAINTER_SYSTEM_PROMPT` 现将用户明确写出的服装状态、暴露程度、可见身体细节、行为和镜头定义为硬锁，要求在 CONCEPT、IR、PROMPT 中直接可绘制地表达，不得委婉、遮挡、裁掉或替换。未说明的服装/暴露仍属于补全空间，不从性行为本身推导裸体或遮盖；用户明确覆盖 active LoRA 服装时只覆盖相关部位。没有引入语义判官、分级注入或前端 NSFW 开关，rating 继续由用户手动控制。
+
+确定性回归增加了协议文本锁定；真实成图证据沿用落地前已经使用同一规则原文完成的 15 张实验。后续若出现成图遗漏，先区分 Composer 是否漏译与 Anima 是否随机未兑现，不把后者继续堆成系统提示词。

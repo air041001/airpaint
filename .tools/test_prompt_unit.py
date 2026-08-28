@@ -181,6 +181,14 @@ def test_painter_prompt_protocol_is_final_prompt():
     assert prompt_ir and prompt_ir["subject"] == ["1girl"], prompt_ir
 
 
+def test_visual_composer_content_fidelity_contract():
+    prompt = main.PAINTER_SYSTEM_PROMPT
+    assert "visible body detail, act, and framing requirement as a hard visual lock" in prompt
+    assert "do not euphemize, conceal, crop out, or replace it" in prompt
+    assert "Do not infer either nudity or coverage from a sexual act alone" in prompt
+    assert "override wins over an active LoRA outfit only for the affected area" in prompt
+
+
 def test_visual_composer_protocol_is_strict_and_collapses_whole_repeat():
     output = (
         "CONCEPT: 用户锁定：蓝发少女｜模型补全：百合花束与窗边逆光\n"
@@ -1007,6 +1015,7 @@ def main_test():
         test_prompt_ir_meta_is_additive,
         test_reroll_uses_new_painter_plan_metadata,
         test_painter_prompt_protocol_is_final_prompt,
+        test_visual_composer_content_fidelity_contract,
         test_visual_composer_protocol_is_strict_and_collapses_whole_repeat,
         test_visual_composer_rejects_unrenderable_model_additions,
         test_composer_guard_only_enforces_count_and_explicit_full_body_lock,
