@@ -55,7 +55,7 @@ Authorization: Bearer <token>
       "configured": true, "source": "registry", "trigger_policy": "profile",
       "provides": [], "verified": null,
       "strength_model": 1.0, "strength_clip": 1.0,
-      "default_profile": "white",
+      "default_profile": "white", "allow_multiple_profiles": false,
       "profiles": [
         { "id": "white", "name": "达妮娅（白）", "aliases": ["达妮娅"],
           "provides": ["Denia character identity"], "verified": "curated",
@@ -72,7 +72,9 @@ Authorization: Bearer <token>
 - `configured=false` 表示自动 inventory 尚未形成可用 Profile/trigger；前端显示“待注册”并禁用。
 - `source`: `"registry"`、`"config"` 或 `"civitai"`（自动 inventory）。
 - `profiles` 只暴露语义 ID、名称、aliases、provides、verified 与 optional ID；不向前端发送 exact tags 作为可编辑真相。
-- `strength_model/strength_clip` 是 Registry 默认值，前端选择 Asset 时同步到滑块。
+- `allow_multiple_profiles=true` 表示同一 Asset 可同时选择多个 Profile；它是 Registry 能力声明，不是多人出图质量证明。
+- `styles` 同时承载 `style/action/expression` 类型，作为风格/细节叠加区；无法分类的条目仍在 `other`。
+- `strength_model/strength_clip` 是 Registry 默认值，前端选择 Asset 时同步到该 Asset 的滑块；请求可逐 Asset 覆盖为 0~2。
 - `preview` 可能为 `null` (前端应容错隐藏)。
 
 ### POST /api/loras/refresh
@@ -94,7 +96,8 @@ Authorization: Bearer <token>
   "concept_override": "用户锁定：达妮娅、白裙｜模型补全：樱花河岸、回眸动作、清晨逆光",
   "reroll": false,
   "lora_selections": [
-    {"key":"denia","profile":"white","mode":"explicit","optional":["white_dress"]}
+    {"key":"denia","profile":"white","mode":"explicit","optional":["white_dress"],"strength_model":0.8,"strength_clip":0.8},
+    {"key":"blue_archive_style","mode":"explicit","strength_model":0.6,"strength_clip":0.6}
   ]
 }
 ```
@@ -103,7 +106,7 @@ Authorization: Bearer <token>
 - `concept_override`: 可选, ≤4000 字符，必须保持 `用户锁定：…｜模型补全：…` 结构。用于把用户编辑后的中文构思作为权威蓝图重新编译；它不是直接注入工作流的 Prompt，也不是跨轮 PromptState。当前只对普通文本 Composer 有效。
 - `image`: 可选, 参考图 base64 (data URI, ≤5MB)。有图走视觉 LLM 提氛围, 不走文本 LLM (③, 见 D23); 图不进 ComfyUI, 仍走 txt2img。
 - `reroll`: 可选, 默认 `false`。`true` 时文本 LLM 在同一 `completion_level` 内高温重出一版**不同构思** (跳过 LRU 缓存)；对视觉 LLM 路径仍是不同图像解读。纯角色 canonical 快路不调用 LLM，因此仍返回同一结果。
-- `lora_selections`: 可选数组。元素为 `{key, profile?, mode:"auto|explicit", optional?:[]}`；单 Profile 通常 explicit，多 Profile 可让 `mode=auto` 由模型只在 Registry 候选 ID 中选择。向后兼容 `loras:[key]` 与 `lora:key`。
+- `lora_selections`: 可选数组。元素为 `{key, profile?, profiles?:[], mode:"auto|explicit", optional?:[], optional_by_profile?:{}, strength_model?, strength_clip?}`。同一 Asset 只保留一条 selection；`profile` 用于单选，`profiles` 用于 Registry 已声明 `allow_multiple_profiles` 的多选，Profile/optional 只能使用 Registry ID。角色总量按 Profile（或未决 auto Asset）计数，最多 3；风格/动作/表情不设硬上限。逐 Asset 强度范围为 0~2。向后兼容 `loras:[key]` 与 `lora:key`。
 
 SiliconFlow 文本必须返回 `CONCEPT + 精确 12 字段 IR + [LORA] + PROMPT`；有 active LoRA 时 `LORA` 行必需。协议错误自动修复一次，仍不合法则失败，不会把原始响应当 Prompt。翻译失败: `502 {"detail":"翻译失败, 请稍后重试 (...)"}`。
 
@@ -147,7 +150,7 @@ SiliconFlow 文本必须返回 `CONCEPT + 精确 12 字段 IR + [LORA] + PROMPT`
   },
   "lora_bindings": [
     {"key":"denia","type":"character","file":"denia_lorav4-000005.safetensors",
-     "profile":"white","optional":["white_dress"],"resolved_by":"explicit",
+     "profile":"white","profiles":["white"],"optional":["white_dress"],"optional_by_profile":{"white":["white_dress"]},"resolved_by":"explicit",
      "injected_tags":["denia \\(wuthering waves\\)","white dress"],
      "provides":["Denia character identity","white dress"],
      "strength_model":1.0,"strength_clip":1.0}
@@ -162,7 +165,7 @@ SiliconFlow 文本必须返回 `CONCEPT + 精确 12 字段 IR + [LORA] + PROMPT`
 - `prompt_ir`: 12 字段 Prompt IR。每个字段都是字符串数组；文本 LLM 成功解析时返回，快速路径和当前视觉 LLM 旧协议路径为 `null`。IR 是语义计划，不是可直接注入工作流的文件名、节点 ID 或数值。
 - `prompt_ir_meta`: additive 来源与补全元数据。`mode=visual_composer` 表示新文本协议；`completion_level` 是本次档位；`concept_override_applied` 表示是否按编辑后的构思重编译；`repetition_collapsed` 表示后端是否折叠了完整 Prompt 的机械重复；`reroll_strategy=new_visual_concept` 表示 reroll 会在同一档位换构思。旧客户端可忽略此字段。
 - `character_lookup`: 本次文本翻译触发的未知角色查询结果；`likely_supported` 才会进入独立 auto cache，`weak`/`absent`/`unavailable` 不会污染正式 `char_dict.yaml`。Danbooru 不可达时（`unavailable`）会将 LLM 归一化候选 tag 补进本次 `prompt_en`，但不会写入任何缓存。
-- `lora_bindings`: 本次翻译解析出的 Asset/Profile/optional snapshot；`prompt_en` 已由代码幂等合入 Registry exact tags。
+- `lora_bindings`: 本次翻译解析出的 Asset/Profile/optional/逐 Asset 强度 snapshot；同一 Asset 多 Profile 仍只有一个 binding，`prompt_en` 已由代码幂等合入各 Profile 的 Registry exact tags。
 - `lora_warnings`: default Profile、未知 optional 等可恢复提醒。
 - `registry_revision`: versioned Registry 内容 hash。客户端提交 job 时一并回传；Registry 改动后旧 binding 返回 409，要求重新翻译。
 
@@ -181,13 +184,13 @@ SiliconFlow 文本必须返回 `CONCEPT + 精确 12 字段 IR + [LORA] + PROMPT`
   "completion_level": "auto",
   "size": "832x1216",
   "lora_selections": [
-    {"key":"denia","profile":"white","mode":"explicit","optional":["white_dress"]}
+    {"key":"denia","profile":"white","mode":"explicit","optional":["white_dress"],"strength_model":0.8,"strength_clip":0.8},
+    {"key":"blue_archive_style","mode":"explicit","strength_model":0.6,"strength_clip":0.6}
   ],
   "lora_bindings": [
-    {"key":"denia","profile":"white","optional":["white_dress"]}
+    {"key":"denia","profile":"white","profiles":["white"],"optional":["white_dress"],"strength_model":0.8,"strength_clip":0.8}
   ],
   "registry_revision": "原样回传 /api/translate 的 revision",
-  "strength_char": 1.0, "strength_style": 0.8,
   "detailer": {"face": true, "hand": true, "nsfw": false, "eyes": true},
   "image": "(可选, base64, 图生图模式)",
   "denoise": 0.35
@@ -198,16 +201,16 @@ SiliconFlow 文本必须返回 `CONCEPT + 精确 12 字段 IR + [LORA] + PROMPT`
 - `concept`: 可选，≤4000 字符，保持 `用户锁定：…｜模型补全：…` 结构；用于在 job、状态与暗房之间追踪本次生成蓝图，不直接写入 ComfyUI 正向 Prompt。
 - `completion_level`: 可选，`auto | faithful | free`，默认 `auto`；与 `concept` 一起保存，供后续暗房迭代沿用。
 - `size`: 可选, 必须是该工作流 `sizes` 之一; 不传取第一个。后端把该尺寸写入 txt2img 的 EmptyLatent 节点，并显式选择 txt2img 分支；所有尺寸共用配置项 `timeout_seconds`。
-- `lora_selections`: 新客户端的选择真相。支持角色×1 + 风格×1；Profile/optional 只能使用 Registry ID。
-- `lora_bindings` + `registry_revision`: 推荐原样回传 translate 结果。后端不信任客户端的 file/tags/strength，而是从 binding 的 key/profile/optional 重新解析；revision 过期返回 409。
+- `lora_selections`: 新客户端的选择真相，契约同 `/api/translate`：角色最多 3 个语义 Profile，风格/细节不设硬上限，同一 Asset 多 Profile 需 Registry opt-in。
+- `lora_bindings` + `registry_revision`: 推荐原样回传 translate 结果。后端不信任客户端的 file/tags，而是从 binding 的 key/profile(s)/optional 重新解析；逐 Asset 强度会重新校验，revision 过期返回 409。
 - `loras` / `lora`: 旧客户端兼容入口，内部转为 selection；不传或空表示不用 LoRA。
-- `strength_char` / `strength_style`: 可选, 各自 0~1 (1=满), 按选中 LoRA 的类型(character/style)分别生效; 不传用 config 各自默认值。旧 `strength` 单字段已废弃。
+- `strength_char` / `strength_style`: 旧客户端兼容字段，各自 0~1；存在时会覆盖对应角色或风格/动作/表情组。新客户端应使用 selection/binding 内逐 Asset 的 `strength_model/strength_clip`（0~2）。旧 `strength` 单字段已废弃。
 - `image`: 可选, base64 (data URI 或纯 base64)。图生图模式: 后端上传到 ComfyUI input -> 注入 LoadImage + ImpactSwitch select=2 + denoise。工作流需配 `image_node`/`switch_node`/`denoise_node` (见 D26)。
 - `denoise`: 可选, 0.1~0.9。图生图重采样强度: 低=接近原图(微调), 高=大改。默认 0.35。
 
 - `detailer`: 可选, `{face,hand,nsfw,eyes}` 布尔, 控制 4 路精修 (默认全关=快速; 全开约 95s)。后端删未选节点重连。
 
-校验失败: `400` (未知工作流 / prompt_en 空或过长 / 非法尺寸 / 命中禁词 / 未知 LoRA / 未知精修类型 / 工作流不支持 LoRA / LoRA 强度非法)。
+校验失败: `400` (未知工作流 / prompt_en 空或过长 / 非法尺寸 / 命中禁词 / 未知 LoRA / 未知精修类型 / 工作流不支持 LoRA / LoRA 强度非法 / 角色超过 3 个 / 未获允许的同 Asset 多 Profile / 同一物理文件以冲突强度重复加载)。
 
 响应 `200`:
 ```json
@@ -245,7 +248,7 @@ failed (失败):
 
 请求体:
 ```json
-{ "session_id": "可选, 首轮省略", "action": "start|start-image|redo|vibe|tweak", "prompt": "首轮中文描述", "delta": "可选改动", "completion_level": "auto", "workflow": "anima", "size": "832x1216", "lora_selections": [{"key":"denia","mode":"auto"}], "strength_char": 1.0 }
+{ "session_id": "可选, 首轮省略", "action": "start|start-image|redo|vibe|tweak", "prompt": "首轮中文描述", "delta": "可选改动", "completion_level": "auto", "workflow": "anima", "size": "832x1216", "lora_selections": [{"key":"denia","mode":"auto","strength_model":0.8,"strength_clip":0.8}] }
 ```
 - `start`: 建会话 + 首图。`prompt` 必填且 ≤4000 字符；`completion_level` 可选并沿用到后续重翻译。
 - `delta`: 可选改动，≤2000 字符。

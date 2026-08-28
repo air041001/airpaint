@@ -694,3 +694,34 @@ LoRA 用户可见名称以 versioned `server/lora_registry.yaml` 为单一真相
 **修订关系**：本决定补充 D39/D41 的 LoRA Context 边界，以窄的确定性身份属性检查取代“完全没有 semantic conflict detector”的旧首版状态；不引入通用冲突系统。它同时细化 D46 第 6、7 项，不恢复旧 Painter 的固定景别或属性词典主路。
 
 **相关文件**：`server/main.py`、`.tools/test_prompt_unit.py`、`docs/architecture.md`、`docs/PLAN-LORA.md`。
+
+## D48. LoRA Composition：按语义角色计数，按物理文件去重
+
+**背景**：Civitai 的高质量样图经常叠加多个画风/细节 LoRA；角色资产也同时存在“一个 safetensors 内含多个可选角色/Profile”和“多个角色来自不同 safetensors”两种形态。旧前端只能选一个角色和一个风格，无法表达这些已存在的本地资产。
+
+**问题**：如果把同文件的每个 Profile 当作独立 LoRA，workflow 会重复加载相同权重；如果按文件数限制角色，一个文件内的双角色又会绕过语义上限。继续使用一组全局角色/风格强度也无法调节多个风格叠加。另一方面，接口支持多个角色并不能解决 base Anima 的多人空间关系和属性绑定质量。
+
+**候选**：
+
+1. 每个 Profile 都生成一条 Loader 记录：实现简单，但同一 safetensors 会重复加权，语义选择与物理加载混为一谈。
+2. 按文件计数角色并保留两条全局强度：无法正确表达同文件多角色，也会让所有叠加项被迫共用权重。
+3. 每个 Asset 一条 selection/binding，Profile 作为语义子选择；角色按 Profile 计数、物理文件在 workflow 层去重，强度归属 Asset。采用此方案。
+
+**决定**：
+
+1. character 最多选择 3 个语义角色；每个显式 Profile 计 1，尚未解析的 auto character Asset 也计 1。不同 Asset 可以组合。
+2. 同一 Asset 只有在 Registry 声明 `selection.allow_multiple_profiles:true` 时可同时选择多个 Profile。各 Profile 的 exact tags/provides/optional 分别解析后合并为一个 binding，同一 safetensors 只加载一次。
+3. style/action/expression 进入统一的风格/细节叠加区，不设产品硬上限；前端在数量较多时提示干扰与成本，但不替用户截断。
+4. 新 selection/binding 使用逐 Asset `strength_model/strength_clip`，范围 0~2；当前前端用一个滑块同时设置两者。旧 `strength_char/strength_style` 0~1 分组字段继续兼容并在出现时覆盖对应组。
+5. workflow 最终按文件名去重；若两个 binding 指向同一文件且强度不同，返回 400 而不是静默选择其中一个。
+6. Prompt Engine 的多人互动、空间布局和属性归属不在本决定内修改；允许 3 个角色只是组合管线边界，不是出图质量承诺。
+
+**原因**：语义 Profile 与物理权重文件是两个层级。把角色上限放在语义层能覆盖同文件/跨文件两种资产，把去重放在 workflow 层能避免重复加载；逐 Asset 强度则保留用户在多风格叠加时的实际控制权。
+
+**代价与风险**：LoRA 数量增加会提高概念干扰、显存和执行成本；0~2 只表示接口可表达范围，不代表每个 LoRA 在高权重下安全。base Anima 仍可能在多人图出现分页、第三主体、动作错绑或属性串线，必须用固定 Prompt/seed 的真实图片和人眼判断。
+
+**验证**：`6 lora composition tests passed`，覆盖同文件多 Profile 单 binding/单 Loader、角色按 Profile 计数上限、Registry opt-in、6 个风格无硬上限、重复物理文件冲突强度拒绝和 snapshot round-trip；既有 `53 prompt unit tests passed`。真实本地 Registry payload 以同文件双 Profile + 跨文件单 Profile + 4 个风格得到 6 个 binding、3 个语义角色和 6 个唯一 Loader 文件。浏览器在桌面与 390px 验证连续选择、第四角色拦截、逐 Asset 强度、双主题和无横向溢出。以上均为结构/交互证据，尚未进行多人图片质量验收。
+
+**修订关系**：本决定扩展 D39/D41 的首版 `角色×1 + 风格×1` 边界；保留 D39 的“LLM 选语义、代码编译 exact binding”和 D47 的角色身份闭集，不改变多角色 Prompt 质量边界。
+
+**相关文件**：`server/main.py`、`server/lora_registry.yaml`、`.tools/test_lora_composition.py`、`web/index.html`、`docs/PLAN-LORA.md`、`docs/api.md`、`docs/architecture.md`。

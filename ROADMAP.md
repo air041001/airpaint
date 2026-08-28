@@ -75,14 +75,15 @@ Phase 3 不做结构化 char_dict 迁移、156 条全量审计或复杂审批后
 - [ ] 观察暗房 redo/tweak 使用频率和 D31 类字符串累加问题
 - [ ] 只有真实迭代痛点成立后才启动 PromptState 设计
 
-### Phase 5-7: LoRA Context / Binding（首版已完成 2026-08-23）
+### Phase 5-7: LoRA Context / Binding / Composition（工程链已完成 2026-08-28）
 - [x] `docs/PLAN-LORA.md`：LoRA-aware Painter + versioned Registry/Profile + 确定性 Binding Compiler
 - [x] translate/jobs/dialog 共用 binding snapshot/revision；前端支持 Profile auto/锁定和 stale Prompt 防串线
 - [x] 41 个确定性单测、前端 smoke 与 5 组真实 A/B：aware 1 胜 4 平 0 负
 - [x] 本地入库 Agent；Remielle Dan / Dolphro-kun / Light 三项新增资产生效并完成人工验收
-- [ ] 跨文件多人 composition 仅在真实资产 + 人眼验证后启动；Phase 8 Workflow Intelligence 不纳入本工程
+- [x] Composition 工程：角色最多 3 个语义 Profile、风格/细节不限；同 Asset 多 Profile 需 Registry opt-in，物理文件只加载一次，逐 Asset 强度 0~2
+- [ ] 用固定 Prompt/seed 的真实多人图验收空间关系、动作/属性绑定；不从结构支持推导画质完成
 
-LoRA 工程在上述边界内关闭。
+LoRA 组合管线在上述边界内关闭；后续质量问题进入 Prompt Intelligence/真实出图评测，Phase 8 Workflow Intelligence 不纳入本工程。
 
 ### 网站 MVP 细节优化（第二批已完成 2026-08-24）
 - [x] 尺寸改为点击展开、分组选择、选中即收起；四个标准档 + 两个高分辨率实验档，删除 `1216x832`

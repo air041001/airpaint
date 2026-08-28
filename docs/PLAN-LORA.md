@@ -1,10 +1,10 @@
 # PLAN-LORA — LoRA Context / Binding 工程（项目最终大工程）
 
-> 状态：工程已在下述首版定义边界内全部完成并通过用户人眼验收（2026-08-23）
+> 状态：首版 Context / Binding 已通过用户人眼验收（2026-08-23）；Composition 工程链于 2026-08-28 扩展完成，真实多人画质仍待人眼验证
 > 本计划取代 2026-08-19 版本。合并 PLAN-v5 的 Phase 5（LoRA Context）/ Phase 6（Trigger Engine）/ Phase 7（LoRA Composition），但仍按验证门逐步落地，不因“最终工程”而一次性铺开未验证能力。
 > 核心决定见 D39：**LLM 选择 LoRA 语义/Profile，代码确定性编译 exact trigger。**
 >
-> 完成边界：LoRA Context、Profile/Trigger Binding、API/session 状态与角色×1 + 风格×1 的现有组合链已落地；跨文件多角色 LoRA composition 因没有真实资产与人眼证据，仍不宣称完成。
+> 完成边界：LoRA Context、Profile/Trigger Binding、API/session 状态、角色最多 3 个语义 Profile、风格/细节不限数量、同文件多 Profile 单次加载与逐 Asset 强度均已落地；这只证明组合链路可用，不证明 base Anima 能稳定画好多人物关系。
 
 ---
 
@@ -51,7 +51,7 @@ User Intent + Selected LoRA/Profile
 ### 1.1 已验证的现有能力
 
 - `build_prompt()` 已能向 LoraManager 节点 5 的 `loras.__value__` 注入多条 `{name,strength,clipStrength,active}`；节点含义与连接以 `docs/workflow-anatomy.md` 为权威，不再重复猜节点或无必要翻 custom node 源码。
-- 前端已支持角色 LoRA ×1 + 风格 LoRA ×1，以及独立 strength。
+- 前端已支持 LoRA 叠加栈：角色最多 3 个语义 Profile，风格/动作/表情等细节 LoRA 不设硬上限，每个 Asset 独立 strength。
 - `get_lora_registry()` 已合并 config 与 Civitai cache。
 - 当前 LoRA 实际有效，问题集中在知识质量、选择语义和 Prompt 编译，不是 workflow 加载格式。
 
@@ -205,6 +205,7 @@ loras:
 - `optional_tags` 以稳定 option ID 保存 `provides + exact tags`；只有用户明确描述对应细节时，LLM 才能返回允许的 option ID，代码再解析 exact tags。
 - `verified:candidate` 不等于生产验证；真实出图人眼通过后再提升为 `verified`。
 - `allow_multiple_profiles` 只声明 registry 能否组合，不宣称 base Anima 一定能稳定画好多角色。
+- 同一 Asset 的多个 Profile 合并为一个 binding 和一次物理文件加载；角色上限按 Profile/自动选择项计数，不按 safetensors 文件数计数。
 - `legacy_keys` 保留旧 API/config key，避免迁移后 `denia_white` 等旧请求突然失效。
 
 ### 2.3 Loader
@@ -230,14 +231,18 @@ loras:
 ```json
 {
   "lora_selections": [
-    {"key": "denia", "profile": "white", "mode": "explicit"},
-    {"key": "blue_archive_style", "mode": "explicit"}
+    {"key": "cure_mystique_cure_answer", "profiles": ["cure_mystique", "cure_answer"], "mode": "explicit", "strength_model": 0.8, "strength_clip": 0.8},
+    {"key": "si_arknights_v2", "profile": "base", "mode": "explicit", "strength_model": 0.75, "strength_clip": 0.75},
+    {"key": "blue_archive_style", "mode": "explicit", "strength_model": 0.6, "strength_clip": 0.6}
   ]
 }
 ```
 
 - `mode=explicit`：用户明确选择 Profile，LLM 不得换成别的 Profile。
 - `mode=auto`：用户只选择 LoRA Asset，LLM 必须从 registry 提供的候选 `profile_id` 中选择。
+- `profiles:[...]`：只在 Asset 显式声明 `selection.allow_multiple_profiles:true` 时可用；同一 Asset 仍只能出现一条 selection。
+- 角色 LoRA 最多选择 3 个语义角色（每个显式 Profile 或未决 auto Asset 各计 1）；风格/动作/表情 LoRA 不设产品硬上限。
+- `strength_model/strength_clip` 是逐 Asset 的 0~2 数值；前端当前用一个滑块同时设置两者。旧分组强度字段仅作兼容。
 - 无匹配时：使用明确声明的 `default_profile` 并返回 warning；没有 default 则要求用户选择。
 - 旧 `loras:[key]` / `lora:key` 继续接受，并转换为 legacy binding；不得直接破坏旧客户端。
 
@@ -426,10 +431,11 @@ python .tools/register_lora.py --civitai <url>
 
 ### 7.1 选择体验
 
-- 角色 LoRA ×1 + 风格 LoRA ×1 的现有限制先保留。
+- 角色区按语义角色计数，最多 3 个；不同 Asset 可组合，同一 Asset 只有在 Registry 允许时才能同时选多个 Profile。
+- 风格/细节区可连续多选且不设硬上限；选择较多时前端只提示叠加干扰与显存/执行成本，不代替用户作决定。
 - 单 Profile LoRA：直接选择。
-- 多 Profile LoRA：显示二级选择；默认可为 `自动判断`，专家用户可明确锁定 Profile。
-- 卡片显示 `provides`、Profile、verified 状态；无 trigger 标注“权重生效，无需触发词”。首版不向普通用户额外展开 exact/minimal tags。
+- 多 Profile LoRA：显示二级选择；默认可为 `自动判断`，专家用户可明确锁定 Profile；允许组合的 Asset 可同时点选多个 Profile。
+- 当前叠加栈显示 `provides`、Profile、verified 状态与逐 Asset 强度；无 trigger 标注“权重生效，无需触发词”。不向普通用户额外展开 exact/minimal tags。
 - unknown/incomplete 显示但禁用生成，提供“待注册”说明。
 
 ### 7.2 调用顺序
@@ -510,7 +516,7 @@ B = aware：LLM 知 provides/Profile + Binding Compiler minimal exact tags
 4. Prompt 中用户明确动作/约束是否保留；
 5. 偶发手脚问题与重复的策略失败分开记录。
 
-当前本机没有辉夜姬三人组文件：多 Profile schema 用 fixture 做结构测试，但多人 composition 不作为首版生产验收门；有真实可测资产后再开启组合验证。
+2026-08-28 已有同文件多人物 Profile 与跨文件角色 Asset 可用于组合链路验证；fixture、真实 Registry payload 与浏览器交互均已覆盖。尚未做固定 Prompt/seed 的多人出图人眼验收，因此多人物空间关系、属性绑定和角色稳定性仍不能判定完成。
 
 ---
 
@@ -539,7 +545,8 @@ Step 0-10 已于 2026-08-23 完成。最终实现包含 versioned Registry/热�
 - 真实 A/B：5 组最终为 aware `1 胜 / 4 平 / 0 负`。唯一明确胜出是服装 Profile 语义组；其余人物、风格、光影与 DeepSeek Anima 组均为平局，没有 LoRA-aware 导致场景/构图退化。
 - DeepSeek：旧 Illustrious 资产换为 Anima 专用 LoRA；同作者身份/女仆装语义以 0.85 绑定，图书馆 aware/legacy 两张均被用户接受，且 Anima 整体优于原 IL 版本。作者水下花园 Prompt 只作 LoRA 控制组，不参与图书馆语义胜负。
 - 光影反馈：`明亮午后` 从旧的 golden/lazy 午后词条中分离为 clear daylight/high sun/crisp shadows；Blue Archive 两张复测光线均正常。
-- 边界：多 Profile schema 已验证，角色×1 + 风格×1 可组合；没有真实多人 LoRA 资产，因此跨文件多角色 composition 仍留待未来证据触发。
+- Composition 工程扩展（2026-08-28）：角色最多 3 个语义 Profile、风格/细节不限数量；同一 Asset 多 Profile 必须由 Registry opt-in，解析后合并为一个 binding/一次文件加载；不同 Asset 保持独立 binding 与 0~2 强度。6 项新增确定性测试、53 项既有回归、真实 Registry workflow payload 与桌面/390px 浏览器流程均通过。
+- 质量边界：上述验证只证明选择、状态、trigger、强度和 workflow 加载不串线；尚未用固定条件多人出图验证空间关系与身份归属，不宣称多角色 composition 画质完成。
 - 最终一致性审计（2026-08-23）：SiliconFlow/Vision 调用失败为 502 fail-closed；首版没有通用 semantic conflict detector；前端展示 provides/Profile/verified 而不展开 minimal tags。2026-08-28 的 D47 只补充角色 LoRA 发色/瞳色越权这一可确定窄检查，不改变“不建设开放式冲突系统”的边界。
 - 新增 Remielle Dan（base/白/黑/泳装）、Dolphro-kun 风格与无 trigger 的 Light 风格后，用户确认三项 LoRA 均生效并通过验收；Registry 状态已由 candidate 提升为 verified。
 
@@ -547,15 +554,14 @@ Step 0-10 已于 2026-08-23 完成。最终实现包含 versioned Registry/热�
 
 ---
 
-## 10. 首版明确不做
+## 10. 仍明确不做
 
 - 不让 LLM 决定文件名、节点 ID、strength 或任意权重；
 - 不要求 LLM 逐字复制/改写 trigger；
 - 不自动解析 HTML description 成正式知识；
 - 不把 Civitai trainedWords 当正式 quick-use；
 - 不做 LoRA marketplace、推荐 ML、冲突 ML 或 embedding/vector DB；
-- 不做跨文件两个 character LoRA 的自由组合（前端仍限制角色 ×1）；
-- 没有真实多人 LoRA 资产前，不宣称完成多角色 composition；
+- 不把“接口允许 3 个角色”宣传成稳定的多人构图、动作关系或属性防串色能力；这部分必须由 Prompt Engine 改进和真实图片人眼验证共同决定；
 - 不借 LoRA 工程启动 PromptState、semantic negative、weighted NL 或 Workflow Intelligence；
 - 不用“Prompt 更长”“IR 更满”“结构通过”替代真实图片人眼验收。
 

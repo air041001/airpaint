@@ -106,7 +106,13 @@ class HotLoraRegistry:
                 profiles = asset.get("profiles")
                 if not isinstance(profiles, dict) or not profiles:
                     raise ValueError(f"{key}.profiles 不能为空")
-                default_profile = (asset.get("selection") or {}).get("default_profile")
+                selection = asset.get("selection") or {}
+                if not isinstance(selection, dict):
+                    raise ValueError(f"{key}.selection 必须是对象")
+                allow_multiple = selection.get("allow_multiple_profiles", False)
+                if not isinstance(allow_multiple, bool):
+                    raise ValueError(f"{key}.selection.allow_multiple_profiles 必须是布尔值")
+                default_profile = selection.get("default_profile")
                 if default_profile and default_profile not in profiles:
                     raise ValueError(f"{key}.selection.default_profile 不存在")
                 for pid, profile in profiles.items():
@@ -527,8 +533,54 @@ def get_lora_legacy_aliases(registry: dict[str, dict] | None = None) -> dict[str
     return aliases
 
 
+MAX_CHARACTER_LORA_PROFILES = 3
+
+
+def _selection_profile_ids(selection: dict) -> list[str]:
+    """兼容旧 profile 标量与新 profiles 数组，返回去重后的 Profile ID。"""
+    raw_profiles = selection.get("profiles")
+    if raw_profiles is not None:
+        if not isinstance(raw_profiles, list) or any(not isinstance(x, str) for x in raw_profiles):
+            raise HTTPException(400, f"LoRA {selection.get('key', '')} profiles 必须是字符串数组")
+        result = [x.strip() for x in raw_profiles if x.strip()]
+    else:
+        profile = str(selection.get("profile") or "").strip()
+        result = [profile] if profile else []
+    return list(dict.fromkeys(result))
+
+
+def _normalize_lora_strength(value, label: str) -> float | None:
+    if value is None:
+        return None
+    try:
+        value = float(value)
+    except (TypeError, ValueError):
+        raise HTTPException(400, f"{label} 需为数字")
+    if not 0 <= value <= 2:
+        raise HTTPException(400, f"{label} 需在 0~2 之间")
+    return value
+
+
+def _normalize_optional_by_profile(value, key: str) -> dict[str, list[str]]:
+    if value is None:
+        return {}
+    if not isinstance(value, dict):
+        raise HTTPException(400, f"LoRA {key} optional_by_profile 必须是对象")
+    result: dict[str, list[str]] = {}
+    for profile_id, option_ids in value.items():
+        if not isinstance(profile_id, str) or not isinstance(option_ids, list) or any(
+                not isinstance(x, str) for x in option_ids):
+            raise HTTPException(400, f"LoRA {key} optional_by_profile 格式错误")
+        result[profile_id] = list(dict.fromkeys(x for x in option_ids if x))
+    return result
+
+
 def normalize_lora_selections(raw, registry: dict[str, dict] | None = None) -> list[dict]:
-    """把新 selection、旧 loras 字符串和 legacy key 统一成 Asset/Profile 选择。"""
+    """把 legacy key / 单 Profile / 多 Profile 统一成每个 Asset 一条 selection。
+
+    同一 Asset 即使选了多个 Profile 也只保留一条，避免 workflow 重复加载同一个
+    safetensors。角色上限按实际 Profile 数计；风格/细节不设产品硬上限。
+    """
     if not raw:
         return []
     if isinstance(raw, (str, dict)):
@@ -537,17 +589,23 @@ def normalize_lora_selections(raw, registry: dict[str, dict] | None = None) -> l
         raise HTTPException(400, "lora_selections/loras 必须是数组")
     registry = registry or get_lora_registry()
     aliases = get_lora_legacy_aliases(registry)
-    result = []
-    seen = set()
-    type_counts: dict[str, int] = {}
+    merged: dict[str, dict] = {}
     for item in raw:
         if isinstance(item, str):
-            key, profile, mode, optional = item.strip(), None, "auto", []
+            key, profiles, mode, optional = item.strip(), [], "auto", []
+            optional_by_profile = {}
+            strength_model = strength_clip = None
         elif isinstance(item, dict):
             key = str(item.get("key") or "").strip()
-            profile = str(item.get("profile") or "").strip() or None
-            mode = str(item.get("mode") or ("explicit" if profile else "auto")).strip()
+            profiles = _selection_profile_ids(item)
+            mode = str(item.get("mode") or ("explicit" if profiles else "auto")).strip()
             optional = item.get("optional") or []
+            optional_by_profile = _normalize_optional_by_profile(
+                item.get("optional_by_profile"), key)
+            strength_model = _normalize_lora_strength(
+                item.get("strength_model"), f"LoRA {key} model 强度")
+            strength_clip = _normalize_lora_strength(
+                item.get("strength_clip"), f"LoRA {key} clip 强度")
         else:
             raise HTTPException(400, "LoRA selection 条目格式错误")
         if not key:
@@ -556,7 +614,7 @@ def normalize_lora_selections(raw, registry: dict[str, dict] | None = None) -> l
             raise HTTPException(400, f"未知的 LoRA: {key}")
         asset_key, legacy_profile = aliases[key]
         if legacy_profile:
-            profile, mode = legacy_profile, "explicit"
+            profiles, mode = [legacy_profile], "explicit"
         if mode not in {"explicit", "auto"}:
             raise HTTPException(400, f"LoRA {key} mode 非法")
         if not isinstance(optional, list) or any(not isinstance(x, str) for x in optional):
@@ -564,16 +622,73 @@ def normalize_lora_selections(raw, registry: dict[str, dict] | None = None) -> l
         asset = registry[asset_key]
         if not asset.get("configured", False):
             raise HTTPException(400, f"LoRA {asset_key} 尚未注册完整")
-        identity = (asset_key, profile)
-        if identity in seen:
-            continue
-        seen.add(identity)
-        lora_type = asset.get("type", "unknown")
-        type_counts[lora_type] = type_counts.get(lora_type, 0) + 1
-        if lora_type in {"character", "style"} and type_counts[lora_type] > 1:
-            raise HTTPException(400, f"当前只支持同时选择一个 {lora_type} LoRA")
-        result.append({"key": asset_key, "profile": profile, "mode": mode,
-                       "optional": list(dict.fromkeys(optional))})
+        profile_defs = asset.get("profiles") or {}
+        if asset.get("trigger_policy") == "profile":
+            unknown_profiles = [profile_id for profile_id in profiles if profile_id not in profile_defs]
+            if unknown_profiles:
+                raise HTTPException(400, f"LoRA {asset_key} 不存在 Profile: {unknown_profiles[0]}")
+            unknown_optional_profiles = [
+                profile_id for profile_id in optional_by_profile if profile_id not in profile_defs
+            ]
+            if unknown_optional_profiles:
+                raise HTTPException(400, f"LoRA {asset_key} 不存在 Profile: {unknown_optional_profiles[0]}")
+        elif profiles or optional_by_profile:
+            raise HTTPException(400, f"LoRA {asset_key} 不支持 Profile")
+
+        entry = merged.get(asset_key)
+        if entry is None:
+            entry = {
+                "key": asset_key, "profiles": [], "mode": mode,
+                "optional": [], "optional_by_profile": {},
+                "strength_model": strength_model, "strength_clip": strength_clip,
+            }
+            merged[asset_key] = entry
+        elif entry["mode"] != mode:
+            # 显式选择比重复的 auto 占位更具体；不允许两个显式选择互相覆盖。
+            if "explicit" in {entry["mode"], mode}:
+                entry["mode"] = "explicit"
+        for profile_id in profiles:
+            if profile_id not in entry["profiles"]:
+                entry["profiles"].append(profile_id)
+        entry["optional"] = list(dict.fromkeys(entry["optional"] + [x for x in optional if x]))
+        for profile_id, option_ids in optional_by_profile.items():
+            current = entry["optional_by_profile"].setdefault(profile_id, [])
+            entry["optional_by_profile"][profile_id] = list(dict.fromkeys(current + option_ids))
+        for field, value in (("strength_model", strength_model), ("strength_clip", strength_clip)):
+            if value is None:
+                continue
+            if entry[field] is not None and entry[field] != value:
+                raise HTTPException(400, f"LoRA {asset_key} 被重复选择且 {field} 冲突")
+            entry[field] = value
+
+    result: list[dict] = []
+    character_count = 0
+    for asset_key, entry in merged.items():
+        asset = registry[asset_key]
+        profiles = entry.pop("profiles")
+        if len(profiles) > 1 and not (asset.get("selection") or {}).get(
+                "allow_multiple_profiles", False):
+            raise HTTPException(400, f"LoRA {asset_key} 不允许同时选择多个 Profile")
+        if asset.get("type") == "character":
+            character_count += len(profiles) if profiles else 1
+        normalized = {
+            "key": asset_key,
+            "profile": profiles[0] if len(profiles) == 1 else None,
+            "mode": entry.pop("mode"),
+            "optional": entry.pop("optional"),
+        }
+        if len(profiles) > 1:
+            normalized["profiles"] = profiles
+        optional_by_profile = entry.pop("optional_by_profile")
+        if optional_by_profile:
+            normalized["optional_by_profile"] = optional_by_profile
+        for field in ("strength_model", "strength_clip"):
+            value = entry.pop(field)
+            if value is not None:
+                normalized[field] = value
+        result.append(normalized)
+    if character_count > MAX_CHARACTER_LORA_PROFILES:
+        raise HTTPException(400, f"角色 LoRA 最多选择 {MAX_CHARACTER_LORA_PROFILES} 个角色")
     return result
 
 
@@ -586,10 +701,24 @@ def _coerce_llm_lora_choices(raw) -> dict[str, dict]:
             result[str(key)] = {"profile": value, "optional": []}
         elif isinstance(value, dict):
             optional = value.get("optional") or []
-            result[str(key)] = {
-                "profile": str(value.get("profile") or "").strip() or None,
+            try:
+                profiles = _selection_profile_ids(value)
+            except HTTPException:
+                profiles = []
+            try:
+                optional_by_profile = _normalize_optional_by_profile(
+                    value.get("optional_by_profile"), str(key))
+            except HTTPException:
+                optional_by_profile = {}
+            choice = {
+                "profile": profiles[0] if len(profiles) == 1 else None,
                 "optional": [str(x) for x in optional] if isinstance(optional, list) else [],
             }
+            if len(profiles) > 1:
+                choice["profiles"] = profiles
+            if optional_by_profile:
+                choice["optional_by_profile"] = optional_by_profile
+            result[str(key)] = choice
     return result
 
 
@@ -610,7 +739,8 @@ def apply_lora_intent_hints(text: str, selections) -> list[dict]:
         selection = dict(selection)
         asset = registry[selection["key"]]
         profiles = asset.get("profiles") or {}
-        if not selection.get("profile") and selection.get("mode") == "auto":
+        selected_profiles = _selection_profile_ids(selection)
+        if not selected_profiles and selection.get("mode") == "auto":
             matches = []
             for pid, profile in profiles.items():
                 aliases = profile.get("aliases") or []
@@ -625,13 +755,22 @@ def apply_lora_intent_hints(text: str, selections) -> list[dict]:
                 best = [pid for length, pid in matches if length == best_length]
                 if len(best) == 1:
                     selection["profile"] = best[0]
-        profile = profiles.get(selection.get("profile")) or {}
-        optional = list(selection.get("optional") or [])
-        for oid, option in (profile.get("optional_tags") or {}).items():
-            aliases = option.get("aliases") or []
-            if any(str(alias).strip().lower() in low for alias in aliases if str(alias).strip()):
-                optional.append(oid)
-        selection["optional"] = list(dict.fromkeys(optional))
+                    selected_profiles = best
+        optional_by_profile = dict(selection.get("optional_by_profile") or {})
+        for profile_id in selected_profiles:
+            profile = profiles.get(profile_id) or {}
+            optional = (list(selection.get("optional") or []) if len(selected_profiles) == 1
+                        else list(optional_by_profile.get(profile_id) or []))
+            for oid, option in (profile.get("optional_tags") or {}).items():
+                aliases = option.get("aliases") or []
+                if any(str(alias).strip().lower() in low for alias in aliases if str(alias).strip()):
+                    optional.append(oid)
+            if len(selected_profiles) == 1:
+                selection["optional"] = list(dict.fromkeys(optional))
+            elif optional:
+                optional_by_profile[profile_id] = list(dict.fromkeys(optional))
+        if optional_by_profile:
+            selection["optional_by_profile"] = optional_by_profile
         result.append(selection)
     return result
 
@@ -646,76 +785,103 @@ def resolve_lora_selections(selections, llm_choices=None, *, allow_unresolved_au
     normalized = normalize_lora_selections(selections, registry)
     choices = _coerce_llm_lora_choices(llm_choices)
     bindings, warnings = [], []
+    character_count = 0
     for selection in normalized:
         asset = registry[selection["key"]]
-        profile_id = selection.get("profile")
-        resolved_by = ("explicit" if profile_id and selection.get("mode") == "explicit"
-                       else "intent_alias" if profile_id else selection.get("mode", "auto"))
-        optional_ids = list(selection.get("optional") or [])
+        profile_ids = _selection_profile_ids(selection)
+        resolved_by = ("explicit" if profile_ids and selection.get("mode") == "explicit"
+                       else "intent_alias" if profile_ids else selection.get("mode", "auto"))
         tags: list[str] = []
         provides = list(asset.get("provides") or [])
+        valid_optional_by_profile: dict[str, list[str]] = {}
         if asset.get("trigger_policy") == "profile":
             profiles = asset.get("profiles") or {}
             choice = choices.get(selection["key"]) or {}
-            if not profile_id and selection.get("mode") == "auto":
-                candidate = choice.get("profile")
-                if candidate in profiles:
-                    profile_id, resolved_by = candidate, "llm"
+            if not profile_ids and selection.get("mode") == "auto":
+                candidates = choice.get("profiles") or ([choice.get("profile")]
+                                                         if choice.get("profile") else [])
+                candidates = [pid for pid in candidates if pid in profiles]
+                if candidates:
+                    profile_ids, resolved_by = list(dict.fromkeys(candidates)), "llm"
                 elif allow_unresolved_auto:
-                    bindings.append({**selection, "type": asset.get("type"), "name": asset.get("name"),
-                                     "file": asset.get("file"), "resolved_by": "pending",
-                                     "injected_tags": [], "provides": []})
+                    bindings.append({
+                        **selection, "type": asset.get("type"), "name": asset.get("name"),
+                        "file": asset.get("file"), "profile": None, "profiles": [],
+                        "optional": [], "optional_by_profile": {}, "resolved_by": "pending",
+                        "injected_tags": [], "provides": [],
+                        "strength_model": selection.get("strength_model", asset.get("strength_model", 1.0)),
+                        "strength_clip": selection.get("strength_clip", asset.get("strength_clip", 1.0)),
+                    })
                     continue
                 else:
                     default = (asset.get("selection") or {}).get("default_profile")
                     if default in profiles:
-                        profile_id, resolved_by = default, "default"
+                        profile_ids, resolved_by = [default], "default"
                         warnings.append(f"{asset['name']} 未匹配到明确 Profile，已使用默认 {profiles[default]['name']}")
                     else:
                         raise HTTPException(400, f"LoRA {selection['key']} 需要明确选择 Profile")
-            elif not profile_id:
+            elif not profile_ids:
                 default = (asset.get("selection") or {}).get("default_profile")
                 if default in profiles:
-                    profile_id, resolved_by = default, "default"
+                    profile_ids, resolved_by = [default], "default"
                 elif len(profiles) == 1:
-                    profile_id, resolved_by = next(iter(profiles)), "single"
+                    profile_ids, resolved_by = [next(iter(profiles))], "single"
                 else:
                     raise HTTPException(400, f"LoRA {selection['key']} 需要明确选择 Profile")
-            if profile_id not in profiles:
-                raise HTTPException(400, f"LoRA {selection['key']} 不存在 Profile: {profile_id}")
-            profile = profiles[profile_id]
-            provides = list(profile.get("provides") or [])
-            tags.extend(profile.get("required_tags") or [])
-            tags.extend(profile.get("default_tags") or [])
-            # Profile 是否自动只影响“选哪个 Profile”；已经锁定 Profile 后，LLM 仍可
-            # 根据用户意图挑选该 Profile 白名单里的 optional concept ID。
-            optional_ids.extend(choices.get(selection["key"], {}).get("optional") or [])
-            option_defs = profile.get("optional_tags") or {}
-            valid_optional = []
-            for option_id in dict.fromkeys(optional_ids):
-                if option_id not in option_defs:
-                    warnings.append(f"{asset['name']}/{profile['name']} 忽略未知 optional: {option_id}")
-                    continue
-                valid_optional.append(option_id)
-                option = option_defs[option_id]
-                tags.extend(option.get("tags") or [])
-                provides.extend(option.get("provides") or [])
-            optional_ids = valid_optional
+            if len(profile_ids) > 1 and not (asset.get("selection") or {}).get(
+                    "allow_multiple_profiles", False):
+                raise HTTPException(400, f"LoRA {selection['key']} 不允许同时选择多个 Profile")
+            provides = []
+            selection_optional_map = selection.get("optional_by_profile") or {}
+            choice_optional_map = choice.get("optional_by_profile") or {}
+            for profile_id in profile_ids:
+                if profile_id not in profiles:
+                    raise HTTPException(400, f"LoRA {selection['key']} 不存在 Profile: {profile_id}")
+                profile = profiles[profile_id]
+                provides.extend(profile.get("provides") or [])
+                tags.extend(profile.get("required_tags") or [])
+                tags.extend(profile.get("default_tags") or [])
+                # optional ID 必须按 Profile 归属；单 Profile 继续兼容旧 optional 数组。
+                optional_ids = list(selection_optional_map.get(profile_id) or [])
+                optional_ids.extend(choice_optional_map.get(profile_id) or [])
+                if len(profile_ids) == 1:
+                    optional_ids.extend(selection.get("optional") or [])
+                    optional_ids.extend(choice.get("optional") or [])
+                option_defs = profile.get("optional_tags") or {}
+                valid_optional = []
+                for option_id in dict.fromkeys(optional_ids):
+                    if option_id not in option_defs:
+                        warnings.append(f"{asset['name']}/{profile['name']} 忽略未知 optional: {option_id}")
+                        continue
+                    valid_optional.append(option_id)
+                    option = option_defs[option_id]
+                    tags.extend(option.get("tags") or [])
+                    provides.extend(option.get("provides") or [])
+                if valid_optional:
+                    valid_optional_by_profile[profile_id] = valid_optional
         else:
-            if profile_id:
+            if profile_ids:
                 raise HTTPException(400, f"LoRA {selection['key']} 不支持 Profile")
             tags.extend(asset.get("required_tags") or [])
-            optional_ids = []
             resolved_by = "explicit"
         tags = list(dict.fromkeys(t.strip() for t in tags if isinstance(t, str) and t.strip()))
+        profile_id = profile_ids[0] if len(profile_ids) == 1 else None
+        optional_ids = valid_optional_by_profile.get(profile_id, []) if profile_id else []
+        strength_model = selection.get("strength_model", asset.get("strength_model", 1.0))
+        strength_clip = selection.get("strength_clip", asset.get("strength_clip", 1.0))
         bindings.append({
             "key": selection["key"], "type": asset.get("type", "unknown"),
             "name": asset.get("name", selection["key"]), "file": asset.get("file"),
-            "profile": profile_id, "optional": optional_ids, "resolved_by": resolved_by,
+            "profile": profile_id, "profiles": profile_ids,
+            "optional": optional_ids, "optional_by_profile": valid_optional_by_profile,
+            "resolved_by": resolved_by,
             "injected_tags": tags, "provides": list(dict.fromkeys(provides)),
-            "strength_model": asset.get("strength_model", 1.0),
-            "strength_clip": asset.get("strength_clip", 1.0),
+            "strength_model": strength_model, "strength_clip": strength_clip,
         })
+        if asset.get("type") == "character":
+            character_count += len(profile_ids) if profile_ids else 1
+    if character_count > MAX_CHARACTER_LORA_PROFILES:
+        raise HTTPException(400, f"角色 LoRA 最多选择 {MAX_CHARACTER_LORA_PROFILES} 个角色")
     return bindings, warnings, revision
 
 
@@ -731,24 +897,38 @@ def build_lora_context(selections) -> tuple[str, list[dict], str]:
     contract = {}
     for selection, binding in zip(normalized, pending):
         asset = registry[selection["key"]]
-        contract[selection["key"]] = {
-            "profile": (binding.get("profile") or "<choose one allowed profile ID>"
-                        if asset.get("trigger_policy") == "profile" else None),
-            "optional": [],
-        }
+        profile_ids = _selection_profile_ids(binding)
+        if asset.get("trigger_policy") == "profile" and len(profile_ids) > 1:
+            contract[selection["key"]] = {
+                "profiles": profile_ids,
+                "optional_by_profile": {profile_id: [] for profile_id in profile_ids},
+            }
+        else:
+            contract[selection["key"]] = {
+                "profile": (profile_ids[0] if profile_ids else "<choose one allowed profile ID>"
+                            if asset.get("trigger_policy") == "profile" else None),
+                "optional": [],
+            }
         lines.append(f"- LoRA {selection['key']}: {asset['name']} ({asset.get('type', 'unknown')})")
         if asset.get("trigger_policy") == "none":
             lines.append("  Active through weights; no trigger words are needed.")
-        elif binding.get("profile"):
-            profile = asset["profiles"][binding["profile"]]
-            lines.append(f"  Locked profile: {binding['profile']} / {profile['name']}")
-            lines.append(f"  Already provides: {', '.join(profile.get('provides') or ['the selected concept'])}")
-            optional = profile.get("optional_tags") or {}
-            if optional:
-                choices = "; ".join(
-                    f"{oid}={', '.join(opt.get('provides') or [opt.get('name', oid)])}"
-                    for oid, opt in optional.items())
-                lines.append(f"  Optional IDs (only if explicitly requested): {choices}")
+        elif profile_ids:
+            label = "Locked profiles" if len(profile_ids) > 1 else "Locked profile"
+            lines.append(f"  {label}: " + "; ".join(
+                f"{profile_id} / {asset['profiles'][profile_id]['name']}"
+                for profile_id in profile_ids))
+            for profile_id in profile_ids:
+                profile = asset["profiles"][profile_id]
+                lines.append(
+                    f"  {profile_id} already provides: "
+                    f"{', '.join(profile.get('provides') or ['the selected concept'])}")
+                optional = profile.get("optional_tags") or {}
+                if optional:
+                    choices = "; ".join(
+                        f"{oid}={', '.join(opt.get('provides') or [opt.get('name', oid)])}"
+                        for oid, opt in optional.items())
+                    lines.append(
+                        f"  {profile_id} optional IDs (only if explicitly requested): {choices}")
         elif asset.get("trigger_policy") == "profile":
             lines.append("  Select exactly one profile ID from:")
             for pid, profile in asset.get("profiles", {}).items():
@@ -760,6 +940,8 @@ def build_lora_context(selections) -> tuple[str, list[dict], str]:
         "Do not invent a conflicting character identity, outfit, appearance, or style.",
         "For a character LoRA, profile IDs/names such as black, white, or swim describe a registered form; "
         "never infer hair color, eye color, skin tone, or body traits from those words.",
+        "When multiple profiles are locked for one LoRA, keep that profile list unchanged; "
+        "optional IDs must stay under their owning profile ID.",
         "Use scene, action, pose, composition, lighting, and mood to complete the remaining image.",
         "When an auto profile or optional concept is needed, output only allowed IDs in the LORA JSON line.",
         "The LORA line is mandatory for this request. Use this exact JSON shape and replace placeholders only with allowed IDs:",
@@ -774,7 +956,7 @@ def lora_selection_aliases(selections) -> set[str]:
     for selection in normalize_lora_selections(selections, registry):
         asset = registry[selection["key"]]
         profiles = asset.get("profiles") or {}
-        profile_ids = [selection["profile"]] if selection.get("profile") else list(profiles)
+        profile_ids = _selection_profile_ids(selection) or list(profiles)
         for profile_id in profile_ids:
             profile = profiles.get(profile_id) or {}
             aliases.update(str(x).strip().lower() for x in profile.get("aliases", []) if str(x).strip())
@@ -941,11 +1123,11 @@ def _lora_sibling_profile_tag_keys(bindings: list[dict]) -> set[str]:
     sibling_keys: set[str] = set()
     for binding in bindings:
         asset = registry.get(str(binding.get("key") or "")) or {}
-        selected_profile = binding.get("profile")
-        if asset.get("trigger_policy") != "profile" or not selected_profile:
+        selected_profiles = set(_selection_profile_ids(binding))
+        if asset.get("trigger_policy") != "profile" or not selected_profiles:
             continue
         for profile_id, profile in (asset.get("profiles") or {}).items():
-            if profile_id == selected_profile:
+            if profile_id in selected_profiles:
                 continue
             for tag in profile.get("required_tags") or []:
                 if isinstance(tag, str) and tag.strip():
@@ -2373,6 +2555,37 @@ def sanitize_for_api(wf: dict) -> dict:
     return wf
 
 
+def _workflow_lora_entries(bindings: list[dict], strength_char: float | None = None,
+                           strength_style: float | None = None) -> list[dict]:
+    """把语义 binding 压成物理文件加载表；同一 safetensors 最多加载一次。"""
+    entries: list[dict] = []
+    by_file: dict[str, tuple[float, float]] = {}
+    for binding in bindings:
+        lora_type = binding.get("type")
+        legacy_strength = (strength_char if lora_type == "character"
+                           else strength_style if lora_type in {"style", "action", "expression"}
+                           else None)
+        sm = float(legacy_strength) if legacy_strength is not None else float(
+            binding.get("strength_model", 1.0))
+        sc = float(legacy_strength) if legacy_strength is not None else float(
+            binding.get("strength_clip", 1.0))
+        for value in (sm, sc):
+            if not 0 <= value <= 2:
+                raise HTTPException(400, "LoRA 强度需在 0~2 之间")
+        filename = str(binding.get("file") or "").strip()
+        if not filename:
+            raise HTTPException(500, f"LoRA {binding.get('key', '')} 缺少文件名")
+        previous = by_file.get(filename)
+        if previous is not None:
+            if previous != (sm, sc):
+                raise HTTPException(400, f"同一 LoRA 文件 {filename} 被以不同强度重复选择")
+            continue
+        by_file[filename] = (sm, sc)
+        entries.append({"name": filename, "strength": sm,
+                        "clipStrength": sc, "active": True})
+    return entries
+
+
 def build_prompt(wf_name: str, prompt_en: str, width: int | None, height: int | None,
                  lora_keys: list[str] | None = None,
                  strength_char: float | None = None, strength_style: float | None = None,
@@ -2428,11 +2641,7 @@ def build_prompt(wf_name: str, prompt_en: str, width: int | None, height: int | 
     # 同 revision Registry 解析。Prompt 与 workflow 注入共享同一 binding snapshot (D39).
     effective_bindings: list[dict] = []
     if lora_bindings:
-        selections = [
-            {"key": b.get("key"), "profile": b.get("profile"), "mode": "explicit",
-             "optional": b.get("optional") or []}
-            for b in lora_bindings
-        ]
+        selections = _bindings_as_selections(lora_bindings)
         effective_bindings, _, _ = resolve_lora_selections(
             selections, expected_revision=registry_revision)
     elif lora_keys:
@@ -2440,15 +2649,8 @@ def build_prompt(wf_name: str, prompt_en: str, width: int | None, height: int | 
     if effective_bindings:
         if "lora_node" not in wcfg:
             raise HTTPException(400, f"工作流 {wf_name} 不支持 LoRA")
-        lora_entries = []
-        for binding in effective_bindings:
-            # 按类型取强度: 角色/风格各自独立, 未传则用 config 默认
-            t = binding["type"]
-            sv = strength_char if t == "character" else (strength_style if t == "style" else None)
-            sm = float(sv) if sv is not None else binding["strength_model"]
-            sc = float(sv) if sv is not None else binding["strength_clip"]
-            lora_entries.append({"name": binding["file"], "strength": sm,
-                                 "clipStrength": sc, "active": True})
+        lora_entries = _workflow_lora_entries(
+            effective_bindings, strength_char=strength_char, strength_style=strength_style)
         set_input("lora_node", "loras", {"__value__": lora_entries})
         prompt_en = compile_lora_bindings(prompt_en, effective_bindings)
 
@@ -2623,6 +2825,8 @@ async def list_loras(token: str = Depends(auth)):
             "strength_model": v.get("strength_model", 1.0),
             "strength_clip": v.get("strength_clip", 1.0),
             "default_profile": (v.get("selection") or {}).get("default_profile"),
+            "allow_multiple_profiles": bool(
+                (v.get("selection") or {}).get("allow_multiple_profiles", False)),
             "profiles": [
                 {
                     "id": pid,
@@ -2641,9 +2845,11 @@ async def list_loras(token: str = Depends(auth)):
         }
         for v in reg.values()
     ]
+    stackable_detail_types = {"style", "action", "expression"}
     return {"characters": [i for i in items if i["type"] == "character"],
-            "styles": [i for i in items if i["type"] == "style"],
-            "other": [i for i in items if i["type"] not in {"character", "style"}]}
+            "styles": [i for i in items if i["type"] in stackable_detail_types],
+            "other": [i for i in items
+                      if i["type"] != "character" and i["type"] not in stackable_detail_types]}
 
 
 @app.post("/api/loras/refresh")
@@ -2664,11 +2870,24 @@ def _extract_lora_selections(body: dict):
 
 
 def _bindings_as_selections(bindings: list[dict] | None) -> list[dict]:
-    return [
-        {"key": b.get("key"), "profile": b.get("profile"), "mode": "explicit",
-         "optional": b.get("optional") or []}
-        for b in (bindings or [])
-    ]
+    result = []
+    for binding in bindings or []:
+        profile_ids = _selection_profile_ids(binding)
+        selection = {
+            "key": binding.get("key"),
+            "profile": profile_ids[0] if len(profile_ids) == 1 else None,
+            "mode": "explicit",
+            "optional": binding.get("optional") or [],
+        }
+        if len(profile_ids) > 1:
+            selection["profiles"] = profile_ids
+        if binding.get("optional_by_profile"):
+            selection["optional_by_profile"] = binding["optional_by_profile"]
+        for field in ("strength_model", "strength_clip"):
+            if binding.get(field) is not None:
+                selection[field] = binding[field]
+        result.append(selection)
+    return result
 
 
 @app.post("/api/translate")
@@ -2742,11 +2961,8 @@ async def _enqueue(token: str, wf_name: str, prompt_en: str, prompt_raw: str,
     if lora_bindings:
         if not isinstance(lora_bindings, list):
             raise HTTPException(400, "lora_bindings 必须是数组")
-        binding_requests = [
-            {"key": b.get("key"), "profile": b.get("profile"), "mode": "explicit",
-             "optional": b.get("optional") or []}
-            for b in lora_bindings if isinstance(b, dict)
-        ]
+        binding_requests = _bindings_as_selections(
+            [b for b in lora_bindings if isinstance(b, dict)])
     elif lora_selections:
         binding_requests = lora_selections
     if binding_requests:

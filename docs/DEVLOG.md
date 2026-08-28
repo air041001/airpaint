@@ -826,3 +826,11 @@ RTX 4060 Laptop 8GB、无 LoRA/detailer 重新端到端测试：请求 1024×153
 随后复现 `black` Profile 被错误扩写为 `long black hair / red eyes`。Registry 没有这些身份事实，因此没有伪造正确发色；改为角色 LoRA 外观闭集：Profile 名/服装色不能推导发色、瞳色，只有用户原文或权威构思明确锁定的改色可进入 IR/PROMPT。首轮越权会携具体原因修复一次，仍越权则失败关闭。Binding Compiler 同步清理兄弟 Profile trigger 与身份复述。
 
 验证：`53 prompt unit tests passed`、`python -m py_compile server/main.py`、`registry valid: 12 assets`。真实 SiliconFlow 以 Remielle Dan `black` + Fymrie 重跑原输入，IR/PROMPT 均不含 `black hair/red eyes`，保留黑色形态服装、裙摆动作、三分之四身构图且 binding 无 warning。
+
+## 第 55 条 2026-08-28 - LoRA 叠加栈与多 Profile Composition 工程扩展
+
+LoRA 选择从“角色×1 + 风格×1”扩展为逐 Asset 叠加栈：角色最多 3 个语义 Profile，风格/动作/表情不设硬上限；同一 Asset 只有在 Registry 声明 `allow_multiple_profiles` 时才能同时选择多个 Profile。前端提供角色与风格/细节两个连续多选菜单、当前叠加栈、Profile chips、逐 Asset 0~2 强度和移除操作，切换仍会使旧翻译 stale。
+
+后端把同一 Asset 的多个 Profile 合并为一个 binding，分别解析 exact tags/provides/optional，再在 workflow 层按 safetensors 文件名去重，保证同文件只加载一次。不同 Asset 保持独立 binding/强度；同一物理文件以冲突强度重复出现时返回 400。旧字符串 selection、单 `profile`、`strength_char/strength_style` 继续兼容。
+
+验证：`6 lora composition tests passed`、`53 prompt unit tests passed`、Python 编译和前端 2 段内联脚本语法通过。真实 Registry payload 的同文件双 Profile + 跨文件单 Profile + 4 风格得到 3 个语义角色、6 个 binding 和 6 个唯一 Loader 文件；浏览器桌面/390px 验证了连续多选、第四角色拦截、逐项强度、双主题和无横向溢出。没有进行固定条件多人图的人眼验收，因此只关闭 Composition 工程链，不宣称多人构图、动作绑定或属性防串质量完成。
