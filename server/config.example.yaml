@@ -2,7 +2,7 @@
 host: 127.0.0.1
 port: 8000
 comfy_url: http://127.0.0.1:8188
-# ComfyUI 本机安装路径 (扫描 models/loras/ 自动发现新 LoRA, 查 Civitai 取触发词)
+# ComfyUI 本机安装路径（LoRA onboarding 会在 models/loras/ 中列出新文件并验收 Manager 索引）
 comfy_dir: "E:/ComfyUI_windows_portable/ComfyUI"
 
 # 允许访问后端的前端来源 (CORS Origin). 前端网页与 API 同域不同子域, 需显式列出网页域名
@@ -54,12 +54,9 @@ workflows:
     sizes: ["832x1216", "896x1152", "1024x1024", "1344x768", "1024x1536", "1536x864"]
     quality_prefix: "masterpiece, best quality, newest, absurdres, "
 
-# ---- LoRA 配置 ----
-# type: character (角色) | style (风格). 前端按类型分组, 角色最多选1个, 风格可选0~1个.
-# 同一 file 可挂多条 (不同服装/角色变体不同触发词).
-# trigger 是完整触发词, 后端拼到正面提示词. strength 默认 1.0.
-# 未在此列出的 LoRA 文件, 后端启动时自动扫描 comfy_dir/models/loras/, 按 SHA256 查 Civitai
-#   补全 name/trainedWords/type; 有 trainedWords 的直接可用, 没有的标记 "未配置".
+# ---- 旧 LoRA 配置兼容层（已由 server/lora_registry.yaml + onboarding 取代）----
+# 新 LoRA 请运行 `.tools/register_lora.py --agent`；不要继续向这里新增条目。
+# 此段只用于尚未迁移资产，后端会把旧 trigger/strength 转换成兼容 Asset。
 loras:
   # character_example:
   #   type: character

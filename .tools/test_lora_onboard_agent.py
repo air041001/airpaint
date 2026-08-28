@@ -3,6 +3,7 @@
 import contextlib
 import importlib.util
 import io
+import json
 import tempfile
 from pathlib import Path
 
@@ -305,6 +306,20 @@ def test_agent_aborts_before_llm_when_manager_index_is_not_ready():
         tool.ensure_lora_manager_index = old_ensure
     assert result == 1
     assert calls == ["demo.safetensors"]
+
+
+def test_local_metadata_reader_stays_inside_onboarding_tool():
+    with tempfile.TemporaryDirectory() as folder:
+        path = Path(folder) / "demo.safetensors"
+        path.write_bytes(b"demo")
+        path.with_name("demo.metadata.json").write_text(
+            json.dumps({"base_model": "Anima", "sha256": "abc"}), encoding="utf-8")
+        path.with_name("demo.civitai.info").write_text(
+            json.dumps({"baseModel": "Illustrious"}), encoding="utf-8")
+        metadata = tool.read_local_metadata(path)
+    assert metadata["base_model"] == "Anima"
+    assert metadata["sha256"] == "abc"
+    assert metadata["baseModel"] == "Illustrious"
 
 
 if __name__ == "__main__":

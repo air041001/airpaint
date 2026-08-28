@@ -725,3 +725,27 @@ LoRA 用户可见名称以 versioned `server/lora_registry.yaml` 为单一真相
 **修订关系**：本决定扩展 D39/D41 的首版 `角色×1 + 风格×1` 边界；保留 D39 的“LLM 选语义、代码编译 exact binding”和 D47 的角色身份闭集，不改变多角色 Prompt 质量边界。
 
 **相关文件**：`server/main.py`、`server/lora_registry.yaml`、`.tools/test_lora_composition.py`、`web/index.html`、`docs/PLAN-LORA.md`、`docs/api.md`、`docs/architecture.md`。
+
+## D49. 退役启动时 LoRA 自动扫描，以目标式 Onboarding 作为唯一入库入口
+
+**背景**：D29 的 `scan_loras()` 在后端启动时扫描全部 safetensors、读取 sidecar/计算 SHA256、查询 Civitai 并写入 `server/lora_cache.json`，再把自动 inventory 合并进 `/api/loras`。后续 D41/D42/D53 已建立 versioned Registry 与 onboarding Agent，并能直接枚举未注册文件、验收 LoRA Manager 是否真正索引目标、展示本地候选、经人工确认后原子入库。
+
+**问题**：两条链路并存会制造两个真相源。旧 scanner 仍在每次启动后台执行，却只能额外暴露一个未注册 cache 条目；Civitai trainedWords 既不可靠也不能表达多 Profile。`POST /api/loras/refresh` 与 onboarding 的 Manager scan 名称相似但验收语义不同，容易让维护者误以为“刷新成功”等于“可生成”。同时 `main.py` 承担了 hash、联网候选与 inventory 工具职责。
+
+**决定**：
+
+1. 删除 `scan_loras()`、Civitai hash lookup、cache 读写、启动后台任务和 `POST /api/loras/refresh`；旧 gitignored cache 可作为本机遗留保留，但生产代码不再读取。
+2. 新文件只通过 `.tools/register_lora.py --agent` 入库：工具枚举目标、验收 LoRA Manager 索引、把外部说明当候选、人工双重确认后写 versioned Registry。
+3. onboarding 列表仍需的轻量 `.metadata.json/.civitai.info` 读取移入工具自身，不再从 `server/main.py` 反向调用维护函数。
+4. `config.yaml.loras` 兼容层暂不删除。当前仍有 `ningen_mame` 只存在于该层；迁移前删除会让一个实际可用资产从 API 静默消失。新资产禁止继续写入旧 config。
+5. `/api/loras` 保留 `configured/source/other` 响应形状以减少前端契约变化，但当前生产条目只来自 Registry 或 legacy config。
+
+**原因**：目标式 onboarding 能验证真正影响 Loader 的 Manager 索引，并把文件事实、候选知识和人工确认分层；它比全目录自动推断更可靠，也避免服务启动进行无关磁盘与网络工作。
+
+**代价与风险**：只复制 safetensors 而不运行 onboarding 时，文件不会自动出现在网站；旧 refresh 客户端会得到 404。legacy config 在最后一个资产迁移前仍是一段技术债。此决定只清理入库基础设施，不证明 LoRA 图像质量。
+
+**验证**：`server/main.py` 从 3304 行降至 3032 行；Python 编译通过，`51 prompt unit tests passed`、`6 lora composition tests passed`、`14 lora onboarding agent tests passed`，Registry 校验为本机 15 assets。运行时合并结果为 15 个 Registry Asset + 1 个 legacy config Asset，Civitai 自动来源为 0。
+
+**修订关系**：本决定 supersedes D29 的“config > Civitai > 裸文件”自动 inventory 与刷新接口；保留 D29 作为历史记录，并保留 D41/D42/D53 的 Registry、候选证据和目标索引验收原则。
+
+**相关文件**：`server/main.py`、`.tools/register_lora.py`、`.tools/test_prompt_unit.py`、`.tools/test_lora_onboard_agent.py`、`server/config.example.yaml`、`docs/PLAN-LORA.md`、`docs/api.md`、`docs/architecture.md`。

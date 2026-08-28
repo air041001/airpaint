@@ -52,18 +52,18 @@ User Intent + Selected LoRA/Profile
 
 - `build_prompt()` 已能向 LoraManager 节点 5 的 `loras.__value__` 注入多条 `{name,strength,clipStrength,active}`；节点含义与连接以 `docs/workflow-anatomy.md` 为权威，不再重复猜节点或无必要翻 custom node 源码。
 - 前端已支持 LoRA 叠加栈：角色最多 3 个语义 Profile，风格/动作/表情等细节 LoRA 不设硬上限，每个 Asset 独立 strength。
-- `get_lora_registry()` 已合并 config 与 Civitai cache。
+- `get_lora_registry()` 当前以 versioned Registry 为正式真相，只兼容读取尚未迁移的 config 资产；新文件由 onboarding 工具入库。
 - 当前 LoRA 实际有效，问题集中在知识质量、选择语义和 Prompt 编译，不是 workflow 加载格式。
 
-### 1.2 当前失败不是单一“未注册”
+### 1.2 历史失败不是单一“未注册”（旧 Scanner 已退役）
 
-`deepseek_maid_outfit_illustrious_v10.safetensors` 已存在于 `server/lora_cache.json`，并有 4 组 trainedWords；它未出现在前端的直接原因是：
+旧实现中，`deepseek_maid_outfit_illustrious_v10.safetensors` 已存在于 `server/lora_cache.json`，并有 4 组 trainedWords；它当时未出现在前端的直接原因是：
 
 ```text
 Civitai tags 为空 → type=unknown → /api/loras 只返回 character/style → 前端不可见
 ```
 
-同时存在以下扫描问题：
+旧 Scanner 同时存在以下问题；这些条目保留为历史依据，不代表当前仍运行该链路：
 
 - cache 以 stem 为 key，命中后永久跳过；失败项不能正常重试；
 - 同 stem 文件被替换时缺少 size/mtime/hash 指纹失效；
@@ -109,7 +109,7 @@ LoRA Asset（一个 safetensors 文件）
 
 新增并纳入版本控制：`server/lora_registry.yaml`。
 
-它是人工蒸馏后的项目知识资产，不含 token/key，不应 gitignore。自动扫描结果 `server/lora_cache.json` 继续 gitignore。
+它是人工蒸馏后的项目知识资产，不含 token/key，不应 gitignore。旧 `server/lora_cache.json` 仍为 gitignored 运行时遗留，但当前后端已不再读取。
 
 ```yaml
 schema_version: 1
@@ -380,11 +380,11 @@ build_prompt：quality + 已编译 Prompt + workflow 文件/强度/节点注入�
 
 ---
 
-## 6. Scanner 与 Onboarding
+## 6. Onboarding（旧 Scanner 已退役）
 
-### 6.1 Scanner 修复
+### 6.1 Scanner 修复（历史方案，已被 6.2 取代）
 
-先修 inventory，再做 onboarding：
+首版先修 inventory，再做 onboarding：
 
 - 读取 `.metadata.json` 的 sha256/base_model/size/mtime，优先排除 Wan 等非图片模型，避免对 1GB 文件现算 hash；
 - fingerprint 至少包含 file size + mtime，变化后重新 lookup；
@@ -393,6 +393,8 @@ build_prompt：quality + 已编译 Prompt + workflow 文件/强度/节点注入�
 - unknown/incomplete 进入 `/api/loras.other`，前端显示“待配置”，不再消失；
 - Civitai trainedWords 作为 candidate 展示，绝不直接视为 curated quick-use；
 - 立即清理现有 `detailz-wan`、`wan_lightx2v_*` 残留，并确认当前后端是否仍运行旧进程。
+
+**2026-08-28 替代状态**：上述启动扫描、Civitai hash lookup、cache inventory 与 `/api/loras/refresh` 已移除。原因不是此前修复无效，而是 onboarding 已能直接枚举目标文件、验收 LoRA Manager 索引、展示本地候选并经人工确认写入正式 Registry；继续保留第二套自动 inventory 只会制造两个真相源。
 
 ### 6.2 Onboarding 工具
 
@@ -408,7 +410,7 @@ python .tools/register_lora.py --civitai <url>
 
 流程：
 
-1. 展示本地 metadata、cache、Civitai candidate 和作者描述；
+1. 展示本地 metadata、`.civitai.info` candidate 和作者描述；
 2. 用户判断 type / trigger_policy；
 3. 逐 Profile 录入 name/aliases/provides/required/default/optional tags；
 4. 录入 source/verified/default strength；
@@ -436,7 +438,7 @@ python .tools/register_lora.py --civitai <url>
 - 单 Profile LoRA：直接选择。
 - 多 Profile LoRA：显示二级选择；默认可为 `自动判断`，专家用户可明确锁定 Profile；允许组合的 Asset 可同时点选多个 Profile。
 - 当前叠加栈显示 `provides`、Profile、verified 状态与逐 Asset 强度；无 trigger 标注“权重生效，无需触发词”。不向普通用户额外展开 exact/minimal tags。
-- unknown/incomplete 显示但禁用生成，提供“待注册”说明。
+- 未注册文件不进入生产选择器；由 onboarding 工具的本地文件列表承接“待注册”发现。
 
 ### 7.2 调用顺序
 
@@ -468,7 +470,7 @@ python .tools/register_lora.py --civitai <url>
 - nested registry 正常加载、热更新、schema 错误保留旧版本；
 - registry revision 稳定、变更后 cache 隔离；
 - config legacy 多 key/同 file → Profiles + legacy alias；
-- scanner metadata 预过滤、failed 重试、fingerprint 失效、unknown 可见；
+- onboarding 枚举未注册文件、Manager scan 成功但目标缺失仍拒绝入库、索引失败时不调用 LLM；
 - explicit Profile 锁定、auto 候选校验、无匹配不取“第一个”；
 - exact trigger 编译、转义保留、幂等去重；
 - optional tag 白名单；
@@ -522,7 +524,7 @@ B = aware：LLM 知 provides/Profile + Binding Compiler minimal exact tags
 
 ## 9. 执行步骤与验收门
 
-Step 0-10 已于 2026-08-23 完成。最终实现包含 versioned Registry/热加载、scanner inventory、legacy adapter、Selection Resolver、Binding Compiler、LoRA-aware text/vision、translate/jobs/dialog revision snapshot、前端 Profile/stale UX、onboarding 工具和真实固定条件 A/B。
+Step 0-10 已于 2026-08-23 完成。当前实现包含 versioned Registry/热加载、legacy adapter、Selection Resolver、Binding Compiler、LoRA-aware text/vision、translate/jobs/dialog revision snapshot、前端 Profile/stale UX、onboarding 工具和真实固定条件 A/B；首版 scanner inventory 已在 2026-08-28 由 onboarding 取代。
 
 | Step | 内容 | 通过条件 |
 |---|---|---|
@@ -568,3 +570,19 @@ Step 0-10 已于 2026-08-23 完成。最终实现包含 versioned Registry/热�
 最终成功标准只有一个：
 
 > **用户选择的 LoRA、模型规划的 Prompt、代码编译的 trigger 与工作流实际加载的权重表达同一套画面意图；人物/风格不串，同时给动作、场景、构图和光影留下足够表达空间。**
+
+---
+
+## 11. 风格 LoRA 固定对照预览（候选扩展）
+
+目标不是复刻作者样图，而是让不认识 LoRA 名称的用户在同一把尺子下看到风格差异。首版只覆盖单个风格/细节 Asset，不预生成组合结果；多 LoRA 组合数量会指数增长，也无法由一张缩略图可靠代表。
+
+固定条件：
+
+- 同一 Anima checkpoint、workflow、sampler/steps/negative、`1024x1024`、seed；关闭 detailer，避免额外模型改变脸部风格；
+- Prompt 使用一名原创、非 IP 角色，包含脸、头发、皮肤、布料、陶瓷/木材、植物和室内外光线等可比较材质；不写画师名或强风格词；
+- 直接使用固定英文 Prompt，绕过 Reasoning Model 翻译随机性；
+- 保留一张无 LoRA baseline；每张预览记录 Asset key、Registry revision、强度、seed 和生成协议版本；
+- v1 先统一强度做公平横比。若真实测试证明某个 LoRA 在统一强度下明显失真，再引入显式 `preview_strength` 例外并在界面标注，不把推荐强度差异伪装成纯风格差异。
+
+验收顺序：先生成 baseline + 3 个差异明显的风格 LoRA，由人眼确认固定 Prompt 能同时暴露线稿、上色、光影和背景差异；通过后再批量补齐。图片应标注“固定测试图，不代表全部能力”。Registry/API 已有可选 `preview` 字段，但前端展示与预览文件存储位置应在试生成通过后再落地，避免先建设无效图库。

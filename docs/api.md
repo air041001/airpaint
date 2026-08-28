@@ -44,7 +44,7 @@ Authorization: Bearer <token>
 ```
 
 ### GET /api/loras
-列出 LoRA Asset (需鉴权)。合并 versioned Registry > legacy config > 自动 inventory，按 type 分组；unknown/incomplete 保留在 `other` 供 onboarding，不再静默隐藏。
+列出可用 LoRA Asset (需鉴权)。合并 versioned Registry > 尚未迁移的 legacy config，按 type 分组；未注册本地文件不进入生产 API，由 onboarding 工具直接枚举。
 
 响应 `200`:
 ```json
@@ -69,16 +69,17 @@ Authorization: Bearer <token>
   "other": []
 }
 ```
-- `configured=false` 表示自动 inventory 尚未形成可用 Profile/trigger；前端显示“待注册”并禁用。
-- `source`: `"registry"`、`"config"` 或 `"civitai"`（自动 inventory）。
+- `configured` 对当前生产列表恒为 `true`；字段暂保留供旧前端兼容。
+- `source`: `"registry"` 或 `"config"`（尚未迁移兼容项）。
 - `profiles` 只暴露语义 ID、名称、aliases、provides、verified 与 optional ID；不向前端发送 exact tags 作为可编辑真相。
 - `allow_multiple_profiles=true` 表示同一 Asset 可同时选择多个 Profile；它是 Registry 能力声明，不是多人出图质量证明。
 - `styles` 同时承载 `style/action/expression` 类型，作为风格/细节叠加区；无法分类的条目仍在 `other`。
 - `strength_model/strength_clip` 是 Registry 默认值，前端选择 Asset 时同步到该 Asset 的滑块；请求可逐 Asset 覆盖为 0~2。
 - `preview` 可能为 `null` (前端应容错隐藏)。
 
-### POST /api/loras/refresh
-重新扫描 LoRA 目录, 查 Civitai 补全未配置的 LoRA 元数据 (需鉴权)。
+### POST /api/loras/refresh（已移除）
+
+旧接口会扫描全目录、计算 hash 并把 Civitai trainedWords 暴露为自动 inventory，已由 `.tools/register_lora.py --agent` 的“目标 LoRA Manager 索引验收 + 人工确认 Registry 候选”取代。新客户端不应调用此接口。
 
 响应 `200`:
 ```json

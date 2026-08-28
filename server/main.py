@@ -199,251 +199,16 @@ def _normalize_completion_level(value) -> str:
         raise HTTPException(400, "completion_level 必须是 auto、faithful 或 free")
     return level
 
-# ---------- LoRA 注册表: config 手动 + 自动扫描 Civitai ----------
-# 三层叠加 (优先级高->低): config.yaml 手动配置 > Civitai hash lookup 自动补全 > 裸文件名
-# config 里有的条目: 用 config 的 trigger/type/name (人判断最准, 含服装变体)
-# config 里没有的 .safetensors: 按 SHA256 查 Civitai 取 trainedWords/modelName/tags
-#   有 trainedWords -> 自动可用; 没有 -> 标记 "未配置", 需手动加 config
+# ---------- LoRA Registry ----------
+# versioned lora_registry.yaml 是唯一正式知识源；config.yaml 顶层 loras 只保留
+# 尚未迁移资产的兼容读取。新文件由 .tools/register_lora.py --agent 完成
+# LoRA Manager 索引检查、作者说明蒸馏和 Registry 原子写入。
 LORA_DIR = Path(CFG.get("comfy_dir", ".")) / "models" / "loras"
-LORA_CACHE_FILE = BASE / "lora_cache.json"
 LORA_REGISTRY = HotLoraRegistry(LORA_REGISTRY_PATH)
-# {filename_stem: {sha256, trainedWords, modelName, tags, baseModel, type, fetchedAt}}
-_lora_auto: dict[str, dict] = {}
-_lora_auto_loaded = False
-
-
-def _load_lora_cache():
-    """从磁盘加载自动扫描缓存 (避免每次重启都请求 Civitai)."""
-    global _lora_auto, _lora_auto_loaded
-    if _lora_auto_loaded:
-        return
-    try:
-        if LORA_CACHE_FILE.exists():
-            _lora_auto = json.loads(LORA_CACHE_FILE.read_text(encoding="utf-8"))
-    except Exception as e:
-        print(f"[LoRA] 缓存文件读取失败: {e}", flush=True)
-    _lora_auto_loaded = True
-
-
-def _save_lora_cache():
-    """持久化自动扫描缓存到磁盘."""
-    try:
-        LORA_CACHE_FILE.write_text(json.dumps(_lora_auto, ensure_ascii=False, indent=2), encoding="utf-8")
-    except Exception as e:
-        print(f"[LoRA] 缓存文件写入失败: {e}", flush=True)
-
-
-def _read_sha256(filepath: Path) -> str | None:
-    """读 SHA256: 优先 LoraManager .metadata.json -> .sha256 文件 -> 现算 (大文件慢)."""
-    stem = filepath.stem
-    d = filepath.parent
-    meta = d / f"{stem}.metadata.json"
-    if meta.exists():
-        try:
-            m = json.loads(meta.read_text(encoding="utf-8"))
-            sha = (m.get("sha256") or "").strip().lower()
-            if sha:
-                return sha
-        except Exception:
-            pass
-    sha_file = d / f"{stem}.sha256"
-    if sha_file.exists():
-        try:
-            return sha_file.read_text(encoding="utf-8").strip().lower()
-        except Exception:
-            pass
-    try:
-        h = hashlib.sha256()
-        with open(filepath, "rb") as f:
-            for chunk in iter(lambda: f.read(8 * 1024 * 1024), b""):
-                h.update(chunk)
-        return h.hexdigest()
-    except Exception:
-        return None
-
-
-def _read_lora_metadata(filepath: Path) -> dict:
-    result = {}
-    meta = filepath.with_name(f"{filepath.stem}.metadata.json")
-    if meta.exists():
-        try:
-            raw = json.loads(meta.read_text(encoding="utf-8"))
-            if isinstance(raw, dict):
-                result.update(raw)
-        except Exception:
-            pass
-    # ComfyUI Manager/Civitai Helper 可能把完整索引写在同名 .civitai.info。
-    # 这里只读取结构化字段作为 inventory candidate；HTML description 仍须人工蒸馏，
-    # 不允许自动污染正式 Registry。
-    civitai_info = filepath.with_name(f"{filepath.stem}.civitai.info")
-    if civitai_info.exists():
-        try:
-            raw = json.loads(civitai_info.read_text(encoding="utf-8"))
-            if isinstance(raw, dict):
-                model = raw.get("model") or {}
-                files = raw.get("files") or []
-                file_info = next(
-                    (item for item in files if isinstance(item, dict)
-                     and item.get("name") == filepath.name),
-                    files[0] if files and isinstance(files[0], dict) else {},
-                )
-                hashes = file_info.get("hashes") or {}
-                result.setdefault("sha256", str(hashes.get("SHA256") or "").lower())
-                result.setdefault("trainedWords", raw.get("trainedWords") or [])
-                result.setdefault("model_name", model.get("name") or raw.get("name") or filepath.stem)
-                result.setdefault("tags", model.get("tags") or [])
-                result.setdefault("baseModel", raw.get("baseModel") or "")
-                result["metadata_source"] = "civitai.info"
-        except Exception:
-            pass
-    return result
-
-
-def _classify_lora_type(tags) -> tuple[str, list[str]]:
-    tag_names = [t.get("name", "") if isinstance(t, dict) else str(t) for t in (tags or [])]
-    low = {name.strip().lower() for name in tag_names}
-    lora_type = "character" if "character" in low else (
-        "style" if any(tag in low for tag in ("style", "artist", "artstyle")) else "unknown")
-    return lora_type, tag_names
-
-
-def _lora_fingerprint(filepath: Path) -> str:
-    stat = filepath.stat()
-    return f"{stat.st_size}:{stat.st_mtime_ns}"
-
-
-async def _civitai_lookup(sha256: str) -> dict | None:
-    """按 SHA256 查 Civitai API, 返回 {trainedWords, modelName, tags, baseModel, type} 或 None."""
-    try:
-        r = await CLIENT.get(
-            f"https://civitai.com/api/v1/model-versions/by-hash/{sha256}", timeout=15)
-        if r.status_code != 200:
-            return None
-        d = r.json()
-        model = d.get("model") or {}
-        # Civitai model.tags 是 [{name, count}] 对象数组, 提取 name 列表再判类型
-        # (修: 旧代码 "character" in tags 当字符串数组用, 永远 False -> 全 unknown)
-        lora_type, tag_names = _classify_lora_type(model.get("tags") or [])
-        return {
-            "trainedWords": d.get("trainedWords") or [],
-            "modelName": model.get("name", ""),
-            "tags": tag_names,
-            "baseModel": d.get("baseModel", ""),
-            "type": lora_type,
-        }
-    except Exception:
-        return None
-
-
-async def scan_loras(force: bool = False) -> dict:
-    """扫描 LoRA inventory；metadata 预过滤非图片文件，失败项允许 refresh 重试。"""
-    global _lora_auto
-    _load_lora_cache()
-    if not LORA_DIR.exists():
-        return {"scanned": 0, "new": 0, "failed": 0, "excluded": 0, "total_auto": len(_lora_auto)}
-    registry, _ = LORA_REGISTRY.snapshot()
-    registry_files = {v.get("file", "") for v in registry.get("loras", {}).values()}
-    config_files = {v.get("file", "") for v in CFG.get("loras", {}).values()} | registry_files
-    sfs = sorted(LORA_DIR.glob("*.safetensors"))
-    new_count = failed = excluded = 0
-    image_bases = {"Anima", "NoobAI", "SDXL", "Illustrious", "Unknown", ""}
-    for fp in sfs:
-        if fp.name in config_files:
-            continue
-        key = fp.stem
-        fingerprint = _lora_fingerprint(fp)
-        cached = _lora_auto.get(key) or {}
-        cached_status = cached.get("status", "resolved" if cached else "")
-        cached_base = str(cached.get("baseModel") or "").strip()
-        # refresh 也不能把已经确认是视频底模的巨型文件重新做 SHA256。部分
-        # Wan 文件的 sidecar metadata 只写 Unknown，但旧 Civitai 结果已经足够
-        # 证明它不属于当前图片工作流；文件指纹变化后仍应先排除，再谈联网刷新。
-        known_video_name = key.lower().startswith("wan_") or key.lower().startswith("detailz-wan")
-        if ((cached_base and cached_base not in image_bases) or known_video_name):
-            _lora_auto[key] = {
-                **cached,
-                "sha256": cached.get("sha256", ""),
-                "trainedWords": cached.get("trainedWords", []),
-                "modelName": cached.get("modelName") or key,
-                "tags": cached.get("tags", []),
-                "baseModel": cached_base or "Wan Video",
-                "type": cached.get("type", "unknown"),
-                "status": "excluded",
-                "fingerprint": fingerprint,
-                "fetchedAt": time.time(),
-            }
-            excluded += 1
-            continue
-        if (not force and cached.get("fingerprint") == fingerprint
-                and cached_status in {"resolved", "excluded"}):
-            continue
-        metadata = _read_lora_metadata(fp)
-        metadata_base = (metadata.get("base_model") or metadata.get("baseModel") or "").strip()
-        if metadata_base and metadata_base not in image_bases:
-            _lora_auto[key] = {
-                "sha256": (metadata.get("sha256") or "").strip().lower(),
-                "trainedWords": [], "modelName": metadata.get("model_name") or key,
-                "tags": [], "baseModel": metadata_base, "type": "unknown",
-                "status": "excluded", "fingerprint": fingerprint,
-                "fetchedAt": time.time(),
-            }
-            excluded += 1
-            continue
-        metadata_words = metadata.get("trainedWords") or []
-        if isinstance(metadata_words, list) and metadata_words:
-            metadata_type, metadata_tags = _classify_lora_type(metadata.get("tags") or [])
-            status = "resolved" if metadata_type in {"character", "style"} else "incomplete"
-            _lora_auto[key] = {
-                "sha256": str(metadata.get("sha256") or "").lower(),
-                "trainedWords": metadata_words,
-                "modelName": metadata.get("model_name") or key,
-                "tags": metadata_tags,
-                "baseModel": metadata_base,
-                "type": metadata_type,
-                "status": status,
-                "fingerprint": fingerprint,
-                "metadataSource": metadata.get("metadata_source", "metadata"),
-                "fetchedAt": time.time(),
-            }
-            new_count += 1
-            continue
-        sha = _read_sha256(fp)
-        if not sha:
-            _lora_auto[key] = {
-                "sha256": "", "trainedWords": [], "modelName": key, "tags": [],
-                "baseModel": metadata_base, "type": "unknown", "status": "failed",
-                "fingerprint": fingerprint, "fetchedAt": time.time(),
-            }
-            failed += 1
-            continue
-        info = await _civitai_lookup(sha)
-        if info is None:
-            _lora_auto[key] = {"sha256": sha, "trainedWords": [], "modelName": key,
-                                "tags": [], "baseModel": metadata_base, "type": "unknown",
-                                "status": "failed", "fingerprint": fingerprint,
-                                "fetchedAt": time.time()}
-            failed += 1
-        elif info.get("baseModel") and info["baseModel"] not in image_bases:
-            _lora_auto[key] = {"sha256": sha, "fetchedAt": time.time(),
-                               "status": "excluded", "fingerprint": fingerprint, **info}
-            excluded += 1
-        else:
-            status = "resolved" if info.get("type") in {"character", "style"} else "incomplete"
-            _lora_auto[key] = {"sha256": sha, "fetchedAt": time.time(),
-                               "status": status, "fingerprint": fingerprint, **info}
-            new_count += 1
-        await asyncio.sleep(0.3)  # 对 Civitai 友好
-    # 文件已删除/改名的旧 stem 清理；excluded 保留状态供诊断，但不会进入 registry/API。
-    valid_stems = {fp.stem for fp in sfs}
-    _lora_auto = {k: v for k, v in _lora_auto.items() if k in valid_stems}
-    _save_lora_cache()
-    return {"scanned": len(sfs), "new": new_count, "failed": failed,
-            "excluded": excluded, "total_auto": len(_lora_auto)}
 
 
 def get_lora_registry() -> dict[str, dict]:
-    """合并 versioned registry > legacy config > 自动 inventory，返回 Asset 级结构。"""
-    _load_lora_cache()
+    """合并 versioned Registry 与尚未迁移的 legacy config，返回 Asset 级结构。"""
     raw_registry, revision = LORA_REGISTRY.snapshot()
     registry: dict[str, dict] = {}
 
@@ -485,35 +250,6 @@ def get_lora_registry() -> dict[str, dict]:
             "registry_revision": revision,
         }
 
-    # 3. 自动 inventory：unknown/incomplete 也保留，API 放到 other 供 onboarding。
-    covered_files = {v.get("file", "") for v in registry.values()}
-    for key, info in _lora_auto.items():
-        fname = f"{key}.safetensors"
-        if (fname in covered_files or info.get("status") == "excluded"
-                or (info.get("baseModel") and info.get("baseModel") not in
-                    {"Anima", "NoobAI", "SDXL", "Illustrious", "Unknown"})):
-            continue
-        trained = info.get("trainedWords", [])
-        candidate_tags = []
-        for group in trained:
-            candidate_tags.extend(x.strip() for x in str(group).split(",") if x.strip())
-        registry[key] = {
-            "key": key,
-            "type": info.get("type", "unknown"),
-            "name": info.get("modelName", key),
-            "file": fname,
-            "trigger_policy": "required" if candidate_tags else "none",
-            "required_tags": candidate_tags,
-            "provides": [],
-            "strength_model": 1.0,
-            "strength_clip": 1.0,
-            "description": "",
-            "preview": None,
-            "source": "civitai",
-            "configured": False,
-            "inventory_status": info.get("status", "incomplete"),
-            "registry_revision": revision,
-        }
     return registry
 
 
@@ -2777,7 +2513,6 @@ async def worker():
 @app.on_event("startup")
 async def _startup():
     asyncio.create_task(worker())
-    asyncio.create_task(scan_loras())  # 后台扫 LoRA, 不阻塞启动
 
 
 # ---------- API ----------
@@ -2850,13 +2585,6 @@ async def list_loras(token: str = Depends(auth)):
             "styles": [i for i in items if i["type"] in stackable_detail_types],
             "other": [i for i in items
                       if i["type"] != "character" and i["type"] not in stackable_detail_types]}
-
-
-@app.post("/api/loras/refresh")
-async def refresh_loras(token: str = Depends(auth)):
-    """强制重试 failed/incomplete inventory，并重新按 metadata/Civitai 分类。"""
-    result = await scan_loras(force=True)
-    return {"ok": True, **result}
 
 
 def _extract_lora_selections(body: dict):

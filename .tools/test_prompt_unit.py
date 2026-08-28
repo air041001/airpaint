@@ -690,90 +690,6 @@ def test_lora_registry_revision_rejects_stale_binding():
         raise AssertionError("stale LoRA registry revision must be rejected")
 
 
-def test_scan_force_skips_known_wan_without_hashing():
-    with tempfile.TemporaryDirectory() as td:
-        temp_dir = Path(td)
-        wan = temp_dir / "wan_lightx2v_high_noise_model.safetensors"
-        wan.write_bytes(b"not-a-real-model")
-        old_dir = main.LORA_DIR
-        old_cache_file = main.LORA_CACHE_FILE
-        old_auto = main._lora_auto
-        old_loaded = main._lora_auto_loaded
-        old_read_sha = main._read_sha256
-
-        def fail_if_hashed(_):
-            raise AssertionError("known Wan file must be excluded before SHA256")
-
-        try:
-            main.LORA_DIR = temp_dir
-            main.LORA_CACHE_FILE = temp_dir / "cache.json"
-            main._lora_auto = {
-                wan.stem: {
-                    "baseModel": "Wan Video 14B",
-                    "status": "excluded",
-                    "fingerprint": "old",
-                }
-            }
-            main._lora_auto_loaded = True
-            main._read_sha256 = fail_if_hashed
-            result = asyncio.run(main.scan_loras(force=True))
-            assert result["excluded"] == 1, result
-            assert main._lora_auto[wan.stem]["status"] == "excluded"
-        finally:
-            main.LORA_DIR = old_dir
-            main.LORA_CACHE_FILE = old_cache_file
-            main._lora_auto = old_auto
-            main._lora_auto_loaded = old_loaded
-            main._read_sha256 = old_read_sha
-
-
-def test_scan_uses_local_civitai_info_before_hash_or_network():
-    with tempfile.TemporaryDirectory() as td:
-        temp_dir = Path(td)
-        lora = temp_dir / "sidecar_character.safetensors"
-        lora.write_bytes(b"not-a-real-model")
-        (temp_dir / "sidecar_character.civitai.info").write_text(json.dumps({
-            "name": "v1", "baseModel": "Illustrious",
-            "trainedWords": ["sidecar_character, blue hair"],
-            "model": {"name": "Sidecar Character", "tags": ["character", "anime"]},
-            "files": [{"name": lora.name, "hashes": {"SHA256": "ABC123"}}],
-        }), encoding="utf-8")
-        old_dir = main.LORA_DIR
-        old_cache_file = main.LORA_CACHE_FILE
-        old_auto = main._lora_auto
-        old_loaded = main._lora_auto_loaded
-        old_read_sha = main._read_sha256
-        old_lookup = main._civitai_lookup
-
-        def fail_if_hashed(_):
-            raise AssertionError("valid .civitai.info must avoid SHA256")
-
-        async def fail_if_online(_):
-            raise AssertionError("valid .civitai.info must avoid network lookup")
-
-        try:
-            main.LORA_DIR = temp_dir
-            main.LORA_CACHE_FILE = temp_dir / "cache.json"
-            main._lora_auto = {}
-            main._lora_auto_loaded = True
-            main._read_sha256 = fail_if_hashed
-            main._civitai_lookup = fail_if_online
-            result = asyncio.run(main.scan_loras(force=True))
-            cached = main._lora_auto[lora.stem]
-            assert result["new"] == 1, result
-            assert cached["status"] == "resolved", cached
-            assert cached["type"] == "character", cached
-            assert cached["sha256"] == "abc123", cached
-            assert cached["metadataSource"] == "civitai.info", cached
-        finally:
-            main.LORA_DIR = old_dir
-            main.LORA_CACHE_FILE = old_cache_file
-            main._lora_auto = old_auto
-            main._lora_auto_loaded = old_loaded
-            main._read_sha256 = old_read_sha
-            main._civitai_lookup = old_lookup
-
-
 def test_lora_binding_compiler_is_exact_and_idempotent():
     bindings, _, _ = main.resolve_lora_selections(["denia_white"])
     first = main.compile_lora_bindings("1girl, solo, denia wuthering waves, beach, sunset", bindings)
@@ -1116,8 +1032,6 @@ def main_test():
         test_lora_intent_alias_locks_profile_and_optional_ids,
         test_deepseek_view_recipes_are_conditional,
         test_lora_registry_revision_rejects_stale_binding,
-        test_scan_force_skips_known_wan_without_hashing,
-        test_scan_uses_local_civitai_info_before_hash_or_network,
         test_lora_binding_compiler_is_exact_and_idempotent,
         test_lora_binding_compiler_removes_sibling_profile_trigger,
         test_character_lora_blocks_profile_name_appearance_inference,

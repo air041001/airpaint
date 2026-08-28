@@ -174,9 +174,9 @@ PromptState
 
 #### 9. LoRA 规则
 
-当前代码已有：LoRA Registry / config 手动配置 / Civitai 元数据 / 多 LoRA 注入 / trigger 拼接。
+当前代码已有：versioned LoRA Registry / onboarding + LoRA Manager 目标索引验收 / 多 LoRA 注入 / Binding Compiler；`config.yaml.loras` 仅为未迁移兼容层。
 
-当前"trigger 字符串直接拼接"只是兼容现状，不是最终架构。
+当前 exact trigger 编译注入仍是兼容边界，不是最终架构。
 
 未来方向：
 
@@ -220,7 +220,7 @@ Phase 7  LoRA Composition
 Phase 8  Workflow Intelligence
 ```
 
-**基础维护项不是独立 Phase**：修 `scan_loras` / 清理明显错误的 `char_dict` / 同步旧文档中的模型名称等，应在需要时完成，**不要让基础维护抢占 Prompt Intelligence 主线**。
+**基础维护项不是独立 Phase**：旧 `scan_loras` 的历史修复与退役 / 清理明显错误的 `char_dict` / 同步旧文档中的模型名称等，应在需要时完成，**不要让基础维护抢占 Prompt Intelligence 主线**。
 
 ---
 
@@ -367,7 +367,7 @@ Dxx. 标题
 | 内容过滤 | `check_banned()` | banned_words 子串匹配 |
 | **Prompt Engine** | `translate()` `match_characters()` `match_dict_words()` `siliconflow_translate()` `_parse_structured_output()` `normalize_tag_order()` `_strip_char_bare_names()` `HotDict` | 三层：角色→词典→LLM（信息分流：5 字段给人看 + TAGS 离散 + NL 关系叙事不重复，D28）/ LRU 缓存 500 / reroll 跳过缓存 / tag 规范序 count→char→general / 词典 mtime 热更新 / **裸名变体去重防 IP logo（D30）** |
 | **Workflow Engine** | `sanitize_for_api()` `build_prompt()` `upload_image_to_comfy()` | 清洗 + 注入 prompt/seed/size/多 LoRA/img2img/detailer（D32 合并工作流 + 删节点拼接）/ 统一 seed / img2img + detailer + LoRA 一份 `AnimaFull.json` |
-| **LoRA Registry** | `get_lora_registry()` `scan_loras()` `_civitai_lookup()` | 三层合并：config 手动 > Civitai SHA256 自动 > 裸文件；`/api/loras` 分组返回 + configured 标记；**D29 + T3 scan_loras 三处修复（tags 对象数组 / Wan 残留 / 旧 stem 清理）** |
+| **LoRA Registry** | `HotLoraRegistry` `get_lora_registry()` `resolve_lora_selections()` `compile_lora_bindings()` | versioned Registry 为正式真相，未迁移 `config.yaml.loras` 只作兼容；新文件由 `.tools/register_lora.py --agent` 检查 LoRA Manager 索引、蒸馏作者说明并原子入库。旧启动扫描/Civitai cache 已由 D49 退役。 |
 | ComfyUI 客户端 | `submit_and_wait()` | `/prompt` 提交 + `/history` 轮询 + `/view` 取图 |
 | 队列 | `worker()` `QUEUE` | 单并发 asyncio.Queue（GPU 串行） |
 | 静态托管 | `/` `/images` | `/` 返回 `web/index.html`，`/images` 出图 |

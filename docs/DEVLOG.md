@@ -834,3 +834,13 @@ LoRA 选择从“角色×1 + 风格×1”扩展为逐 Asset 叠加栈：角色�
 后端把同一 Asset 的多个 Profile 合并为一个 binding，分别解析 exact tags/provides/optional，再在 workflow 层按 safetensors 文件名去重，保证同文件只加载一次。不同 Asset 保持独立 binding/强度；同一物理文件以冲突强度重复出现时返回 400。旧字符串 selection、单 `profile`、`strength_char/strength_style` 继续兼容。
 
 验证：`6 lora composition tests passed`、`53 prompt unit tests passed`、Python 编译和前端 2 段内联脚本语法通过。真实 Registry payload 的同文件双 Profile + 跨文件单 Profile + 4 风格得到 3 个语义角色、6 个 binding 和 6 个唯一 Loader 文件；浏览器桌面/390px 验证了连续多选、第四角色拦截、逐项强度、双主题和无横向溢出。没有进行固定条件多人图的人眼验收，因此只关闭 Composition 工程链，不宣称多人构图、动作绑定或属性防串质量完成。
+
+## 第 56 条 2026-08-28 - 旧 LoRA 自动 Scanner 退役与预览基准候选
+
+沿实际调用链复核后，确认旧 `scan_loras()` 并非死函数：启动事件、刷新 API 与 cache 合并仍在调用；但 D53 onboarding 已能直接枚举新文件并验收 LoRA Manager 的目标索引，旧链只额外暴露一个未注册 Civitai cache 条目，形成重复真相源。因此删除启动全目录扫描、hash/Civitai lookup、`server/lora_cache.json` 读取和 `/api/loras/refresh`，并把 onboarding 列表需要的轻量 sidecar 读取移回工具。`main.py` 从 3304 行降到 3032 行。
+
+legacy `config.yaml.loras` 没有一并删除：本机运行时核对显示仍有 `ningen_mame` 只存在于旧 config，直接移除会造成资产静默消失。配置示例已明确标注该段由 versioned Registry + onboarding 取代，只允许兼容读取，不再新增。
+
+验证：Python 编译通过；`51 prompt unit tests passed`、`6 lora composition tests passed`、`14 lora onboarding agent tests passed`、`registry valid: 15 assets`。运行时 `/api/loras` 数据源为 15 个 Registry + 1 个 legacy config，Civitai 自动 inventory 为 0。
+
+同时在 PLAN-LORA 记录风格预览候选：固定模型/workflow/seed/英文 Prompt/画幅并保留无 LoRA baseline，先试 3 个风格；统一强度不适配的资产再用显式 `preview_strength` 例外。人物、多 LoRA 组合和前端图库暂不提前建设，预览质量仍需固定条件图片由人眼验收。

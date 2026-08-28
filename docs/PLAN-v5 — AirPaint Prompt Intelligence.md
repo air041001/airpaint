@@ -60,7 +60,7 @@ ComfyUI
 - LLM fallback（DeepSeek-V4-Flash）
 - Prompt breakdown（5 字段：scene/composition/mood/lighting/style，`_STRUCTURED_FIELDS` L375）
 - TAG/NL 信息分流（D28，HARD RULE：NL 不复述 TAGS）
-- LoRA Registry（config.yaml loras + Civitai 自动元数据 `scan_loras()` L159）
+- LoRA Registry（当前为 versioned `lora_registry.yaml` + 未迁移 config 兼容；旧 Civitai `scan_loras()` 已由 D49/onboarding 取代）
 - 多 LoRA workflow 注入（`build_prompt` L807-827，trigger `", ".join(triggers)` L827）
 - img2img / detailer / reroll / 对话迭代（dialog_turn redo/tweak/vibe）
 - ComfyUI Workflow API 注入 + 单 GPU 队列
@@ -236,7 +236,7 @@ LLM 不直接负责最终 Prompt。建议输出：
 > 清理记录（2026-08-19）：`baseline.yaml` 是未验证的 agent 产物，Phase 2/3 被误当质量门槛。已删除 baseline/cases/run_baseline/compare，结构不变量改由单测覆盖（见 DEVLOG 40）。第二层固定生图夹具（`image_cases.yaml`、NSFW `visual_results.yaml`、Phase 2.6 盲评结果）保留，作为真正的人眼质量真值。
 
 基础维护顺手做（不阻塞主线）：
-- 修 scan_loras 三处问题（Civitai type 判定用 baseModel/model.type 而非 tags / 缓存 key 用完整文件名 / Wan 残留清理）
+- 历史维护：修 scan_loras 三处问题（该扫描器随后由 Registry onboarding 取代，见 D49）
 - 同步文档模型名（DeepSeek-V4-Flash + Qwen3-VL）
 - 修已知 char_dict 错误（amamiya_kokoro 已修；全量审查延后 Phase 3）
 
@@ -342,7 +342,7 @@ Phase 4 不永久取消，但在暗房使用数据证明 redo/tweak 高频，或
 
 ### 现在做（Phase 0 + Phase 1）
 - Evaluation Set 第一层（20-50 条，结构回归）
-- 修 scan_loras / 文档模型名 / 已知 char_dict 错误（顺手）
+- 历史维护：修 scan_loras（后已退役）/ 文档模型名 / 已知 char_dict 错误（顺手）
 - Prompt IR 定义（12 字段）
 - LLM 输出协议改 Prompt IR JSON + 验证稳定性
 - Prompt Compiler 初版
@@ -369,7 +369,7 @@ Phase 4 不永久取消，但在暗房使用数据证明 redo/tweak 高频，或
 |---|---|---|
 | `server/main.py` | Prompt Engine / Compiler / dialog_turn | Phase 1 改（IR + Compiler） |
 | `server/char_dict.yaml` / `dict.yaml` | 知识库 | Phase 0 只修已知错误 |
-| `server/config.yaml` loras / `lora_cache.json` | LoRA registry | Phase 0 修 scan_loras |
+| `server/lora_registry.yaml` / `.tools/register_lora.py` | LoRA Registry / onboarding（取代旧 config+Civitai cache scanner） | LoRA 工程维护 |
 | `.tools/eval_set/`（新建） | Evaluation Set | Phase 0 建 |
 | `ROADMAP.md` | 阶段规划 | Phase 0 同步指向 v5 |
 
