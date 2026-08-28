@@ -573,20 +573,19 @@ Step 0-10 已于 2026-08-23 完成。当前实现包含 versioned Registry/热�
 
 ---
 
-## 11. 风格 LoRA 固定对照预览（候选扩展）
+## 11. 风格 LoRA 人物对照预览（已落地）
 
-目标不是复刻作者样图，而是让不认识 LoRA 名称的用户在同一把尺子下看到风格差异。首版只覆盖单个风格/细节 Asset，不预生成组合结果；多 LoRA 组合数量会指数增长，也无法由一张缩略图可靠代表。
+目标不是复刻作者样图，而是让不认识 LoRA 名称的用户直接判断“这个画风下的人物是否好看”。首版只表示单个风格/细节 Asset，不预生成组合结果；多 LoRA 组合数量会指数增长，也无法由一张缩略图可靠代表。
 
-固定条件：
+最终协议 `style-preview-character-v1`：
 
-- 同一 Anima checkpoint、workflow、sampler/steps/negative、`1024x1024`、seed；关闭 detailer，避免额外模型改变脸部风格；
-- Prompt 使用一名原创、非 IP 角色，包含脸、头发、皮肤、布料、陶瓷/木材、植物和室内外光线等可比较材质；不写画师名或强风格词；
-- 直接使用固定英文 Prompt，绕过 Reasoning Model 翻译随机性；
-- 保留一张无 LoRA baseline；每张预览记录 Asset key、Registry revision、强度、seed 和生成协议版本；
-- v1 先统一强度做公平横比。若真实测试证明某个 LoRA 在统一强度下明显失真，再引入显式 `preview_strength` 例外并在界面标注，不把推荐强度差异伪装成纯风格差异。
+- 固定 Anima checkpoint、workflow、sampler/steps/negative、seed 与直接英文 Prompt，画幅为 `896x1152`，关闭 detailer；
+- 固定 DeepSeek 女仆 LoRA 的 `maid` Profile、正面身份与腰上服装 optional，使用浅色简洁背景和柔和棚拍光；
+- baseline 只加载人物 LoRA；每张候选只再叠加一个 style LoRA，使用该 Asset 的 Registry 默认强度；
+- 人物、脸、头发、服装褶皱和手部占据画面主体。不同风格造成的姿态或镜头变化允许保留，因为它们也是风格表现的一部分；
+- manifest 记录 Asset key、Registry revision、实际 binding、强度、seed、Prompt、尺寸与耗时；生成原图留在 gitignored 实验目录，前端只提交 448×576 WebP；
+- 图片是“固定人物样片”，不代表 LoRA 的全部场景能力，也不证明多个风格叠加后的结果。
 
-验收顺序：先生成 baseline + 3 个差异明显的风格 LoRA，由人眼确认固定 Prompt 能同时暴露线稿、上色、光影和背景差异；通过后再批量补齐。图片应标注“固定测试图，不代表全部能力”。Registry/API 已有可选 `preview` 字段，但前端展示与预览文件存储位置应在试生成通过后再落地，避免先建设无效图库。
+2026-08-29 用户通过首组 DeepSeek baseline + Blue Archive / Light / Fymrie 人物样片后，剩余 Shiratama、Dolphro-kun、Yusano、ningenmame、GPT Image 2、Sakalip 也按同一协议生成并完成肉眼排查。当前 9 个 style Asset 均已落 `server/lora_previews/<key>.webp`，API 在 Registry 未显式填写 `preview` 时按 Asset key 安全回退，前端风格菜单以两栏人物印样展示名称、默认强度和选中状态；缺图仍可用文字占位选择。
 
-2026-08-28 首轮试生成发现，纯 txt2img 即使固定 Prompt/seed，Fymrie 仍把“坐在桌边”改成站姿，说明 seed 并不能在更换 LoRA 后锁住构图。当前候选改为：先生成无 LoRA baseline，再以该图作为 img2img 起点，仅替换单个风格 LoRA；`denoise=0.7` 在三项样本中基本保留桌面、窗户、速写本与坐姿，同时比 `0.6` 更容易看出画风。这个协议仍待用户人眼确认；确认前不批量生成剩余资产，也不写正式 preview 字段。
-
-2026-08-29 用户重新明确预览的购买/选择目标是“这个画风下的人物是否好看”，不要求不同 LoRA 保持相同动作。新的优先候选因此改为人物主图：DeepSeek 女仆 LoRA 固定身份、正面身份细节和腰上服装细节，竖幅 `896x1152`、浅色简洁背景、关闭 detailer；baseline 只加载 DeepSeek，每张风格候选再多加载一个 style LoRA，并使用各自 Registry 默认强度。首组三项均真实生成成功，人物和服装占据主要画面，动作漂移不影响判断；仍待用户人眼确认后才取代前一 img2img 候选并批量落库。场景能力未来如确有需要，应作为次级样图而不是挤占人物主预览。
+被放弃的两个方向保留为经验而非现行方案：纯 txt2img 固定 seed 不能锁住构图；baseline 驱动的 img2img 虽更容易保持桌面场景，却把预览目标误设成“场景复现”。如果未来确有场景能力展示需求，应增加可选次级样图，而不是替换人物主预览。

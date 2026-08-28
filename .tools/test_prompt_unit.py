@@ -603,6 +603,24 @@ def test_lora_registry_preserves_nested_profiles():
     assert registry["deepseek_maid"]["strength_model"] == 0.85
 
 
+def test_lora_preview_prefers_explicit_url_and_falls_back_to_static_asset():
+    old_dir = main.LORA_PREVIEWS
+    with tempfile.TemporaryDirectory() as tmp:
+        try:
+            main.LORA_PREVIEWS = Path(tmp)
+            preview = main.LORA_PREVIEWS / "style_card.webp"
+            preview.write_bytes(b"preview")
+            resolved = main.resolve_lora_preview("style_card")
+            assert resolved.startswith("/lora-previews/style_card.webp?v="), resolved
+            assert main.resolve_lora_preview(
+                "style_card", "https://example.test/custom.webp"
+            ) == "https://example.test/custom.webp"
+            assert main.resolve_lora_preview("../unsafe") is None
+            assert main.resolve_lora_preview("missing") is None
+        finally:
+            main.LORA_PREVIEWS = old_dir
+
+
 def test_bright_afternoon_uses_daylight_not_golden_hour():
     tags, remaining = main.match_dict_words("明亮午后光线")
     assert "bright afternoon" in tags, tags
@@ -1037,6 +1055,7 @@ def main_test():
         test_unavailable_lookup_is_retryable,
         test_unknown_character_fallback_on_unavailable,
         test_lora_registry_preserves_nested_profiles,
+        test_lora_preview_prefers_explicit_url_and_falls_back_to_static_asset,
         test_bright_afternoon_uses_daylight_not_golden_hour,
         test_hot_lora_registry_keeps_last_good_snapshot,
         test_lora_legacy_key_resolves_explicit_profile,

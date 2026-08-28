@@ -64,7 +64,7 @@ Authorization: Bearer <token>
     }
   ],
   "styles": [
-    { "key": "shiratama_art", "type": "style", "name": "白玉画风 (Shiratama)", "description": "...", "preview": null, "configured": true, "source": "registry" }
+    { "key": "shiratama_art", "type": "style", "name": "白玉画风 (Shiratama)", "description": "...", "preview": "/lora-previews/shiratama_art.webp?v=...", "configured": true, "source": "registry" }
   ],
   "other": []
 }
@@ -75,7 +75,7 @@ Authorization: Bearer <token>
 - `allow_multiple_profiles=true` 表示同一 Asset 可同时选择多个 Profile；它是 Registry 能力声明，不是多人出图质量证明。
 - `styles` 同时承载 `style/action/expression` 类型，作为风格/细节叠加区；无法分类的条目仍在 `other`。
 - `strength_model/strength_clip` 是 Registry 默认值，前端选择 Asset 时同步到该 Asset 的滑块；请求可逐 Asset 覆盖为 0~2。
-- `preview` 可能为 `null` (前端应容错隐藏)。
+- `preview` 是可直接用于 `<img>` 的 URL。Registry 显式值优先；未填写时后端按安全 Asset key 查找 `server/lora_previews/<key>.webp|png|jpg|jpeg` 并附加 mtime 版本。没有受控资源时为 `null`，前端必须显示文字占位而不能阻断选择。
 
 ### POST /api/loras/refresh（已移除）
 

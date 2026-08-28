@@ -791,3 +791,27 @@ LoRA 用户可见名称以 versioned `server/lora_registry.yaml` 为单一真相
 **修订关系**：本决定补充 D43。D43 修复生成分支选择，本决定修复已正确进入 img2img 后的 Resize 尺寸来源。
 
 **相关文件**：`server/main.py`、`.tools/test_prompt_unit.py`、`docs/workflow-anatomy.md`、`docs/architecture.md`。
+
+## D52. 风格 LoRA 主预览采用固定人物印样，并以受控静态资源自动绑定
+
+**背景**：风格 LoRA 的英文名无法帮助不了解作者的用户判断效果。早期固定桌面场景对照强调构图一致，但真实选择理由更接近“这个画风下的人物是否好看”；强行锁动作还会掩盖风格对姿态、镜头和人物塑造的影响。
+
+**问题**：预览既要保持可比条件，又不能把 seed 一致误当成构图一致；同时不应要求每次新增风格资产都手写一个易漂移的 URL，更不能把原始大图直接塞进设置栏。
+
+**候选**：
+
+1. 固定原创室内场景做 txt2img；条件简单，但换 LoRA 后动作和构图仍会漂移。
+2. 用无 LoRA baseline 驱动 img2img；场景更稳定，但回答的是场景复现，不是人物审美。
+3. 固定 DeepSeek 女仆身份与人物主图条件，允许动作自然变化；用 Registry 默认强度分别追加单个 style LoRA，前端展示裁好的轻量印样。采用此方案。
+
+**决定**：正式协议为 `style-preview-character-v1`：Anima、固定 seed/英文 Prompt、896×1152、DeepSeek `maid` + 正面身份/腰上服装 optional、浅背景、关闭 detailer；baseline 只加载人物 LoRA，每个候选只追加一个 style Asset。原图与 manifest 保留在忽略目录，前端资源统一为 `server/lora_previews/<asset-key>.webp` 的 448×576 图。Registry 的显式 `preview` 仍可覆盖；否则后端只对安全 Asset key 查找受控图片并返回带 mtime 的 `/lora-previews/...` URL。
+
+**原因**：人物脸、头发、布料和手部能在很小的卡片中直接暴露线条、上色和细节倾向；动作差异不会妨碍核心判断。文件名约定让新增/替换样片不必修改 Registry，显式字段又保留外部资源或特例能力。前端沿用既有右栏，只把风格下拉改成两栏接触印样，角色选择与所有请求契约不变。
+
+**代价与风险**：一张人物图不能代表风景、复杂光影或多 LoRA 组合；DeepSeek 本身也会影响结果，因此卡片只能作为同条件入口，不是作者能力排行榜。默认强度不同意味着比较的是“各 Asset 的推荐初始体验”而非严格同权重实验。缺图、加载失败或新增 style Asset 未补图时必须降级为文字卡，不能阻断选择。
+
+**验证**：9 个当前 style Asset 均生成 896×1152 实图并经肉眼排除明显身份/肢体失败，随后转换为 448×576 WebP。API 审计确认 9/9 返回版本化预览 URL；桌面 1920×950 与移动 390×844 的纸本/石墨主题均完成两栏加载、连续选择、当前栈缩略图与无横向溢出检查。Python 编译、53 项 Prompt/Registry/workflow 单测、6 项 Composition 测试和前端静态审计通过；浏览器仅有既存 Tailwind CDN 警告。
+
+**修订关系**：本决定完成 D49 后的风格预览扩展，并保留 D51 暴露的 img2img 尺寸修复；它不改变 D48 的多 LoRA Composition 语义，也不构成多人或组合画质验收。
+
+**相关文件**：`.tools/generate_lora_previews.py`、`server/lora_previews/`、`server/main.py`、`web/index.html`、`.tools/test_prompt_unit.py`、`docs/PLAN-LORA.md`、`docs/api.md`、`docs/architecture.md`。

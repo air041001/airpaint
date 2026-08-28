@@ -27,6 +27,21 @@ KNOWLEDGE_CACHE_DIR = BASE / "knowledge_cache"
 CHAR_AUTO_PATH = KNOWLEDGE_CACHE_DIR / "characters_auto.yaml"
 CHAR_LOOKUP_PATH = KNOWLEDGE_CACHE_DIR / "characters_lookup.json"
 LORA_REGISTRY_PATH = BASE / "lora_registry.yaml"
+LORA_PREVIEWS = BASE / "lora_previews"
+LORA_PREVIEWS.mkdir(exist_ok=True)
+
+
+def resolve_lora_preview(asset_key: str, explicit_preview=None) -> str | None:
+    """显式 Registry URL 优先；否则按安全 Asset key 查找受控静态缩略图。"""
+    if isinstance(explicit_preview, str) and explicit_preview.strip():
+        return explicit_preview.strip()
+    if not re.fullmatch(r"[A-Za-z0-9_.-]+", str(asset_key)):
+        return None
+    for suffix in (".webp", ".png", ".jpg", ".jpeg"):
+        candidate = LORA_PREVIEWS / f"{asset_key}{suffix}"
+        if candidate.is_file():
+            return f"/lora-previews/{candidate.name}?v={candidate.stat().st_mtime_ns}"
+    return None
 
 
 class HotDict:
@@ -220,6 +235,7 @@ def get_lora_registry() -> dict[str, dict]:
             "key": key,
             "strength_model": float(strength.get("model", 1.0)),
             "strength_clip": float(strength.get("clip", 1.0)),
+            "preview": resolve_lora_preview(key, raw.get("preview")),
             "source": "registry",
             "configured": True,
             "registry_revision": revision,
@@ -244,7 +260,7 @@ def get_lora_registry() -> dict[str, dict]:
             "strength_model": float(v.get("strength_model", 1.0)),
             "strength_clip": float(v.get("strength_clip", 1.0)),
             "description": v.get("description", ""),
-            "preview": v.get("preview"),
+            "preview": resolve_lora_preview(key, v.get("preview")),
             "source": "config",
             "configured": True,
             "registry_revision": revision,
@@ -916,6 +932,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 app.mount("/images", StaticFiles(directory=IMAGES), name="images")
+app.mount("/lora-previews", StaticFiles(directory=LORA_PREVIEWS), name="lora-previews")
 
 # 静态托管前端网页: 访问 https://airpaint.xyz/ 直接返回 index.html
 # 这样前后端共用一个域名, 告别 GitHub Pages

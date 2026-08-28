@@ -864,3 +864,11 @@ legacy `config.yaml.loras` 没有一并删除：本机运行时核对显示仍�
 用户指出风格 LoRA 的首要选择依据是“这个画风下的人物是否好看”，而不是场景复现或动作一致。预览目标据此从桌边固定场景修订为人物主图：固定 DeepSeek 女仆身份、正面身份与腰上服装细节，使用 `896×1152` 竖幅、浅色简洁背景、柔和棚拍光和关闭 detailer；baseline 只加载 DeepSeek，Blue Archive、Light、Fymrie 各自在同一 seed/Prompt 上追加一个风格 LoRA，动作允许自然变化。
 
 四张真实样本均为 896×1152，脸、长发、眼睛、女仆服装褶皱和手部占据主体，生成耗时约 44～48 秒。该版本更符合前端缩略预览的消费目标，但会弱化风格 LoRA 的场景能力展示；场景图若未来需要，应作为可选次级样图。协议仍待用户人眼验收，未批量生成剩余风格，也未写 Registry preview 字段。
+
+## 第 60 条 2026-08-29 - 风格 LoRA 人物印样全量接入
+
+用户认可 DeepSeek 人物主图方向后，按同一 `style-preview-character-v1` 协议补齐 Shiratama、Dolphro-kun、Yusano、ningenmame、GPT Image 2 与 Sakalip；加上首批 Blue Archive、Light、Fymrie，当前 9 个 style Asset 均有真实 896×1152 样片。动作允许随风格自然变化，肉眼排查只拒绝明显身份、人体或主体失败；这批图回答人物审美，不声称覆盖场景能力或多 LoRA 组合。
+
+前端资源裁为 448×576 WebP 并跟踪于 `server/lora_previews/`。后端保留 Registry 显式 `preview` 优先级，未填写时按安全 Asset key 自动发现受控静态资源，通过 `/lora-previews` 返回带 mtime 的 URL。风格/细节菜单改为两栏接触印样，显示名称、默认强度和选中状态，当前叠加栈同步小图；角色菜单和 selection/binding 请求结构不变，缺图降级为文字占位。
+
+验证：API 实际返回 9/9 预览 URL；Python 编译、`53 prompt unit tests passed`、`6 lora composition tests passed`、前端 2 段内联脚本/132 个 DOM ID 静态检查通过。浏览器在 1920×950 与 390×844、纸本与石墨主题下确认双列加载、菜单上下空间限制、多选/当前栈和无横向溢出；除既有 Tailwind CDN 提示外无 console 错误。
