@@ -136,7 +136,7 @@ Phase 2.6（Prompt Expansion）、Phase 2.7（Visual Composer）、Phase 3（Cha
 2. 新下载 LoRA 推荐双击 `.tools/start_lora_onboard_agent.bat`：选择目标文件后，工具会调用 LoRA Manager 增量 scan，并通过 `/api/lm/loras/list` 验证该文件确实已解析为完整路径；验证通过后才接收作者说明和调用 Reasoning Model。输入 `revise` 可自然语言修订，只有 `write` + 最终 `y` 才写 Registry，真实生图后再提升 verified。
 3. 若 ComfyUI 未运行、scan 被取消、返回格式异常或目标文件仍未入列表，Agent 会在调用 LLM/写 Registry 前停止。增量未命中时可由用户明确选择一次全量重建；默认不自动承担大文件哈希成本。只有明确需要离线准备 Registry 时才使用 `--no-manager-scan` 绕过运行时索引验收。
 4. `si_arknights_v2` 首次两次生成在 ComfyUI 节点 5 报 `ModelMMAP allocation failed for si_(arknights)-v2.safetensors`。根因是文件尚未进入 LoRA Manager SQLite 索引：`get_lora_info_absolute()` 查找失败后把原始相对文件名交给 Aimdo，因而 mmap 打不开；这与缺 trigger、文件损坏或显存不足无关。用户手动访问 `/api/lm/loras/scan` 后，Manager 已生成 sidecar 并在 `/api/lm/loras/list` 返回完整绝对路径；修订后的入库 Agent 已用该文件完成真实增量扫描与目标命中 smoke。
-5. 风格预览 pilot 正在等待人眼验收：纯 txt2img 会让 Fymrie 从坐姿漂成站姿，当前候选改为 baseline 驱动 img2img、`denoise=0.7`。三张候选基本保留同一桌面/窗户/速写本关系，但 Blue Archive 的一只手移到下巴；若用户认可这个一致性/风格强度平衡，再批量生成其余风格并落 Registry `preview` 与前端展示。试验脚本 `.tools/generate_lora_previews.py` 当前未跟踪，不要在协议验收前当正式工具提交。
+5. 风格预览 pilot 正在等待人眼验收：用户确认主预览应回答“这个画风下的人物是否好看”，动作无需一致，因此最新候选已从桌面 img2img 改为 DeepSeek 人物主图。固定 DeepSeek 身份/正面细节/腰上女仆装、`896x1152`、浅背景、同 seed/Prompt、关闭 detailer；baseline 只加载人物 LoRA，Blue Archive/Light/Fymrie 分别再叠一个 style LoRA并使用 Registry 默认强度。四张均生成成功，输出位于 gitignored `pilot-v4-deepseek-character`；若用户认可，再批量生成其余风格并落 Registry `preview` 与前端展示。试验脚本 `.tools/generate_lora_previews.py` 当前未跟踪，不要在协议验收前当正式工具提交。
 
 ### 条件性未完成项
 

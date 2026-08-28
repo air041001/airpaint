@@ -858,3 +858,9 @@ legacy `config.yaml.loras` 没有一并删除：本机运行时核对显示仍�
 风格 LoRA 预览首轮使用固定 Prompt/seed 的纯 txt2img，Blue Archive、Light 与 Fymrie 都能呈现差异，但 Fymrie 把坐姿改成站姿；固定 seed 不能在改变权重后保证构图一致。第二轮改为无 LoRA baseline 驱动 img2img，只替换单个风格 LoRA。`denoise=0.6` 的结构最稳但风格偏弱，`0.7` 的三项候选基本保留桌前坐姿、窗户、速写本与台灯，同时提供更明显的画风差异，当前等待用户人眼验收后再决定是否批量生成。
 
 试验同时暴露生产尺寸错误：1024×1024 参考图经 img2img 输出为 832×1216并带灰边。根因是节点 31 ImageResizeKJv2 读取 easy-int 39/47，而 `build_prompt()` 只覆盖了 txt2img 节点 56。现在注入请求尺寸时先同步节点 56 原连接指向的 39/47，再覆盖节点 56；节点 31 的连接保持不变。真实 Fymrie/Blue Archive/Light img2img 均输出 1024×1024，确定性测试锁定连接与数值，当前 52 项 Prompt/workflow 单测和 6 项 Composition 测试通过。
+
+## 第 59 条 2026-08-29 - 风格预览转为 DeepSeek 人物主图候选
+
+用户指出风格 LoRA 的首要选择依据是“这个画风下的人物是否好看”，而不是场景复现或动作一致。预览目标据此从桌边固定场景修订为人物主图：固定 DeepSeek 女仆身份、正面身份与腰上服装细节，使用 `896×1152` 竖幅、浅色简洁背景、柔和棚拍光和关闭 detailer；baseline 只加载 DeepSeek，Blue Archive、Light、Fymrie 各自在同一 seed/Prompt 上追加一个风格 LoRA，动作允许自然变化。
+
+四张真实样本均为 896×1152，脸、长发、眼睛、女仆服装褶皱和手部占据主体，生成耗时约 44～48 秒。该版本更符合前端缩略预览的消费目标，但会弱化风格 LoRA 的场景能力展示；场景图若未来需要，应作为可选次级样图。协议仍待用户人眼验收，未批量生成剩余风格，也未写 Registry preview 字段。
