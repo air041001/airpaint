@@ -818,3 +818,11 @@ RTX 4060 Laptop 8GB、无 LoRA/detailer 重新端到端测试：请求 1024×153
 增量未命中时，工具会说明生成阶段必然在 Loader 失败，并由用户决定是否执行一次 `full_rebuild=true`；默认不自动全量哈希。索引仍未就绪则在 LLM 调用前终止，Registry 不修改。普通手工新增路径也执行同一验收；已有 Asset 的编辑不重复扫描。`--no-manager-scan` 保留为显式离线准备开关，不再描述成普通 Agent 模式的默认降级。
 
 新增确定性测试覆盖 scan+目标命中、200/cancelled 拒绝、scan success 但目标缺失拒绝，以及索引失败时在 LLM 前中止。验证为 `13 lora onboarding agent tests passed`、`51 prompt unit tests passed`、相关 Python 编译与 `registry valid: 12 assets` 通过；并以当前 `si_(arknights)-v2.safetensors` 调用真实 Manager 增量 scan，确认目标列表命中。
+
+## 第 54 条 2026-08-28 - Composer 构图容量与角色 LoRA 外观越权修复
+
+真实 Remielle Dan `black` 使用暴露设计时，Composer 同时给出上半身聚焦、提裙摆和抚发，导致不同画幅仍呈现意外裁切；修正为有限画面预算后，同尺寸 1024×1024 结果让手、裙摆交互和人物周围留白完整，用户确认观感没有问题。代码只拦截近景与画外下半身动作、完整下肢冲突，以及模型补出的多个手部/服装操作，不固定审美镜头。
+
+随后复现 `black` Profile 被错误扩写为 `long black hair / red eyes`。Registry 没有这些身份事实，因此没有伪造正确发色；改为角色 LoRA 外观闭集：Profile 名/服装色不能推导发色、瞳色，只有用户原文或权威构思明确锁定的改色可进入 IR/PROMPT。首轮越权会携具体原因修复一次，仍越权则失败关闭。Binding Compiler 同步清理兄弟 Profile trigger 与身份复述。
+
+验证：`53 prompt unit tests passed`、`python -m py_compile server/main.py`、`registry valid: 12 assets`。真实 SiliconFlow 以 Remielle Dan `black` + Fymrie 重跑原输入，IR/PROMPT 均不含 `black hair/red eyes`，保留黑色形态服装、裙摆动作、三分之四身构图且 binding 无 warning。

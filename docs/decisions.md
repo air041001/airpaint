@@ -670,3 +670,27 @@ LoRA 用户可见名称以 versioned `server/lora_registry.yaml` 为单一真相
 **验证**：`49 prompt unit tests passed`，`server/main.py` Python 编译通过；前端 2 段内联 JS、132 个 DOM ID、109 个静态引用检查通过，桌面与 390px 浏览器流程无 console error；3 条真实 SiliconFlow 烟测覆盖普通 auto、构思覆盖与角色+画风 LoRA 上下文。结构验证只证明协议和状态边界。画质证据仅为用户已确认的正常插画 `d709b7a58fc9.png` 与角色+画风 LoRA 插画 `695cf21fe007.png`，不从单测推导画质结论。
 
 **相关文件**：`server/main.py`、`server/workflows/AnimaFull.json`、`web/index.html`、`.tools/test_prompt_unit.py`、`docs/api.md`、`docs/architecture.md`。
+
+## D47. Visual Composer 定向护栏：画面容量与角色 LoRA 身份闭集
+
+**背景**：Visual Composer 接入真实使用后出现两个可复现问题。其一，模型同时补出“上半身聚焦”“一手提裙摆”“另一手抚发”，生成图虽然像半身海报，却因手肘、裙摆和大腿被挤到边缘而呈现意外裁切感；改成 1024×1024 仍复现，证明根因不是像素不足。其二，用户只锁定 Remielle Dan 的 `black` Profile，Composer 却从形态名称推断 `long black hair / red eyes`，把服装形态错误扩张成角色身份属性。
+
+**问题**：只加自然语言提醒不能保证模型遵守；直接写死角色真实发色又缺少 Registry 证据，并会阻止用户主动改色。全面语义冲突检测则会重新引入脆弱的大词表和过度规则化。
+
+**决定**：
+
+1. 在 Composer 的 renderability pass 中把画面视为有限预算。模型补全只允许一个主要手部交互；裙摆、髋部或大腿是核心交互时不得同时选择 close-up/upper-body，改用牛仔镜头或四分之三身，并让交互手、手肘与服装区域完整入镜。
+2. 代码只检查少量跨 checkpoint 明确冲突：近景与完整下肢、近景与下半身交互、模型新增的多个手部/服装操作。命中后把具体原因交给第二次 Composer 调用重规划，不由代码替它选择审美主题。
+3. 角色 LoRA 启用时，Profile ID/名称中的 `black/white/swim` 仅表示 Registry 形态，不是发色、瞳色或体型事实。用户没有明确要求时，Composer 必须从 IR.appearance 和 PROMPT 省略发色/瞳色，让 LoRA 权重提供身份外观。
+4. 后端从用户原文及权威 `concept_override` 提取明确绑定的发色/瞳色白名单；`dict.yaml` 只作为 canonical 识别辅助，不重新取得普通文本路由权。输出同时扫描 IR.appearance 与最终 PROMPT，发现未授权颜色后进入一次语义修复，仍失败则 502 fail closed。用户明确写“黑色长发、蓝眼睛”等改色仍可通过。
+5. LoRA Binding Compiler 删除已选 Profile 的兄弟 required trigger、精确身份复述及句首身份复述，但保留句中动作/场景语义；不根据开放式视觉描述猜测 Profile 或真实角色设定。
+
+**原因**：构图容量和“Profile 名不是身份事实”都可以确定性判断；具体画面怎么重排仍属于 Reasoning Model。发色白名单只裁决用户是否授权改色，不需要代码知道角色原本是什么颜色，因此不会用未经验证的知识污染 Registry。
+
+**代价与风险**：发色/瞳色识别只覆盖明确中英文绑定，不是通用角色一致性引擎；皮肤、体型、复杂妆容等仍主要依赖 LoRA context。用户通过 `concept_override` 保留的外观被视为权威修改。参考图 Vision 可能需要从图中提取外观，因此不套用文本 Composer 的闭集校验。
+
+**验证**：Python 编译、Registry 12 assets 校验与 53 项 Prompt 单测通过。测试覆盖 `black form` 不等于 `black hair`、用户明确中英文改色、黑色发饰不误判，以及首轮越权后第二轮修复。真实 SiliconFlow 使用 Remielle Dan `black` + Fymrie 请求，最终 IR/PROMPT 均不含未请求的 `black hair/red eyes`，LoRA binding 无 warning；同为 1024×1024 的构图复测经用户确认没有问题。结构和单张图片仍不证明所有角色/姿态稳定。
+
+**修订关系**：本决定补充 D39/D41 的 LoRA Context 边界，以窄的确定性身份属性检查取代“完全没有 semantic conflict detector”的旧首版状态；不引入通用冲突系统。它同时细化 D46 第 6、7 项，不恢复旧 Painter 的固定景别或属性词典主路。
+
+**相关文件**：`server/main.py`、`.tools/test_prompt_unit.py`、`docs/architecture.md`、`docs/PLAN-LORA.md`。

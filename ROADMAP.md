@@ -54,9 +54,9 @@ Phase 2.6 收尾后不开新扩写子阶段；下一步由真实使用反馈决�
 - [x] 文本路径改为严格 `CONCEPT + 12 字段 IR + [LORA] + PROMPT`；失败修复一次后 fail closed
 - [x] 增加可编辑中文 `用户锁定｜模型补全` 构思，修改后重新编译并防止旧 Prompt 串线
 - [x] SiliconFlow 普通文本绕开 ordinary `dict.yaml` 的全命中短路，角色 canonical knowledge 与 LoRA exact binding 继续由代码掌管
-- [x] 最终 Prompt 允许 tag、短句、自然语言或混合，不设固定元素数和 TAG/NL 形态；代码仅保留重复、主体、角色与明确全身冲突等确定性护栏
+- [x] 最终 Prompt 允许 tag、短句、自然语言或混合，不设固定元素数和 TAG/NL 形态；代码仅保留重复、主体、角色、明确画面容量冲突及角色 LoRA 发色/瞳色越权等确定性护栏
 - [x] 放宽分用途输入上限，固定 negative 增加常见手指/四肢/脚部失败词；不把负面词描述为人体质量保证
-- [x] 49 项确定性单测、真实 SiliconFlow 普通/构思覆盖/角色+画风 LoRA smoke、桌面与 390px 前端流程通过；正常插画与角色+画风 LoRA 图片已由用户确认可接入生产
+- [x] 53 项确定性单测、真实 SiliconFlow 普通/构思覆盖/角色+画风 LoRA smoke、桌面与 390px 前端流程通过；正常插画、角色+画风及同尺寸构图修复图片已由用户确认，Remielle `black` 不再被 Profile 名误补为黑发
 
 Phase 2.7 是根据真实样图与定向验收完成的生产修订，不重启大批量 A/B。后续先积累真实使用中的失败样本，再决定是否做局部规则或新阶段。
 

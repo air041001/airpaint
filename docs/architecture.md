@@ -51,14 +51,14 @@ ComfyUI  127.0.0.1:8188  (不对公网开放)
 1. **角色 canonical knowledge** (`match_characters`, `char_dict.yaml`)：子串扫描正式词典和已验证自动缓存，返回精确角色 tag 与移除角色名后的文本。只有纯角色名、无 active LoRA、无 `concept_override` 的 SiliconFlow 请求走确定性快路，返回 `角色tag, 1girl, solo` 与“模型补全：无”。
 2. **文本 Composer 路由**：SiliconFlow 普通文本把完整用户意图与角色 canonical tag 交给 Reasoning Model，ordinary `dict.yaml` 不再抢先删除词语，也不能因全命中绕过 LLM。`dict.yaml` 及 `match_dict_words()` 仍保留给参考图和 `google`/`none` legacy 降级路径；它没有被删除或宣布为无效知识。
 3. **Visual Composer** (`PAINTER_SYSTEM_PROMPT`)：补全程度由显式 `auto | faithful | free` 控制，不根据字数猜测。`auto` 按语义覆盖度补重要空位，`faithful` 只补成图必需项，`free` 在保留用户锁定后自由设计完整插画。稀疏输入会形成一个具体主视觉，详细输入保持用户决定，不强行加入年龄词、rating、质量前缀、负面词或 LoRA exact trigger。
-4. **严格文本协议**：SiliconFlow 文本必须输出 `CONCEPT`、精确 12 字段单行 `IR`、有 active LoRA 时的 `LORA` JSON、`PROMPT`，且没有其他行。`CONCEPT` 固定为 `用户锁定：…｜模型补全：…`；`concept_override` 必须保持该结构并作为用户编辑后的权威蓝图。协议失败只修复一次，第二次仍失败则 502 fail closed，绝不把包含 CONCEPT/IR 的原始响应直接当 Prompt。参考图 Vision 与非 SiliconFlow legacy 路径继续使用原有兼容协议，不受这项严格文本格式约束。
+4. **严格文本协议与定向语义修复**：SiliconFlow 文本必须输出 `CONCEPT`、精确 12 字段单行 `IR`、有 active LoRA 时的 `LORA` JSON、`PROMPT`，且没有其他行。`CONCEPT` 固定为 `用户锁定：…｜模型补全：…`；`concept_override` 必须保持该结构并作为用户编辑后的权威蓝图。协议错误、确定的画面容量冲突或角色 LoRA 发色/瞳色越权都只修复一次，第二次仍失败则 502 fail closed，绝不把错误响应直接当 Prompt。参考图 Vision 与非 SiliconFlow legacy 路径继续使用原有兼容协议，不受文本 Composer 定向护栏约束。
 5. **自由 Anima 表达**：`PROMPT` 可以是 canonical tag、英文短句、自然语言或混合，不设固定 tag/句子/单词/字符数量。关系句可有意义地绑定少量 tag，但禁止机械复述整个 Prompt。5 个前端 breakdown 字段继续由 IR 的 scene/composition/mood/lighting/style 派生。
-6. **确定性 Compiler**：代码补主体计数、清理精确角色的裸名变体、折叠完整逗号序列的机械复读；用户明确写全身/完整可见时，移除 `mid-shot / medium shot / upper body / close-up / cropped / out of frame` 等互斥景别。新文本 Composer 不再经过旧 `_prepare_painter_tags()` 的自动裸体、强制三分之四景别或画风删除启发式。未知角色仍从 `IR.subject` 提取候选，经 Danbooru exact category/post_count 验证后才写 auto cache。
+6. **确定性 Compiler / 可画性护栏**：代码补主体计数、清理精确角色的裸名变体、折叠完整逗号序列的机械复读；用户明确写全身/完整可见时移除互斥近景。模型补全若同时发明多个手部/服装操作，或用 `upper body/close-up` 承诺裙摆、髋部、大腿等画外交互，会退回 Composer 改为牛仔镜头/四分之三身或删减动作。新文本路径仍不继承旧 `_prepare_painter_tags()` 的自动裸体、固定景别或画风删除。未知角色继续从 `IR.subject` 经 Danbooru exact 验证后写 auto cache。
 7. **缓存与模型调用**：LRU 缓存上限 500，key 是完整 Composer 上下文，因此包含补全档、`concept_override`、LoRA selection 与 registry revision；reroll 跳过缓存并在同一补全档内换构思。Reasoning Model `max_tokens=1800`；普通温度为 faithful 0.35 / auto 0.7 / free 0.8，reroll 使用配置的高温。`/no_think` 与 `enable_thinking:false` 默认关闭思考，失败抛 502。
 
 正向 `quality_prefix` 由工作流代码统一提供 (`masterpiece, best quality, newest, absurdres`)；rating 只保留用户在英文 Prompt 中的明确输入。负面 Prompt 是 `AnimaFull.json` 节点 4 的固定常量，不随输入变化，包含 WAI-Anima 质量项、构图否定词，以及 `bad hands / missing fingers / extra fingers / fused fingers / extra arms / extra legs / bad feet / malformed feet` 的人体防御项。它只能降低部分常见失败概率，不代表人体问题已解决。见 D44/D46。
 
-Active LoRA 时，Reasoning/Vision Model 只看 Asset/Profile 的 `provides` 与允许选择的 ID，不看文件名、强度或 exact trigger。严格文本协议要求 `LORA` JSON 语义选择，代码再解析 Profile/optional ID 并确定性注入 exact binding。翻译缓存 key 包含 selection 与 registry revision，避免不同 LoRA/Profile 共享 Prompt。
+Active LoRA 时，Reasoning/Vision Model 只看 Asset/Profile 的 `provides` 与允许选择的 ID，不看文件名、强度或 exact trigger。严格文本协议要求 `LORA` JSON 语义选择，代码再解析 Profile/optional ID 并确定性注入 exact binding；Binding Compiler 同时排除兄弟 Profile 的 exact trigger 与身份裸名复述。文本 Composer 把角色 LoRA 身份外观视为闭集：Profile 的 `black/white/swim` 只表示已登记形态，不能推断发色或瞳色；只有用户原文/权威构思明确锁定的发色、瞳色可以进入 IR/PROMPT，越权项触发一次语义修复。该规则不猜角色真实发色，Registry 未声明时让角色 LoRA 自身提供。翻译缓存 key 包含 selection 与 registry revision，避免不同 LoRA/Profile 共享 Prompt。
 
 ### LoRA Registry / Binding
 

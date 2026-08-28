@@ -758,6 +758,8 @@ def build_lora_context(selections) -> tuple[str, list[dict], str]:
     lines.extend([
         "Do not copy, invent, or rewrite LoRA trigger strings, filenames, or weights in PROMPT.",
         "Do not invent a conflicting character identity, outfit, appearance, or style.",
+        "For a character LoRA, profile IDs/names such as black, white, or swim describe a registered form; "
+        "never infer hair color, eye color, skin tone, or body traits from those words.",
         "Use scene, action, pose, composition, lighting, and mood to complete the remaining image.",
         "When an auto profile or optional concept is needed, output only allowed IDs in the LORA JSON line.",
         "The LORA line is mandatory for this request. Use this exact JSON shape and replace placeholders only with allowed IDs:",
@@ -782,13 +784,177 @@ def lora_selection_aliases(selections) -> set[str]:
 
 
 def _lora_tag_key(tag: str) -> str:
-    value = tag.lower().replace("\\", "").replace("_", " ")
+    value = tag.lower().replace("\\", "").replace("_", " ").replace("-", " ")
     value = re.sub(r"[()\[\]{}]", " ", value)
-    return re.sub(r"\s+", " ", value).strip(" ,.")
+    value = re.sub(r"\s+", " ", value).strip(" ,.")
+    return re.sub(r"^(?:wearing\s+)?(?:a|an|the)\s+", "", value)
+
+
+_CHARACTER_APPEARANCE_LOCKS_PREFIX = "USER-LOCKED CHARACTER APPEARANCE OVERRIDES:"
+_CHARACTER_COLOR_SPECS = (
+    ("black", ("black",), ("黑", "墨黑")),
+    ("white", ("white",), ("白",)),
+    ("silver", ("silver",), ("银",)),
+    ("blonde", ("blonde", "blond", "golden"), ("金", "金黄")),
+    ("pink", ("pink",), ("粉", "粉红")),
+    ("red", ("red",), ("红",)),
+    ("blue", ("blue",), ("蓝", "蔚蓝", "湛蓝")),
+    ("green", ("green",), ("绿", "翠绿")),
+    ("purple", ("purple", "violet"), ("紫",)),
+    ("brown", ("brown",), ("棕", "褐")),
+    ("gray", ("gray", "grey"), ("灰",)),
+    ("orange", ("orange",), ("橙",)),
+    ("aqua", ("aqua", "cyan", "teal"), ("青", "水蓝")),
+)
+_HAIR_ACCESSORY_AFTER_RE = (
+    r"(?:ornament|ribbon|clip|pin|band|accessory|flower|bow|scrunchie)"
+)
+
+
+def _extract_character_color_appearance(text: str) -> set[str]:
+    """提取少量可确定的发色/瞳色语义，供角色 LoRA 身份边界校验。
+
+    这里只识别颜色与 hair/eyes 的明确绑定；不会把 Profile 的 black/white、
+    黑色服装或环境配色误当成角色发色。
+    """
+    if not isinstance(text, str) or not text.strip():
+        return set()
+    found: set[str] = set()
+    clauses = [part.strip() for part in re.split(r"[,，、;；。.!?！？\n]+", text)
+               if part.strip()]
+    for clause in clauses:
+        normalized = _lora_tag_key(clause)
+        for canonical, english_aliases, chinese_aliases in _CHARACTER_COLOR_SPECS:
+            english = "|".join(re.escape(alias) for alias in english_aliases)
+            hair_modifier = (
+                r"(?:very|absurdly|extremely|long|short|medium|wavy|curly|straight|"
+                r"messy|flowing|silky|gradient|two tone|multicolored)"
+            )
+            eye_modifier = r"(?:large|small|bright|glowing|half closed|narrow|sharp|soft)"
+            hair_patterns = (
+                rf"\b(?:{english})\b(?:\s+{hair_modifier}){{0,3}}\s+hair\b(?!\s+{_HAIR_ACCESSORY_AFTER_RE})",
+                rf"\bhair\b\s+(?:dyed|colored|is|turned)\s+(?:{english})\b",
+                rf"\b(?:{english})[- ]haired\b",
+            )
+            eye_patterns = (
+                rf"\b(?:{english})\b(?:\s+{eye_modifier}){{0,2}}\s+eyes?\b(?!\s+(?:shadow|makeup))",
+                rf"\beyes?\b\s+(?:colored|are|turned)\s+(?:{english})\b",
+            )
+            if any(re.search(pattern, normalized) for pattern in hair_patterns):
+                found.add(f"{canonical} hair")
+            if any(re.search(pattern, normalized) for pattern in eye_patterns):
+                found.add(("gold" if canonical == "blonde" else canonical) + " eyes")
+
+            chinese = "|".join(re.escape(alias) for alias in chinese_aliases)
+            hair_style = r"(?:长|短|中长|卷|直|波浪|蓬松|双马尾|单马尾|马尾|辫子|渐变|挑染)*"
+            hair_target = r"(?:头发|发色|发(?!饰|夹|带|花|簪|箍|绳|冠)|双马尾|单马尾|马尾|辫子)"
+            eye_style = r"(?:大|小|明亮|发光|半闭|细长|锐利|柔和)*"
+            eye_target = r"(?:眼睛|眼眸|瞳孔|瞳色|眼(?!影|妆|线|罩|镜)|瞳)"
+            if (re.search(rf"(?:{chinese})(?:色)?(?:的)?{hair_style}{hair_target}", clause)
+                    or re.search(rf"{hair_target}(?:是|为|改成|变成|染成|呈现为)(?:{chinese})(?:色)?", clause)):
+                found.add(f"{canonical} hair")
+            if (re.search(rf"(?:{chinese})(?:色)?(?:的)?{eye_style}{eye_target}", clause)
+                    or re.search(rf"{eye_target}(?:是|为|改成|变成|呈现为)(?:{chinese})(?:色)?", clause)):
+                found.add(("gold" if canonical == "blonde" else canonical) + " eyes")
+    return found
+
+
+def _explicit_character_appearance_locks(text: str) -> set[str]:
+    """从用户权威文本提取角色发色/瞳色锁定，不改变普通文本的词典路由。"""
+    locks = _extract_character_color_appearance(text)
+    dict_hits, _ = match_dict_words(text)
+    for tag in dict_hits:
+        locks.update(_extract_character_color_appearance(tag))
+    return locks
+
+
+def _character_appearance_locks_from_context(context: str) -> set[str] | None:
+    """读取 translate 写入的内部 JSON 标记；None 表示没有角色 LoRA 护栏。"""
+    for line in context.splitlines():
+        if not line.startswith(_CHARACTER_APPEARANCE_LOCKS_PREFIX):
+            continue
+        try:
+            raw = json.loads(line[len(_CHARACTER_APPEARANCE_LOCKS_PREFIX):].strip())
+        except json.JSONDecodeError:
+            return set()
+        if not isinstance(raw, list):
+            return set()
+        return {str(item).strip().lower() for item in raw if str(item).strip()}
+    return None
+
+
+def _composer_character_lora_appearance_issue(prompt_ir: dict, prompt_line: str,
+                                               allowed: set[str]) -> str | None:
+    """角色 LoRA 已负责身份时，拒绝模型自行新增发色/瞳色。"""
+    observed: set[str] = set()
+    for item in prompt_ir.get("appearance", []):
+        observed.update(_extract_character_color_appearance(str(item)))
+    observed.update(_extract_character_color_appearance(prompt_line))
+    unauthorized = sorted(observed - allowed)
+    if not unauthorized:
+        return None
+    return ("Composer LoRA 身份冲突：角色 LoRA 启用时自行补充了用户未锁定的外观属性 "
+            + ", ".join(unauthorized)
+            + "；请从 IR.appearance 与 PROMPT 删除这些属性，让角色 LoRA 提供身份外观")
+
+
+def _lora_selected_identity_keys(bindings: list[dict]) -> set[str]:
+    """从 binding.provides 提取可安全删除的短 identity 复述。"""
+    keys: set[str] = set()
+    for binding in bindings:
+        for provided in binding.get("provides") or []:
+            if not isinstance(provided, str):
+                continue
+            key = _lora_tag_key(provided)
+            if not re.search(r"(?:^| )(?:identity|character)(?:$| )", key):
+                continue
+            keys.add(key)
+            stripped = re.sub(r"\s+(?:identity|character)$", "", key).strip()
+            if stripped:
+                keys.add(stripped)
+    return keys
+
+
+def _strip_lora_identity_prefix(segment: str, identity_keys: set[str]) -> str:
+    """移除短句开头的 LoRA 身份复述，同时保留后面的动作/场景关系。"""
+    key = _lora_tag_key(segment)
+    for identity in sorted(identity_keys, key=len, reverse=True):
+        prefix = identity + " "
+        if key.startswith(prefix):
+            return key[len(prefix):].strip()
+    return segment.strip()
+
+
+def _lora_sibling_profile_tag_keys(bindings: list[dict]) -> set[str]:
+    """返回已选 Profile 的兄弟 Profile required tag，用于排除语义串形态。
+
+    只处理 Registry 明确声明的 required_tags，不根据 display name、provides 或普通
+    描述猜测。若某个 tag 同时也是当前 binding 的注入项，则当前选择优先，不排除。
+    """
+    registry = get_lora_registry()
+    selected_keys = {
+        _lora_tag_key(tag)
+        for binding in bindings
+        for tag in (binding.get("injected_tags") or [])
+        if isinstance(tag, str) and tag.strip()
+    }
+    sibling_keys: set[str] = set()
+    for binding in bindings:
+        asset = registry.get(str(binding.get("key") or "")) or {}
+        selected_profile = binding.get("profile")
+        if asset.get("trigger_policy") != "profile" or not selected_profile:
+            continue
+        for profile_id, profile in (asset.get("profiles") or {}).items():
+            if profile_id == selected_profile:
+                continue
+            for tag in profile.get("required_tags") or []:
+                if isinstance(tag, str) and tag.strip():
+                    sibling_keys.add(_lora_tag_key(tag))
+    return sibling_keys - selected_keys
 
 
 def compile_lora_bindings(prompt_en: str, bindings: list[dict] | None) -> str:
-    """把 registry exact tags 幂等合入最终 Prompt；不从 LLM 字符串反推 Profile。"""
+    """把 Registry exact tags 幂等合入 Prompt，并排除兄弟 Profile trigger。"""
     if not bindings:
         return prompt_en.strip()
     lora_tags = []
@@ -801,7 +967,18 @@ def compile_lora_bindings(prompt_en: str, bindings: list[dict] | None) -> str:
     body, sep, nl = prompt_en.partition(". ")
     existing = [t.strip() for t in body.split(",") if t.strip()]
     lora_keys = {_lora_tag_key(t) for t in lora_tags}
-    existing = [t for t in existing if _lora_tag_key(t) not in lora_keys]
+    sibling_keys = _lora_sibling_profile_tag_keys(bindings)
+    identity_keys = _lora_selected_identity_keys(bindings)
+    blocked_identity_keys = sibling_keys | identity_keys
+    filtered = []
+    for segment in existing:
+        key = _lora_tag_key(segment)
+        if key in lora_keys or key in blocked_identity_keys:
+            continue
+        segment = _strip_lora_identity_prefix(segment, blocked_identity_keys)
+        if segment:
+            filtered.append(segment)
+    existing = filtered
     insert_at = 0
     while insert_at < len(existing) and existing[insert_at].lower() in {
             "1girl", "1boy", "1other", "solo", "2girls", "2boys", "multiple girls", "multiple boys"}:
@@ -975,6 +1152,13 @@ Compose the picture around one dominant visual motif. Make character design, exp
 
 ANATOMY-READABILITY DEFAULT: When the user has not locked a difficult pose or camera angle, use at most one major anatomy challenge. Give each visible hand one simple readable purpose and clear contact with its prop or garment. Keep leg silhouettes and joints distinguishable in full-body views. Create motion through hair, sleeves, ribbons, fabric, plants, weather, or light before forcing the body into an extreme pose. Do not output generic claims such as perfect anatomy or perfect hands.
 
+RENDERABILITY PASS: Before finalizing, treat the frame as a finite budget rather than a wish list.
+- For decisions you add under 模型补全, choose one primary body pose and at most one primary hand interaction. The other hand should support the pose, rest naturally, or remain out of frame. Do not invent simultaneous top-adjusting, hem-lifting, prop-holding, and an independent leg pose.
+- Choose either a close/upper-body character crop or a wider environment-and-body composition. A close-up or upper-body shot cannot also promise crossed legs, visible feet, a full chaise silhouette, and clearly visible pool water. If the environment is a major part of the premise, use a medium or three-quarter-body view and name the environment anchor that remains visible.
+- If the main interaction touches a skirt hem, hips, or thighs, use a cowboy shot or three-quarter-body view and keep the interacting hands, elbows, and garment area inside the frame. Do not pair that interaction with close-up or upper-body focus. If you choose an upper-body crop, move the interaction into that crop or remove it.
+- Every major pose, hand action, camera decision, prop, and visible scene anchor in PROMPT must already appear in CONCEPT and IR. Do not quietly add a new body action only in PROMPT.
+- Remove model-added details that the chosen framing cannot visibly show. A smaller executable plan is better than a richer contradictory one.
+
 Write in Anima-native prompt language. Use familiar anime/Danbooru concepts for common attributes, clothing, poses, objects, framing, lighting, and effects. Use short English clauses or complete sentences when they express relationships, continuous actions, unusual composition, or designed interaction more clearly than isolated tags. The final PROMPT may be tag-only, clause-heavy, or freely mixed. Do not create TAGS or NL sections and do not force prose into lowercase fragments.
 
 Use useful Anima count tags. For one unnamed female character, normally begin with 1girl, solo; use the count and subject actually requested for other cases. Meaningful reinforcement is allowed when a clause binds a few important tags into a relationship or composition. Never mechanically paraphrase or repeat the whole prompt.
@@ -983,7 +1167,7 @@ Preserve every explicit user fact and constraint. Do not change a named characte
 
 For erotic input, use the same illustration principles. Sensuality may come from clothing design and exposure, pose, gaze, expression, body line, framing, fabric/skin contrast, lighting, or interaction. Do not automatically turn erotic intent into nudity, and do not suppress nudity or explicit content when the user actually requests it.
 
-The backend supplies the standard quality prefix, rating control, negative prompt, exact known character tags, and all LoRA filenames, weights, and required triggers. Do not output or guess any of those. Plan around KNOWN CANONICAL TAGS without repeating them in PROMPT. Treat every ACTIVE LORA `Already provides` capability as present; do not redundantly re-author or conflict with its character identity, outfit, or style. When a style LoRA is active, do not add a vague replacement style phrase.
+The backend supplies the standard quality prefix, rating control, negative prompt, exact known character tags, and all LoRA filenames, weights, and required triggers. Do not output or guess any of those. Plan around KNOWN CANONICAL TAGS without repeating them in PROMPT. Treat every ACTIVE LORA `Already provides` capability as present; do not redundantly re-author or conflict with its character identity, outfit, or style. For an active character LoRA, identity appearance is already supplied rather than an open creative slot: only use hair/eye color overrides listed under USER-LOCKED CHARACTER APPEARANCE OVERRIDES. An empty list means omit hair and eye colors from IR and PROMPT. Never infer them from a profile ID/name, an outfit color, or a form label such as black/white/swim. When a style LoRA is active, do not add a vague replacement style phrase.
 
 IR is a compact semantic inventory for backend inspection. Output a valid one-line JSON object with exactly these 12 array fields: subject, appearance, clothing, action, pose, interaction, scene, composition, lighting, mood, style, constraints.
 
@@ -1374,6 +1558,85 @@ def _canonicalize_concept(value: str | None) -> str | None:
     return f"用户锁定：{locked}｜模型补全：{added}"
 
 
+_COMPOSER_CLOSE_CROP_TERMS = (
+    "close-up", "close up", "upper body", "bust shot", "portrait crop",
+)
+_COMPOSER_EXTENDED_BODY_TERMS = (
+    "full body", "full-body", "full length", "full-length", "entire figure",
+    "head to toe", "from head to toe", "legs crossed", "crossed legs",
+    "visible feet", "feet visible",
+)
+_COMPOSER_LOWER_FRAME_ACTION_TERMS = (
+    "hem lifted", "lifting skirt", "lifted skirt", "raising skirt",
+    "pulling up skirt", "holding up skirt", "tugging skirt hem",
+    "gripping skirt hem", "hand on thigh", "hands on thighs",
+)
+_COMPOSER_ADDED_CLOSE_CROP_TERMS = (
+    "近景", "近身裁切", "上半身", "半身特写", "胸像",
+    *_COMPOSER_CLOSE_CROP_TERMS,
+)
+_COMPOSER_LOWER_MANUAL_TARGET_TERMS = (
+    "裙", "裙摆", "下摆", "衣摆", "髋", "臀", "大腿",
+)
+_COMPOSER_MANUAL_TARGET_TERMS = (
+    "手", "上衣", "衣服", "肩带", "裙", "下摆", "衣摆", "布料", "道具",
+    "头发", "发梢", "发丝",
+)
+_COMPOSER_MANUAL_ACTION_TERMS = (
+    "拿", "持", "握", "抓", "扶", "托", "按", "扯", "拉", "掀", "提", "调整",
+    "捏", "抚", "摸", "拨", "梳",
+)
+
+
+def _composer_feasibility_issue(prompt_ir: dict, concept: str,
+                                prompt_line: str) -> str | None:
+    """拒绝少量可确定的画面容量冲突，让第二次模型调用重新规划。
+
+    这里只检查跨 checkpoint 都明显不可同时呈现的组合；不尝试用代码决定审美、
+    姿态细节或最佳镜头。
+    """
+    ir_text = " ".join(
+        str(item).lower()
+        for field in ("action", "pose", "composition", "scene")
+        for item in prompt_ir.get(field, [])
+    )
+    render_text = f"{ir_text} {prompt_line.lower()}"
+    close_crop = any(term in render_text for term in _COMPOSER_CLOSE_CROP_TERMS)
+    extended_body = any(term in render_text for term in _COMPOSER_EXTENDED_BODY_TERMS)
+    if close_crop and extended_body:
+        return ("Composer 可画性冲突：近景/上半身构图同时要求完整下肢或全身信息；"
+                "请改为中景/四分之三身，或删除画面外动作")
+
+    added = concept.split("｜模型补全：", 1)[1] if "｜模型补全：" in concept else ""
+    added_clauses = [part.strip() for part in re.split(r"[，,；;。]+", added)
+                     if part.strip()]
+    lower_manual_clauses = [
+        clause for clause in added_clauses
+        if any(target in clause for target in _COMPOSER_LOWER_MANUAL_TARGET_TERMS)
+        and any(action in clause for action in _COMPOSER_MANUAL_ACTION_TERMS)
+    ]
+    lower_frame_action = any(
+        term in render_text for term in _COMPOSER_LOWER_FRAME_ACTION_TERMS
+    )
+    added_close_crop = any(
+        term in added.lower() for term in _COMPOSER_ADDED_CLOSE_CROP_TERMS
+    )
+    if (close_crop and (lower_frame_action or lower_manual_clauses)
+            and (added_close_crop or lower_manual_clauses)):
+        return ("Composer 可画性冲突：近景/上半身构图同时把裙摆、髋部或大腿交互设为重点；"
+                "请改为牛仔镜头/四分之三身并让交互区域完整入镜，或删除画面外动作")
+
+    manual_clauses = [
+        clause for clause in added_clauses
+        if any(target in clause for target in _COMPOSER_MANUAL_TARGET_TERMS)
+        and any(action in clause for action in _COMPOSER_MANUAL_ACTION_TERMS)
+    ]
+    if len(manual_clauses) > 1:
+        return ("Composer 可画性冲突：模型补全同时发明了多个手部/服装操作；"
+                "只保留一个主要交互，让另一只手支撑姿态或自然放置")
+    return None
+
+
 def _normalize_optional_concept(value, field_name: str = "concept") -> str | None:
     """校验来自 API 的 concept/concept_override，返回统一可追踪形式。"""
     if value is None or value == "":
@@ -1432,6 +1695,9 @@ def _parse_composer_output(out: str, active_lora: bool = False) -> tuple:
     prompt_line, repetition_collapsed = collapse_exact_prompt_repetition(prompt_line)
     if len(prompt_line) > MAX_PROMPT_EN_CHARS:
         raise RuntimeError(f"Composer PROMPT 过长(>{MAX_PROMPT_EN_CHARS})")
+    feasibility_issue = _composer_feasibility_issue(prompt_ir, concept, prompt_line)
+    if feasibility_issue:
+        raise RuntimeError(feasibility_issue)
     return (prompt_line, breakdown, nl, prompt_ir, _parse_character_hints(text),
             lora_choices, concept, repetition_collapsed)
 
@@ -1495,14 +1761,19 @@ async def siliconflow_translate(context: str, reroll: bool = False,
              "Still follow the exact output protocol.\n\n") if reroll else ""
     user_content = ("/no_think " if not thinking else "") + nudge + context
     active_lora = "ACTIVE LORA CONTEXT" in context
+    character_appearance_locks = _character_appearance_locks_from_context(context)
 
     parsed = None
     last_protocol_error = None
     for attempt in range(2):
         repair = ""
         if attempt:
+            previous_issue = str(last_protocol_error or "输出协议不合法")[:300]
             repair = (
-                "\nFORMAT REPAIR: Your previous response was rejected. Return CONCEPT first, then one "
+                "\nREPAIR REQUEST: Your previous response was rejected for this reason: "
+                + previous_issue
+                + ". Re-plan model-added decisions when the issue is semantic; preserve every USER lock. "
+                "Return CONCEPT first, then one "
                 "compact valid IR JSON line with all 12 array fields, "
                 + ("then the mandatory LORA JSON line using only supplied IDs, " if active_lora else "")
                 + "then PROMPT. Use exactly one non-empty line for each required field and no other text.\n"
@@ -1536,6 +1807,12 @@ async def siliconflow_translate(context: str, reroll: bool = False,
 
         try:
             parsed = _parse_composer_output(out, active_lora=active_lora)
+            if character_appearance_locks is not None:
+                identity_issue = _composer_character_lora_appearance_issue(
+                    parsed[3], parsed[0], character_appearance_locks
+                )
+                if identity_issue:
+                    raise RuntimeError(identity_issue)
             break
         except RuntimeError as exc:
             last_protocol_error = exc
@@ -1820,6 +2097,16 @@ async def translate(text: str, reroll: bool = False, image_b64: str | None = Non
     lora_selections = apply_lora_intent_hints(text, lora_selections)
     lora_context, normalized_loras, lora_revision = build_lora_context(lora_selections)
     has_lora = bool(normalized_loras)
+    registry = get_lora_registry()
+    has_character_lora = any(
+        (registry.get(selection["key"]) or {}).get("type") == "character"
+        for selection in normalized_loras
+    )
+    appearance_source = text + (("\n" + concept_override) if concept_override else "")
+    character_appearance_locks = (
+        sorted(_explicit_character_appearance_locks(appearance_source))
+        if has_character_lora else []
+    )
 
     def finish(prompt_en: str, breakdown: dict | None, prompt_ir: dict | None,
                meta: dict, bindings: list[dict] | None = None,
@@ -1936,6 +2223,12 @@ async def translate(text: str, reroll: bool = False, image_b64: str | None = Non
             )
         if lora_context:
             ctx_lines.append(lora_context)
+            if has_character_lora:
+                ctx_lines.append(
+                    _CHARACTER_APPEARANCE_LOCKS_PREFIX + " "
+                    + json.dumps(character_appearance_locks, ensure_ascii=False,
+                                 separators=(",", ":"))
+                )
             ctx_lines.append(f"Registry revision: {lora_revision}")
         context = "\n".join(ctx_lines)
 

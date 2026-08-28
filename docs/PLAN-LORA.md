@@ -324,8 +324,8 @@ PROMPT: ...
 
 - LoRA Profile alias 命中后，该人物由 LoRA knowledge 提供，不再把同一名字当未知角色送 Danbooru 查询。
 - char_dict 已命中且与 LoRA Profile 是同一人物时，Compiler 去重并保留精确 binding。
-- char_dict 人物与 active character LoRA 明显不同时，LoRA context 要求 LLM 不得加入冲突身份；首版不实现独立的结构化 semantic conflict 检测器或 conflict warning 字段。
-- 代码只处理可验证的 tag 去重/显式 conflict 列表；开放语义冲突仍由 LLM 判断并在 `lora_warnings` 暴露。
+- char_dict 人物与 active character LoRA 明显不同时，LoRA context 要求 LLM 不得加入冲突身份；不实现通用开放式 semantic conflict 系统。D47 只增加可确定的角色发色/瞳色越权检查：Profile 名不是身份事实，用户未锁定的颜色必须省略。
+- 代码处理可验证的 tag 去重、兄弟 Profile exact trigger、身份复述与发色/瞳色白名单；其他开放语义冲突仍由 LLM 规划，不伪装成已全面检测。
 
 ### 4.5 缓存
 
@@ -357,7 +357,7 @@ compile_lora_bindings(prompt_en, resolved_bindings, user_intent=None)
 1. 校验 key/profile/type/组合限制；
 2. 从 registry 取 exact `required_tags + default_tags`；
 3. 对 optional tags 只接受 registry 白名单中的语义选择；
-4. 删除与 exact LoRA tags 规范化后相同的重复；`provides` 的语义近似复述由 LoRA-aware LLM 协议抑制，首版不做启发式语义删除；
+4. 删除与 exact LoRA tags 规范化后相同的重复、兄弟 Profile required trigger 和可验证的身份复述；角色发色/瞳色仅允许用户明确锁定项，其他 `provides` 近似语义仍不做开放式启发删除；
 5. 按确定性顺序将 LoRA tags 合入最终 Prompt；
 6. 幂等：同一 binding 编译两次结果不重复；
 7. 返回 `lora_bindings/lora_warnings`，不靠最终字符串保存状态；
@@ -540,7 +540,7 @@ Step 0-10 已于 2026-08-23 完成。最终实现包含 versioned Registry/热�
 - DeepSeek：旧 Illustrious 资产换为 Anima 专用 LoRA；同作者身份/女仆装语义以 0.85 绑定，图书馆 aware/legacy 两张均被用户接受，且 Anima 整体优于原 IL 版本。作者水下花园 Prompt 只作 LoRA 控制组，不参与图书馆语义胜负。
 - 光影反馈：`明亮午后` 从旧的 golden/lazy 午后词条中分离为 clear daylight/high sun/crisp shadows；Blue Archive 两张复测光线均正常。
 - 边界：多 Profile schema 已验证，角色×1 + 风格×1 可组合；没有真实多人 LoRA 资产，因此跨文件多角色 composition 仍留待未来证据触发。
-- 最终一致性审计（2026-08-23）：SiliconFlow/Vision 调用失败为 502 fail-closed；首版没有独立 semantic conflict detector；前端展示 provides/Profile/verified 而不展开 minimal tags。以上已按真实代码修正文案，不是遗留实现任务。
+- 最终一致性审计（2026-08-23）：SiliconFlow/Vision 调用失败为 502 fail-closed；首版没有通用 semantic conflict detector；前端展示 provides/Profile/verified 而不展开 minimal tags。2026-08-28 的 D47 只补充角色 LoRA 发色/瞳色越权这一可确定窄检查，不改变“不建设开放式冲突系统”的边界。
 - 新增 Remielle Dan（base/白/黑/泳装）、Dolphro-kun 风格与无 trigger 的 Light 风格后，用户确认三项 LoRA 均生效并通过验收；Registry 状态已由 candidate 提升为 verified。
 
 开发时可用内部 feature flag/实验参数保留 `legacy` 与 `aware` 两条链，A/B 通过后再把 `aware` 设为生产默认；验证失败不 push 失败状态。

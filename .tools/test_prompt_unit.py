@@ -214,6 +214,71 @@ def test_visual_composer_protocol_is_strict_and_collapses_whole_repeat():
         raise AssertionError("Composer IR without all 12 fields must be rejected")
 
 
+def test_visual_composer_rejects_unrenderable_model_additions():
+    close_crop = (
+        "CONCEPT: 用户锁定：角色与泳装｜模型补全：斜倚躺椅，上衣被轻拉，裙摆被掀起，低角度近景\n"
+        'IR: {"subject":["1girl"],"appearance":[],"clothing":["swimsuit"],'
+        '"action":["adjusting top","lifting skirt"],"pose":["legs crossed"],'
+        '"interaction":[],"scene":["poolside"],"composition":["low-angle close-up"],'
+        '"lighting":["dappled sunlight"],"mood":["languid"],"style":[],"constraints":[]}\n'
+        "PROMPT: 1girl, solo, adjusting top, lifting skirt, legs crossed, low-angle close-up, poolside\n"
+    )
+    try:
+        main._parse_composer_output(close_crop)
+    except RuntimeError as exc:
+        assert "可画性冲突" in str(exc), exc
+    else:
+        raise AssertionError("close crop plus off-frame leg action must be rejected")
+
+    two_manual_actions = close_crop.replace(
+        '"pose":["legs crossed"]', '"pose":["reclining"]'
+    ).replace(
+        '"composition":["low-angle close-up"]',
+        '"composition":["three-quarter body view"]',
+    ).replace(
+        "legs crossed, low-angle close-up", "reclining, three-quarter body view",
+    )
+    try:
+        main._parse_composer_output(two_manual_actions)
+    except RuntimeError as exc:
+        assert "多个手部/服装操作" in str(exc), exc
+    else:
+        raise AssertionError("multiple model-invented garment actions must be rejected")
+
+    accidental_crop = (
+        "CONCEPT: 用户锁定：蕾米埃尔黑色形态与深色高领上衣｜"
+        "模型补全：一手轻捏裙摆，一手抚过发梢；中景近身裁切，聚焦上半身与手部细节\n"
+        'IR: {"subject":["1girl"],"appearance":[],"clothing":["dark high-collared top","short skirt"],'
+        '"action":["lifting skirt hem","brushing hair"],"pose":["looking back over shoulder"],'
+        '"interaction":[],"scene":["minimal dark background"],"composition":["medium shot","upper body focus"],'
+        '"lighting":["side top lighting"],"mood":["alluring"],"style":[],"constraints":[]}\n'
+        "PROMPT: 1girl, solo, looking back over shoulder, short skirt with hem lifted by one hand, "
+        "other hand brushing through hair, medium shot, upper body focus, minimal dark background\n"
+    )
+    try:
+        main._parse_composer_output(accidental_crop)
+    except RuntimeError as exc:
+        assert "交互区域完整入镜" in str(exc), exc
+    else:
+        raise AssertionError("upper-body crop plus model-added skirt interaction must be rejected")
+
+    intentional_three_quarter = accidental_crop.replace(
+        "一手轻捏裙摆，一手抚过发梢；中景近身裁切，聚焦上半身与手部细节",
+        "以一手轻捏裙摆为核心，另一只手自然垂落；采用四分之三身构图",
+    ).replace(
+        '"action":["lifting skirt hem","brushing hair"]',
+        '"action":["lifting skirt hem"]',
+    ).replace(
+        '"composition":["medium shot","upper body focus"]',
+        '"composition":["three-quarter body view"]',
+    ).replace(
+        "other hand brushing through hair, medium shot, upper body focus",
+        "other hand resting naturally, three-quarter body view",
+    )
+    parsed = main._parse_composer_output(intentional_three_quarter)
+    assert "three-quarter body view" in parsed[0], parsed[0]
+
+
 def test_composer_guard_only_enforces_count_and_explicit_full_body_lock():
     tags = main._prepare_composer_tags(
         ["close-up", "upper body", "painterly", "silhouette", "soft daylight"],
@@ -719,6 +784,118 @@ def test_lora_binding_compiler_is_exact_and_idempotent():
     assert first.startswith("1girl, solo, denia \\(wuthering waves\\)"), first
 
 
+def test_lora_binding_compiler_removes_sibling_profile_trigger():
+    bindings, warnings, _ = main.resolve_lora_selections([
+        {"key": "remielle_dan", "profile": "swim", "mode": "explicit"}
+    ])
+    assert not warnings, warnings
+    compiled = main.compile_lora_bindings(
+        "1girl, solo, remielle_dan \\(swim\\), remielle_dan, Remielle Dan swimsuit form, "
+        "white sleeveless top with purple ruffles, remielle_dan lounging by the pool, reclining, poolside",
+        bindings,
+    )
+    segments = [segment.strip() for segment in compiled.split(",")]
+    assert "remielle_dan" not in segments, compiled
+    assert "Remielle Dan swimsuit form" not in segments, compiled
+    assert "white sleeveless top with purple ruffles" not in segments, compiled
+    assert segments.count("remielle_dan \\(swim\\)") == 1, compiled
+    assert segments.count("wearing a white sleeveless top with purple ruffles") == 1, compiled
+    assert "lounging by the pool" in segments, compiled
+    assert not any(segment.startswith("remielle dan lounging") for segment in segments), compiled
+    assert "reclining" in segments and "poolside" in segments, compiled
+
+
+def test_character_lora_blocks_profile_name_appearance_inference():
+    assert main._explicit_character_appearance_locks(
+        "蕾米埃尔黑色形态，人物为主，背景从简"
+    ) == set()
+    assert main._explicit_character_appearance_locks(
+        "蕾米埃尔黑色形态，改成黑色长发和蓝眼睛"
+    ) == {"black hair", "blue eyes"}
+    assert main._explicit_character_appearance_locks(
+        "Remielle black form with pink hair and purple eyes"
+    ) == {"pink hair", "purple eyes"}
+    assert main._explicit_character_appearance_locks(
+        "黑色发饰，蓝色眼影，人物站在窗前"
+    ) == set()
+
+    prompt_ir = {field: [] for field in main._IR_FIELDS}
+    prompt_ir["appearance"] = ["long black hair", "red eyes", "star hair ornament"]
+    prompt = "1girl, solo, long black hair, red eyes, star hair ornament, dark short skirt"
+    issue = main._composer_character_lora_appearance_issue(prompt_ir, prompt, set())
+    assert issue and "black hair" in issue and "red eyes" in issue, issue
+
+    issue = main._composer_character_lora_appearance_issue(
+        prompt_ir, prompt, {"black hair", "red eyes"}
+    )
+    assert issue is None, issue
+
+
+def test_character_lora_appearance_conflict_repairs_once():
+    old_client = main.CLIENT
+    old_key = main.CFG.get("siliconflow_api_key")
+    payloads = []
+
+    bad = (
+        "CONCEPT: 用户锁定：蕾米埃尔黑色形态｜模型补全：黑色长发与暗色背景\n"
+        'IR: {"subject":["1girl"],"appearance":["long black hair"],"clothing":[],'
+        '"action":[],"pose":[],"interaction":[],"scene":["dark background"],'
+        '"composition":[],"lighting":[],"mood":[],"style":[],"constraints":[]}\n'
+        'LORA: {"remielle_dan":{"profile":"black","optional":[]}}\n'
+        "PROMPT: 1girl, solo, long black hair, dark background\n"
+    )
+    repaired = (
+        "CONCEPT: 用户锁定：蕾米埃尔黑色形态｜模型补全：暗色背景\n"
+        'IR: {"subject":["1girl"],"appearance":[],"clothing":[],"action":[],"pose":[],'
+        '"interaction":[],"scene":["dark background"],"composition":[],"lighting":[],'
+        '"mood":[],"style":[],"constraints":[]}\n'
+        'LORA: {"remielle_dan":{"profile":"black","optional":[]}}\n'
+        "PROMPT: 1girl, solo, dark background\n"
+    )
+
+    class FakeResponse:
+        status_code = 200
+        text = ""
+
+        def __init__(self, output):
+            self.output = output
+
+        def json(self):
+            return {"choices": [{"message": {"content": self.output}}]}
+
+    class FakeClient:
+        async def post(self, *args, **kwargs):
+            payloads.append(kwargs["json"])
+            return FakeResponse(bad if len(payloads) == 1 else repaired)
+
+    context = (
+        "COMPLETION LEVEL: AUTO\nUSER IDEA:\n蕾米埃尔黑色形态\n"
+        "ACTIVE LORA CONTEXT\n"
+        "USER-LOCKED CHARACTER APPEARANCE OVERRIDES: []"
+    )
+    main.CLIENT = FakeClient()
+    main.CFG["siliconflow_api_key"] = "test-key"
+    try:
+        result = asyncio.run(main.siliconflow_translate(context))
+        assert len(payloads) == 2, payloads
+        assert "black hair" not in result[0], result[0]
+        repair_text = payloads[1]["messages"][1]["content"]
+        assert "LoRA 身份冲突" in repair_text and "black hair" in repair_text, repair_text
+    finally:
+        main.CLIENT = old_client
+        if old_key is None:
+            main.CFG.pop("siliconflow_api_key", None)
+        else:
+            main.CFG["siliconflow_api_key"] = old_key
+
+    accessory_only = {field: [] for field in main._IR_FIELDS}
+    accessory_only["appearance"] = ["black hair ribbon", "star hair ornament"]
+    issue = main._composer_character_lora_appearance_issue(
+        accessory_only, "1girl, solo, black hair ribbon, star hair ornament", set()
+    )
+    assert issue is None, issue
+
+
 def test_lora_choice_protocol_parser():
     output = (
         'IR: {"subject":["1girl"],"appearance":[],"clothing":[],"action":[],"pose":[],"interaction":[],"scene":[],"composition":[],"lighting":[],"mood":[],"style":[],"constraints":[]}\n'
@@ -750,6 +927,7 @@ def test_active_lora_forces_painter_and_compiles_binding():
             "站在海边", lora_selections=[{"key": "denia", "mode": "auto"}], include_meta=True
         ))
         assert calls and "ACTIVE LORA CONTEXT" in calls[0], calls
+        assert "USER-LOCKED CHARACTER APPEARANCE OVERRIDES: []" in calls[0], calls[0]
         assert "Select exactly one profile ID" in calls[0], calls[0]
         assert "denia \\(wuthering waves\\)" in prompt, prompt
         assert "beach" in prompt and "sunset" in prompt, prompt
@@ -914,6 +1092,7 @@ def main_test():
         test_reroll_uses_new_painter_plan_metadata,
         test_painter_prompt_protocol_is_final_prompt,
         test_visual_composer_protocol_is_strict_and_collapses_whole_repeat,
+        test_visual_composer_rejects_unrenderable_model_additions,
         test_composer_guard_only_enforces_count_and_explicit_full_body_lock,
         test_workflow_negative_contains_compact_anatomy_guard,
         test_siliconflow_composer_bypasses_ordinary_dict_and_isolates_completion_cache,
@@ -940,6 +1119,9 @@ def main_test():
         test_scan_force_skips_known_wan_without_hashing,
         test_scan_uses_local_civitai_info_before_hash_or_network,
         test_lora_binding_compiler_is_exact_and_idempotent,
+        test_lora_binding_compiler_removes_sibling_profile_trigger,
+        test_character_lora_blocks_profile_name_appearance_inference,
+        test_character_lora_appearance_conflict_repairs_once,
         test_lora_choice_protocol_parser,
         test_active_lora_forces_painter_and_compiles_binding,
         test_active_lora_is_present_in_vision_path,

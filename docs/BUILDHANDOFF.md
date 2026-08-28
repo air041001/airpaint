@@ -1,6 +1,6 @@
 # AirPaint Build Handoff
 
-> 交接日期：2026-08-27
+> 交接日期：2026-08-28
 > 当前分支：`main`
 > 远程状态：Visual Composer、LoRA Context / Binding 与双主题三栏工作台均已实现和验收；实际提交以根仓库及 `web/` 子仓库各自的 `git log` / `git status` 为准
 
@@ -18,8 +18,9 @@ Phase 2.6（Prompt Expansion）、Phase 2.7（Visual Composer）、Phase 3（Cha
 - 最终 Anima Prompt 可自由使用 tag、短句、自然语言或混合，不设固定元素数。ordinary `dict.yaml` 不再短路普通文本 Reasoning Model；Vision 与其他 legacy 路径保持兼容。
 - 中文构思固定为 `用户锁定：…｜模型补全：…`，前端可编辑后以 `concept_override` 重编译；它是单轮控制面，不是 PromptState。
 - `compile_prompt()` 与新 Composer 护栏：角色 canonical/裸名去重、主体计数、完整重复折叠、明确全身请求的互斥近景清理；新路径不再自动补裸体、年龄、rating、三分之四景别或删除画风。
+- 定向可画性/身份护栏：模型补全不得把上半身近景与裙摆/髋腿交互或多个手部操作塞进同一画面；角色 LoRA 的 Profile 名不得推断发色/瞳色，只有用户明确改色可通过，越权时修复一次后 fail closed。
 - `/api/translate/jobs/dialog`：贯通 `concept`、`completion_level`、`prompt_ir_meta` 与 LoRA binding snapshot，旧 `breakdown` 契约保持兼容。
-- 结构性回归：由 51 个零依赖单测覆盖 Composer 协议、Prompt/角色知识、LoRA Registry/Binding、API/session 与 workflow，不依赖未验证 baseline。
+- 结构性回归：由 53 个零依赖单测覆盖 Composer 协议、Prompt/角色知识、LoRA Registry/Binding、API/session 与 workflow，不依赖未验证 baseline。
 - Failure taxonomy：已覆盖 counting、entity binding、action/pose、interaction、spatial、lighting、NSFW anatomy、model artifact、semantic misread 等类型。
 - NSFW 结构评测集：8 条明确成人内容，结构与 explicit safety 验证通过。
 - Rendering Strategy 实验工具：固定 Prompt、seed、尺寸、workflow，支持盲评页、manifest、variant 对照。
@@ -34,7 +35,7 @@ Phase 2.6（Prompt Expansion）、Phase 2.7（Visual Composer）、Phase 3（Cha
 ### 已验证项
 
 - Phase 2 profile 收窄后，结构回归由单测覆盖（历史 30/30 仅记录，baseline 已清理）。
-- Prompt/LoRA 单测：最近一次为 `49` 个通过。
+- Prompt/LoRA 单测：最近一次为 `53` 个通过。
 - NSFW 结构验证：`8/8`，workflow safety 为 `explicit`。
 - Failure taxonomy 聚合：`17 pass / 18 fail`，主要失败类型为 `interaction_relation`、`model_artifact`、`action_pose`、`anatomy_nsfw`。
 - Phase 1.5 首轮：30 张图生成成功，用户完成盲评。
@@ -53,6 +54,7 @@ Phase 2.6（Prompt Expansion）、Phase 2.7（Visual Composer）、Phase 3（Cha
 - 生产前端已迁移为状态驱动的三栏工作台：描述跨栏、Prompt 左、成图中、参数右、历史下方；首次翻译使用独立检查态，有图后重翻译保持图片不动。纸本/石墨只改变材质与配色，不改变标题标记语义；LoRA 选中 Profile 在两主题均有明确对比度，角色/风格菜单会按右栏上下空间自动翻转。
 - “生成”会静默调用翻译并把返回的英文 Prompt/五项拆解同步到左栏，再提交任务；不再只有“先看翻译”路径更新 UI。成图舞台脱离 `flex-1` 的固有尺寸反撑，按视口高度在桌面连续缩放并始终使用 contain，896×1152 等竖图不会再把画布撑成 1152px 高。
 - Visual Composer 真实 SiliconFlow 定向 smoke 覆盖普通 auto、编辑构思重编译与角色+画风 LoRA 上下文；三次均返回完整 12 字段 IR、构思与正确 binding。
+- Remielle Dan `black` + Fymrie 的真实失败复测已通过：Profile 名不再产生未请求的 `black hair/red eyes`，IR/PROMPT 均无越权颜色且 binding 无 warning；1024×1024 构图修复图由用户确认没有问题。
 - 前端 mock 已覆盖三档传参、构思 dirty 阻断/重新应用、原文/LoRA stale 防串线、job 的 `concept/completion_level`、1365×720 与 390×844；console 无错误。
 - 正常二次元插画 `d709b7a58fc9.png` 和角色+画风 LoRA 插画 `695cf21fe007.png` 已由用户确认可接入生产。该人眼结果是当前画质证据；49 项单测与 smoke 只证明结构和链路。
 
@@ -64,7 +66,7 @@ Phase 2.6（Prompt Expansion）、Phase 2.7（Visual Composer）、Phase 3（Cha
 |---|---|
 | `server/main.py` | Prompt/Intent/Workflow Engine + LoRA Registry/Scanner/Resolver/Binding/API/session |
 | `server/lora_registry.yaml` | versioned LoRA Asset/Profile/trigger/provides/default strength 人工知识 |
-| `.tools/test_prompt_unit.py` | 51 个零依赖 Composer/Prompt/角色知识/LoRA Registry/Binding/API/session/workflow 单测 |
+| `.tools/test_prompt_unit.py` | 53 个零依赖 Composer/Prompt/角色知识/LoRA Registry/Binding/API/session/workflow 单测 |
 | `server/workflows/AnimaFull.json` | 当前统一 Anima 工作流；固定 negative 含质量、构图及紧凑的人体防御词 |
 | `.tools/register_lora.py` | LoRA sidecar inspection、Registry validate 与原子 onboarding |
 | `.tools/start_lora_onboard_agent.bat` | 双击启动本地 LoRA 入库 Agent；API key 只从 gitignored config 读取 |
@@ -106,8 +108,8 @@ Phase 2.6（Prompt Expansion）、Phase 2.7（Visual Composer）、Phase 3（Cha
 | `docs/PLAN-v5 — AirPaint Prompt Intelligence.md` | 长期实施路线（唯一现行计划，取代已删除的 PLAN-v4） |
 | `docs/PLAN-LORA.md` | 最终任务 v2 设计、Step 0-10 与最终验收结果 |
 | `ROADMAP.md` | Phase 2.7/3/LoRA Context 首版完成；Phase 4/8 与多人 composition 条件触发 |
-| `docs/DEVLOG.md` | 第 31-51 条记录 Phase 1、LoRA Context、双主题迁移与 Visual Composer 生产接入 |
-| `docs/decisions.md` | D39 为 LoRA Binding，D45 为三栏工作台，D46 为当前 Visual Composer 决策 |
+| `docs/DEVLOG.md` | 第 31-54 条记录 Phase 1、LoRA Context、双主题迁移、Visual Composer 与定向生产修复 |
+| `docs/decisions.md` | D39 为 LoRA Binding，D45 为三栏工作台，D46 为 Visual Composer，D47 为构图/角色 LoRA 定向护栏 |
 | `docs/architecture.md` | 当前 Prompt/LoRA Registry/Binding/Workflow/Frontend 架构与边界 |
 | `docs/api.md` | translate/jobs/dialog 的 selection/binding/revision 契约 |
 | `docs/workflow-anatomy.md` | 用户维护的 AnimaFull 权威节点解剖；当前 HEAD 中已单独提交，后续必须优先参考 |
@@ -165,7 +167,7 @@ python .tools/test_prompt_unit.py
 python .tools/register_lora.py --validate
 ```
 
-状态：Python 编译通过；`51 prompt unit tests passed`、`13 lora onboarding agent tests passed`；当前本机用户维护、未纳入阶段提交的 Registry 为 `registry valid: 12 assets`。`si_(arknights)-v2.safetensors` 的真实 Manager 增量扫描/列表命中 smoke 通过。`server/workflows/AnimaFull.json` 可正常解析，正负两个 wildcard 字段包含相同人体防御词。
+状态：Python 编译通过；`53 prompt unit tests passed`、`13 lora onboarding agent tests passed`；当前本机用户维护、未纳入阶段提交的 Registry 为 `registry valid: 12 assets`。`si_(arknights)-v2.safetensors` 的真实 Manager 增量扫描/列表命中 smoke 通过。`server/workflows/AnimaFull.json` 可正常解析，正负两个 wildcard 字段包含相同人体防御词。
 
 ```text
 python .tools/test_lora_onboard_agent.py
@@ -176,7 +178,7 @@ python .tools/register_lora.py --validate
 
 前端当前验证：2 个内联 script 语法通过；132 个 DOM id 无重复，109 个静态 `$()` 引用全部存在。浏览器 mock 完成 1365×720 与 390×844：三档传参、构思渲染与编辑、dirty 构思阻断、重新应用、原文 stale 阻断、角色+风格 LoRA 双选择、job 的 `concept/completion_level` 均符合契约，console 无错误。既有 1920×950/1080 与竖图 contain 验收继续有效。
 
-Reasoning Model 当前验证：3 条真实 SiliconFlow smoke 覆盖普通 auto、`concept_override` 重编译、角色+画风 LoRA context；均返回精确 12 字段 IR、合法构思和正确 binding。没有为本次生产接入再跑批量图片 A/B。
+Reasoning Model 当前验证：既有 3 条 SiliconFlow smoke 覆盖普通 auto、`concept_override` 重编译、角色+画风 LoRA context；2026-08-28 追加 Remielle `black` Profile 身份越权复测，最终 IR/PROMPT 均无未请求发色/瞳色。没有重启批量图片 A/B。
 
 高分辨率：修复后 `1024x1536` 无 LoRA/detailer 端到端输出 `1529ed18e206.png`，PIL 实测 1024×1536；`build_prompt`/Comfy history 均确认 txt2img `select=1`、节点 56=`1024x1536`。端到端 84.16 秒，Comfy 执行约 82.3 秒。原 `anima_20260823_00014_.png` 历史记录为 `select=2`，实际 832×1216、执行约 309.7 秒，不能作为高分辨率验证。
 
