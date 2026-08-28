@@ -2403,6 +2403,17 @@ def build_prompt(wf_name: str, prompt_en: str, width: int | None, height: int | 
     if "seed_node" in wcfg:
         set_input("seed_node", "seed", seed)
     if width and height and "size_node" in wcfg:
+        # 节点 56 的宽高原本连接到 easy int 39/47；txt2img 直接覆盖节点 56
+        # 足够，但 img2img 的 Resize 31 仍读取 39/47。先同步共享上游数值，
+        # 再覆盖 EmptyLatent 输入，保证两个分支使用同一请求尺寸且不切断 Resize 连接。
+        size_node = wf.get(str(wcfg["size_node"])) or {}
+        for field, value in (("width", width), ("height", height)):
+            connection = (size_node.get("inputs") or {}).get(field)
+            if isinstance(connection, list) and len(connection) == 2:
+                upstream = wf.get(str(connection[0])) or {}
+                upstream_inputs = upstream.get("inputs") or {}
+                if upstream.get("class_type") == "easy int" and "value" in upstream_inputs:
+                    upstream_inputs["value"] = value
         set_input("size_node", "width", width)
         set_input("size_node", "height", height)
     # ---- detailer 拼接 + inpaint/img2img 源切 (D32) ----

@@ -29,10 +29,13 @@
 | 0 | LoadImage | 上传图输入 (img2img 用) |
 | 31 | ImageResizeKJv2 | 缩放上传图 |
 | 33 | VAEEncode | 图->latent (img2img) |
+| 39/47 | easy int | 共享请求宽/高；节点 31 与节点 56 原始连接均读取这里 |
 | 32 | PrimitiveInt | ImpactSwitch 42 的 select（工作流安全默认值 1） |
 | 42 | ImpactSwitch | latent 路由: input1=56(EmptyLatent/txt2img), input2=33(VAEEncode/img2img) |
 
 > `build_prompt()` 不依赖工作流默认值：每次都显式设置 `select`，无 `image_filename` 时写 1 走 txt2img；有图片时写 2 走 img2img。历史上只在 img2img 时覆盖 select，导致 txt2img 继承节点 32 的旧值 2，错误地把 `salt.jpg` 经 Resize/VAEEncode 送入采样器，节点 56 的请求尺寸因而被绕过；见 D43。
+>
+> 请求尺寸必须同时同步到节点 39/47。节点 56 的 `width/height` 会被字面值覆盖供 txt2img 使用，但节点 31 的 `width/height` 必须继续保留到 39/47 的连接供 img2img 使用；只改节点 56 会让图生图静默回落到工作流默认 `832x1216` 并产生补边。见 D51。
 
 ### C. 精修 detailer 链 (活跃, build_prompt 按需删节点)
 链: `43 VAEDecode -> [27 Hand] -> [28 NSFW] -> [29 Face] -> [30 Eyes] -> 13 SaveImage`
@@ -72,7 +75,7 @@
 | ~~区域提示词/ControlNet/SAM3~~ | - | ❌ 评估不做 (见 ROADMAP 3.2) |
 
 ## API 耦合 (我们只动这些)
-- **注入**: `54`(正向 text) / `6`(seed, img2img denoise) / `56`(width,height) / `5`(loras) / `0`(image_filename) / `42`(txt2img select=1；img2img select=2)
+- **注入**: `54`(正向 text) / `6`(seed, img2img denoise) / `39/47`(共享 width/height) / `56`(txt2img width/height) / `5`(loras) / `0`(image_filename) / `42`(txt2img select=1；img2img select=2)
 - **detailer 拼接**: config `detailer_nodes` = {hand:27, nsfw:28, face:29, eyes:30}
 - **负面 `4`**: 工作流自带常量, 不注入
 - **剔除**: `57`/`58`/`53`/`67-70` (WidgetToString / Image Saver Metadata / Image Comparer) + `13` 换 SaveImage

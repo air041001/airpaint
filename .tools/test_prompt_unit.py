@@ -111,6 +111,10 @@ def test_build_prompt_routes_txt2img_and_img2img_explicitly():
     assert img2img["42"]["inputs"]["select"] == 2
     assert img2img["0"]["inputs"]["image"] == "uploaded.png"
     assert img2img["6"]["inputs"]["denoise"] == 0.35
+    assert img2img["31"]["inputs"]["width"] == ["39", 0]
+    assert img2img["31"]["inputs"]["height"] == ["47", 0]
+    assert img2img["39"]["inputs"]["value"] == 1024
+    assert img2img["47"]["inputs"]["value"] == 1536
 
 
 def test_build_prompt_keeps_rating_tags_manual():

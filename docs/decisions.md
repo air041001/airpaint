@@ -773,3 +773,21 @@ LoRA 用户可见名称以 versioned `server/lora_registry.yaml` 为单一真相
 **修订关系**：本决定细化 D46 的用户锁定与自由补全边界、D47 的构图/LoRA 定向护栏；保留 D44 的手动 rating 决定，不恢复自动内容分类。
 
 **相关文件**：`server/main.py`、`.tools/test_prompt_unit.py`、`docs/architecture.md`、`docs/DEVLOG.md`。
+
+## D51. 图生图尺寸与文生图共享同一请求值
+
+**背景**：风格 LoRA 预览试验用 1024×1024 baseline 进入 img2img 后，输出却变成 832×1216 并出现灰色补边。`build_prompt()` 已把节点 56 EmptyLatent 写成 1024×1024，表面上看尺寸注入成功。
+
+**问题**：节点 56 只服务 txt2img；img2img 的节点 31 ImageResizeKJv2 仍通过原连接读取节点 39/47，而这两个 easy-int 保留工作流默认 832/1216。直接把节点 31 改成字面值虽然能出图，却会切断已有共享参数连接，也违背工作流注入先查连接的原则。
+
+**决定**：`build_prompt()` 在处理请求尺寸时，先检查节点 56 原 `width/height` 连接；若上游为 easy-int，则把请求宽高同步写入上游节点 39/47，再按原行为覆盖节点 56 的字面值。节点 31 到 39/47 的连接保持不变。这样 txt2img 与 img2img 使用同一请求尺寸，且不硬编码工作流节点 ID。
+
+**原因**：尺寸是两条生成分支共享的请求状态，必须写到两条实际数据路径。通过节点 56 的现有连接发现共享参数，比在代码中新增 39/47 常量更能适应工作流配置，同时保留节点 31 的拓扑。
+
+**代价与风险**：该同步仅识别已核实的 `easy int` 上游；未来工作流若换成其他尺寸节点类型，需要重新核对其 `INPUT_TYPES` 与连接语义，而不是静默猜测。修复不等于任意参考图都能无裁切保留内容，宽高比变化仍由 Resize 节点自身策略决定。
+
+**验证**：确定性回归确认 img2img 节点 31 仍连接 39/47，而 39/47 已写成请求的 1024/1536。真实 ComfyUI 使用 1024×1024 baseline、Fymrie LoRA、img2img denoise 0.6 后输出经 PIL 确认为 1024×1024且灰边消失；随后 Blue Archive、Light 与 Fymrie denoise 0.7 样本也均为 1024×1024。当前 52 项 Prompt/workflow 单测与 6 项 LoRA Composition 测试通过；图片风格优劣仍由用户验收。
+
+**修订关系**：本决定补充 D43。D43 修复生成分支选择，本决定修复已正确进入 img2img 后的 Resize 尺寸来源。
+
+**相关文件**：`server/main.py`、`.tools/test_prompt_unit.py`、`docs/workflow-anatomy.md`、`docs/architecture.md`。

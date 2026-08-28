@@ -78,8 +78,8 @@ Active LoRA 时，Reasoning/Vision Model 只看 Asset/Profile 的 `provides` 与
 3. **统一 seed**: 扫描所有 int 型 `seed`/`noise_seed` 输入, 全写成同一正整数 (跳过列表型的节点连接)。修复 Impact Pack `np.random.default_rng(-1)` 崩溃 → FaceDetailer 人脸修复能正常跑。
 4. **LoRA binding 重解析**：有 snapshot 时只取 key/profile(s)/optional 与逐 Asset 强度，按同一 `registry_revision` 从当前 Registry 重建；旧 `lora_keys` 走 legacy adapter。随后由 Binding Compiler 补回被编辑删除的 required/default exact tags。
 5. **LoRA workflow 注入**：写 `lora_node.loras = {"__value__":[{name,strength,clipStrength,active:true}, ...]}`。逐 Asset 强度可在 0~2 覆盖 Registry 默认值；旧角色/风格分组字段仍以 0~1 兼容。同一 safetensors 最多生成一条 Loader 记录；若不同 binding 对同一文件给出冲突强度则 400 fail closed。LoraManager 的 `text` 字段执行时会被 `del`，不能依赖它加载权重。
-6. 注入 `prompt_node.text = quality_prefix + compiled prompt` 与尺寸；`safe/sensitive/questionable/explicit` 等 rating tag 仅保留用户手动编辑结果，不自动推断。不再把 Civitai 全量 trainedWords 在生成阶段盲拼。负面继续使用工作流固化模板，并包含常见手指、手臂、腿脚畸形的紧凑防御词。
-7. **生成分支与 detailer**：每次构建都显式写 ImpactSwitch：txt2img=`input1`（节点 56 EmptyLatent，使用请求宽高），img2img=`input2`（节点 33 VAEEncode）并覆盖主 KSampler denoise。若有 `detailer:{face,hand,nsfw,eyes}`，删未选 detailer 节点并重连（删掉的节点不可达，不执行）。
+6. 注入 `prompt_node.text = quality_prefix + compiled prompt` 与尺寸；请求宽高会同步到工作流共享的 easy-int 节点 39/47，同时覆盖节点 56 EmptyLatent 的字面值，使 txt2img 与节点 31 的 img2img Resize 使用同一请求尺寸且不切断 Resize 原连接。`safe/sensitive/questionable/explicit` 等 rating tag 仅保留用户手动编辑结果，不自动推断。不再把 Civitai 全量 trainedWords 在生成阶段盲拼。负面继续使用工作流固化模板，并包含常见手指、手臂、腿脚畸形的紧凑防御词。
+7. **生成分支与 detailer**：每次构建都显式写 ImpactSwitch：txt2img=`input1`（节点 56 EmptyLatent），img2img=`input2`（节点 33 VAEEncode）并覆盖主 KSampler denoise。若有 `detailer:{face,hand,nsfw,eyes}`，删未选 detailer 节点并重连（删掉的节点不可达，不执行）。
 8. 返回 `{prompt, client_id, _seed}`。
 
 > 扩展其他节点注入 (ControlNet / 图生图 等) 前, 先看 `CLAUDE.md` 的「ComfyUI 节点注入准则」-- 必须查本机节点源码定 input 格式, 不靠猜; 实例见 D16 (LoRA)。

@@ -20,7 +20,7 @@ Phase 2.6（Prompt Expansion）、Phase 2.7（Visual Composer）、Phase 3（Cha
 - `compile_prompt()` 与新 Composer 护栏：角色 canonical/裸名去重、主体计数、完整重复折叠、明确全身请求的互斥近景清理；新路径不再自动补裸体、年龄、rating、三分之四景别或删除画风。
 - 定向可画性/身份护栏：模型补全不得把上半身近景与裙摆/髋腿交互或多个手部操作塞进同一画面；角色 LoRA 的 Profile 名不得推断发色/瞳色，只有用户明确改色可通过，越权时修复一次后 fail closed。
 - `/api/translate/jobs/dialog`：贯通 `concept`、`completion_level`、`prompt_ir_meta` 与 LoRA binding snapshot，旧 `breakdown` 契约保持兼容。
-- 结构性回归：由 51 个零依赖单测覆盖 Composer 协议、Prompt/角色知识、LoRA Registry/Binding、API/session 与 workflow，不依赖未验证 baseline。
+- 结构性回归：由 52 个零依赖单测覆盖 Composer 协议、Prompt/角色知识、LoRA Registry/Binding、API/session 与 workflow，不依赖未验证 baseline。
 - Failure taxonomy：已覆盖 counting、entity binding、action/pose、interaction、spatial、lighting、NSFW anatomy、model artifact、semantic misread 等类型。
 - NSFW 结构评测集：8 条明确成人内容，结构与 explicit safety 验证通过。
 - Rendering Strategy 实验工具：固定 Prompt、seed、尺寸、workflow，支持盲评页、manifest、variant 对照。
@@ -37,7 +37,7 @@ Phase 2.6（Prompt Expansion）、Phase 2.7（Visual Composer）、Phase 3（Cha
 ### 已验证项
 
 - Phase 2 profile 收窄后，结构回归由单测覆盖（历史 30/30 仅记录，baseline 已清理）。
-- Prompt/LoRA 单测：最近一次为 `51` 个通过（旧 scanner 退役后删除其 2 项专用测试）。
+- Prompt/LoRA 单测：最近一次为 `52` 个通过（旧 scanner 退役后删除其 2 项专用测试；随后增加 Composer 硬锁与 img2img 尺寸回归）。
 - NSFW 结构验证：`8/8`，workflow safety 为 `explicit`。
 - Failure taxonomy 聚合：`17 pass / 18 fail`，主要失败类型为 `interaction_relation`、`model_artifact`、`action_pose`、`anatomy_nsfw`。
 - Phase 1.5 首轮：30 张图生成成功，用户完成盲评。
@@ -53,11 +53,12 @@ Phase 2.6（Prompt Expansion）、Phase 2.7（Visual Composer）、Phase 3（Cha
 - Remielle Dan（base/白/黑/泳装）、Dolphro-kun 风格与无 trigger Light 风格均由用户确认生效并通过验收，Registry 已提升为 verified。LoRA 显示名来自 `server/lora_registry.yaml` 的 Asset/Profile `name`，不要在前端按 key 硬编码别名。
 - 新增 `si_arknights_v2` candidate：作者样图与 safetensors 内嵌训练元数据共同确认 `si_(arknights)` 主触发词及基础外观/白裙标签，已登记为单一 `base` Profile；坐姿、蝴蝶、竹林与作者组合使用的其他 LoRA 不纳入绑定。尚未完成人眼验收，不得提升为 verified。
 - 尺寸路由纠错后，`1024x1536` 在 RTX 4060 Laptop 8GB、无 detailer 下实际输出 1024×1536，端到端 84.16 秒；此前 309.72 秒任务实际误走 `input2` 并输出 832×1216，不是高分辨率性能结论。前端现从成品 `naturalWidth/naturalHeight` 显示真实像素。
+- img2img 尺寸现会同时同步共享 easy-int 39/47 与 txt2img EmptyLatent 56；真实 1024×1024 baseline + 三个风格 LoRA 的复测均输出 1024×1024，不再回落到工作流默认 832×1216或出现灰边。
 - 生产前端已迁移为状态驱动的三栏工作台：描述跨栏、Prompt 左、成图中、参数右、历史下方；首次翻译使用独立检查态，有图后重翻译保持图片不动。纸本/石墨只改变材质与配色，不改变标题标记语义；LoRA 选中 Profile 在两主题均有明确对比度，角色/风格菜单会按右栏上下空间自动翻转。
 - “生成”会静默调用翻译并把返回的英文 Prompt/五项拆解同步到左栏，再提交任务；不再只有“先看翻译”路径更新 UI。成图舞台脱离 `flex-1` 的固有尺寸反撑，按视口高度在桌面连续缩放并始终使用 contain，896×1152 等竖图不会再把画布撑成 1152px 高。
 - Visual Composer 真实 SiliconFlow 定向 smoke 覆盖普通 auto、编辑构思重编译与角色+画风 LoRA 上下文；三次均返回完整 12 字段 IR、构思与正确 binding。
 - Remielle Dan `black` + Fymrie 的真实失败复测已通过：Profile 名不再产生未请求的 `black hair/red eyes`，IR/PROMPT 均无越权颜色且 binding 无 warning；1024×1024 构图修复图由用户确认没有问题。
-- Composition 结构验证：新增 6 项测试覆盖同文件多 Profile 单 binding/单加载、角色按 Profile 计数上限 3、Registry opt-in、6 个风格叠加、冲突强度拒绝和 snapshot round-trip；旧 scanner 退役后的 51 项 Prompt/LoRA 回归继续通过。真实 Registry payload 为 3 个角色 Profile + 4 个风格生成 6 个 binding/6 个唯一 Loader 文件。
+- Composition 结构验证：新增 6 项测试覆盖同文件多 Profile 单 binding/单加载、角色按 Profile 计数上限 3、Registry opt-in、6 个风格叠加、冲突强度拒绝和 snapshot round-trip；当前 52 项 Prompt/LoRA/workflow 回归继续通过。真实 Registry payload 为 3 个角色 Profile + 4 个风格生成 6 个 binding/6 个唯一 Loader 文件。
 - Composition 浏览器验证：桌面与 390px 下完成同文件双 Profile、跨文件角色组合、第四角色拦截、4 个风格连续多选、逐 Asset 强度与纸本/石墨主题；移动端无横向溢出。该验证不证明多人生成质量。
 - 前端 mock 已覆盖三档传参、构思 dirty 阻断/重新应用、原文/LoRA stale 防串线、job 的 `concept/completion_level`、1365×720 与 390×844；console 无错误。
 - 正常二次元插画 `d709b7a58fc9.png` 和角色+画风 LoRA 插画 `695cf21fe007.png` 已由用户确认可接入生产。该人眼结果是当前画质证据；49 项单测与 smoke 只证明结构和链路。
@@ -70,7 +71,7 @@ Phase 2.6（Prompt Expansion）、Phase 2.7（Visual Composer）、Phase 3（Cha
 |---|---|
 | `server/main.py` | Prompt/Intent/Workflow Engine + LoRA Registry/Scanner/Resolver/Binding/API/session |
 | `server/lora_registry.yaml` | versioned LoRA Asset/Profile/trigger/provides/default strength 人工知识 |
-| `.tools/test_prompt_unit.py` | 51 个零依赖 Composer/Prompt/角色知识/LoRA Registry/Binding/API/session/workflow 单测 |
+| `.tools/test_prompt_unit.py` | 52 个零依赖 Composer/Prompt/角色知识/LoRA Registry/Binding/API/session/workflow 单测 |
 | `.tools/test_lora_composition.py` | 6 个 LoRA 多 Profile/多 Asset/强度/物理文件去重确定性测试 |
 | `server/workflows/AnimaFull.json` | 当前统一 Anima 工作流；固定 negative 含质量、构图及紧凑的人体防御词 |
 | `.tools/register_lora.py` | LoRA sidecar inspection、Registry validate 与原子 onboarding |
@@ -135,6 +136,7 @@ Phase 2.6（Prompt Expansion）、Phase 2.7（Visual Composer）、Phase 3（Cha
 2. 新下载 LoRA 推荐双击 `.tools/start_lora_onboard_agent.bat`：选择目标文件后，工具会调用 LoRA Manager 增量 scan，并通过 `/api/lm/loras/list` 验证该文件确实已解析为完整路径；验证通过后才接收作者说明和调用 Reasoning Model。输入 `revise` 可自然语言修订，只有 `write` + 最终 `y` 才写 Registry，真实生图后再提升 verified。
 3. 若 ComfyUI 未运行、scan 被取消、返回格式异常或目标文件仍未入列表，Agent 会在调用 LLM/写 Registry 前停止。增量未命中时可由用户明确选择一次全量重建；默认不自动承担大文件哈希成本。只有明确需要离线准备 Registry 时才使用 `--no-manager-scan` 绕过运行时索引验收。
 4. `si_arknights_v2` 首次两次生成在 ComfyUI 节点 5 报 `ModelMMAP allocation failed for si_(arknights)-v2.safetensors`。根因是文件尚未进入 LoRA Manager SQLite 索引：`get_lora_info_absolute()` 查找失败后把原始相对文件名交给 Aimdo，因而 mmap 打不开；这与缺 trigger、文件损坏或显存不足无关。用户手动访问 `/api/lm/loras/scan` 后，Manager 已生成 sidecar 并在 `/api/lm/loras/list` 返回完整绝对路径；修订后的入库 Agent 已用该文件完成真实增量扫描与目标命中 smoke。
+5. 风格预览 pilot 正在等待人眼验收：纯 txt2img 会让 Fymrie 从坐姿漂成站姿，当前候选改为 baseline 驱动 img2img、`denoise=0.7`。三张候选基本保留同一桌面/窗户/速写本关系，但 Blue Archive 的一只手移到下巴；若用户认可这个一致性/风格强度平衡，再批量生成其余风格并落 Registry `preview` 与前端展示。试验脚本 `.tools/generate_lora_previews.py` 当前未跟踪，不要在协议验收前当正式工具提交。
 
 ### 条件性未完成项
 
@@ -173,7 +175,7 @@ python .tools/test_lora_composition.py
 python .tools/register_lora.py --validate
 ```
 
-状态：Python 编译通过；`51 prompt unit tests passed`、`6 lora composition tests passed`、`14 lora onboarding agent tests passed`；当前本机用户维护、未纳入本次清理提交的 Registry 为 `registry valid: 15 assets`。`si_(arknights)-v2.safetensors` 的真实 Manager 增量扫描/列表命中 smoke 通过。`server/workflows/AnimaFull.json` 可正常解析，正负两个 wildcard 字段包含相同人体防御词。
+状态：Python 编译通过；`52 prompt unit tests passed`、`6 lora composition tests passed`、`14 lora onboarding agent tests passed`；当前本机用户维护、未纳入本次修复提交的 Registry 为 `registry valid: 15 assets`。`si_(arknights)-v2.safetensors` 的真实 Manager 增量扫描/列表命中 smoke 通过。`server/workflows/AnimaFull.json` 可正常解析，正负两个 wildcard 字段包含相同人体防御词。真实 img2img 尺寸复测见 D51/DEVLOG 58。
 
 ```text
 python .tools/test_lora_onboard_agent.py
