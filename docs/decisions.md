@@ -728,7 +728,7 @@ LoRA 用户可见名称以 versioned `server/lora_registry.yaml` 为单一真相
 
 ## D49. 退役启动时 LoRA 自动扫描，以目标式 Onboarding 作为唯一入库入口
 
-**背景**：D29 的 `scan_loras()` 在后端启动时扫描全部 safetensors、读取 sidecar/计算 SHA256、查询 Civitai 并写入 `server/lora_cache.json`，再把自动 inventory 合并进 `/api/loras`。后续 D41/D42/D53 已建立 versioned Registry 与 onboarding Agent，并能直接枚举未注册文件、验收 LoRA Manager 是否真正索引目标、展示本地候选、经人工确认后原子入库。
+**背景**：D29 的 `scan_loras()` 在后端启动时扫描全部 safetensors、读取 sidecar/计算 SHA256、查询 Civitai 并写入 `server/lora_cache.json`，再把自动 inventory 合并进 `/api/loras`。后续 D39/D40/D41 已建立 versioned Registry 与 onboarding Agent，并能直接枚举未注册文件、验收 LoRA Manager 是否真正索引目标、展示本地候选、经人工确认后原子入库。
 
 **问题**：两条链路并存会制造两个真相源。旧 scanner 仍在每次启动后台执行，却只能额外暴露一个未注册 cache 条目；Civitai trainedWords 既不可靠也不能表达多 Profile。`POST /api/loras/refresh` 与 onboarding 的 Manager scan 名称相似但验收语义不同，容易让维护者误以为“刷新成功”等于“可生成”。同时 `main.py` 承担了 hash、联网候选与 inventory 工具职责。
 
@@ -746,7 +746,7 @@ LoRA 用户可见名称以 versioned `server/lora_registry.yaml` 为单一真相
 
 **验证**：`server/main.py` 从 3304 行降至 3032 行；Python 编译通过，`51 prompt unit tests passed`、`6 lora composition tests passed`、`14 lora onboarding agent tests passed`，Registry 校验为本机 15 assets。运行时合并结果为 15 个 Registry Asset + 1 个 legacy config Asset，Civitai 自动来源为 0。
 
-**修订关系**：本决定 supersedes D29 的“config > Civitai > 裸文件”自动 inventory 与刷新接口；保留 D29 作为历史记录，并保留 D41/D42/D53 的 Registry、候选证据和目标索引验收原则。
+**修订关系**：本决定 supersedes D29 的“config > Civitai > 裸文件”自动 inventory 与刷新接口；保留 D29 作为历史记录，并保留 D39/D40/D41 的 Registry、候选证据和目标索引验收原则。
 
 **相关文件**：`server/main.py`、`.tools/register_lora.py`、`.tools/test_prompt_unit.py`、`.tools/test_lora_onboard_agent.py`、`server/config.example.yaml`、`docs/PLAN-LORA.md`、`docs/api.md`、`docs/architecture.md`。
 
@@ -815,3 +815,27 @@ LoRA 用户可见名称以 versioned `server/lora_registry.yaml` 为单一真相
 **修订关系**：本决定完成 D49 后的风格预览扩展，并保留 D51 暴露的 img2img 尺寸修复；它不改变 D48 的多 LoRA Composition 语义，也不构成多人或组合画质验收。
 
 **相关文件**：`.tools/generate_lora_previews.py`、`server/lora_previews/`、`server/main.py`、`web/index.html`、`.tools/test_prompt_unit.py`、`docs/PLAN-LORA.md`、`docs/api.md`、`docs/architecture.md`。
+
+## D53. 风格预览是 Registry 写入后的可选人工门，而不是入库事务的一部分
+
+**背景**：D52 已建立固定人物印样和 Asset-key 静态资源约定，但新增 style 仍需维护者手动运行生成器、寻找原图、缩放并按 key 命名。该机械流程适合并进入库工具，但真实图片仍需人眼筛选。
+
+**问题**：如果在 Agent 猜到 `type: style` 时立即生成，分类修订或取消仍会浪费 GPU；如果把生成/缩图纳入同一事务，ComfyUI 离线、模型加载失败或偶发坏图会错误阻止一个语义上已经完整的 LoRA 注册。反过来，完全自动接受第一张图又会把人体失败当正式门面。
+
+**候选**：
+
+1. Agent 一识别 style 就后台生成并自动安装；步骤最少，但发生在人工确认前，且没有图片质量门。
+2. Registry 写入成功后仅打印手工命令；安全但仍保留寻找、缩图和命名负担。
+3. Registry 写入后只对最终 `type: style` 提供 `generate/later`，生成候选并打开查看器，明确 `accept` 后原子安装；失败不回滚，另有 `--preview` 重试入口。采用此方案。
+
+**决定**：注册事务以 Registry 原子写入为终点。随后 style Asset 默认询问是否立即生成固定人物候选；候选输出到 gitignored staging，人工确认默认值为 `later`。输入 `accept` 时校验图片必须为 7:9，使用 Lanczos 转成 448×576 quality 88 WebP，再通过临时文件替换 `server/lora_previews/<asset-id>.webp`。任何预览错误只返回可复制的 `python .tools/register_lora.py --preview <asset-id>` 命令，不删除或改写已注册 Asset。
+
+**原因**：这把可自动化的 GPU 调用、路径、缩图、格式和命名交给代码，同时保留唯一可靠的图像质量判断——人眼。先写 Registry 也满足预览生成器必须通过正式 selection/binding 解析 Asset 的依赖顺序。独立重试使离线 onboarding 仍可完成，不把 ComfyUI 可用性变成知识入库条件。
+
+**代价与风险**：立即生成仍会占用约一分钟 GPU，并在本机打开系统图片查看器；选择 `later` 时网站暂时显示文字占位。当前只处理严格的 style，不替 character/action/expression 猜主预览。固定 seed 出现坏图时不自动换 seed挑最好看结果，需维护者决定是否调整资产知识或单独重测。
+
+**验证**：新增 4 项确定性测试覆盖非 style 不询问、later 不调用生成、生成失败不冒充成功、accept 后 896×1152 原图原子转为 448×576 WebP且不提升 candidate；系统 Python 与双击脚本使用的 `E:\python 3.10\python.exe` 均通过，共 `18 lora onboarding agent tests passed`。主 Prompt、Composition 与 Registry 校验继续通过。
+
+**修订关系**：本决定扩展 D40/D49 的 onboarding 易用性和 D52 的预览资源协议；不改变“外部候选不得自动污染 Registry”或“图片质量必须人眼确认”的边界。
+
+**相关文件**：`.tools/register_lora.py`、`.tools/test_lora_onboard_agent.py`、`.tools/generate_lora_previews.py`、`docs/PLAN-LORA.md`、`docs/architecture.md`、`docs/BUILDHANDOFF.md`。

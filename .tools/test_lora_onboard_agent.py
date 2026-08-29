@@ -308,6 +308,84 @@ def test_agent_aborts_before_llm_when_manager_index_is_not_ready():
     assert calls == ["demo.safetensors"]
 
 
+def test_preview_flow_does_not_prompt_for_non_style_assets():
+    old_ask = tool.ask_choice
+    try:
+        tool.ask_choice = lambda *args, **kwargs: (_ for _ in ()).throw(
+            AssertionError("非 style 不应触发预览询问"))
+        assert tool.run_style_preview_flow(
+            "demo_character", {"type": "character"}) == "not_applicable"
+    finally:
+        tool.ask_choice = old_ask
+
+
+def test_preview_flow_can_be_deferred_without_rendering():
+    old_ask = tool.ask_choice
+    old_generate = tool.generate_style_preview_candidate
+    calls = []
+    try:
+        tool.ask_choice = lambda *args, **kwargs: "later"
+        tool.generate_style_preview_candidate = lambda asset_id: calls.append(asset_id)
+        with contextlib.redirect_stdout(io.StringIO()) as output:
+            result = tool.run_style_preview_flow("demo_style", {"type": "style"})
+    finally:
+        tool.ask_choice = old_ask
+        tool.generate_style_preview_candidate = old_generate
+    assert result == "later"
+    assert calls == []
+    assert "--preview" in output.getvalue()
+
+
+def test_preview_generation_failure_does_not_raise_or_claim_acceptance():
+    old_ask = tool.ask_choice
+    old_generate = tool.generate_style_preview_candidate
+    try:
+        tool.ask_choice = lambda *args, **kwargs: "generate"
+        tool.generate_style_preview_candidate = lambda asset_id: None
+        with contextlib.redirect_stdout(io.StringIO()) as output:
+            result = tool.run_style_preview_flow("demo_style", {"type": "style"})
+    finally:
+        tool.ask_choice = old_ask
+        tool.generate_style_preview_candidate = old_generate
+    assert result == "failed"
+    assert "Registry 已保留" in output.getvalue()
+
+
+def test_accepted_style_preview_is_atomically_resized_without_promoting_asset():
+    from PIL import Image
+
+    old_ask = tool.ask_choice
+    old_generate = tool.generate_style_preview_candidate
+    old_open = tool.open_preview_candidate
+    old_preview_dir = tool.main.LORA_PREVIEWS
+    asset = {"type": "style", "verified": "candidate"}
+    try:
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            source = root / "candidate.png"
+            destination = root / "previews"
+            Image.new("RGB", (896, 1152), (80, 120, 160)).save(source)
+            tool.ask_choice = lambda *args, **kwargs: "accept"
+            tool.generate_style_preview_candidate = lambda asset_id: source
+            tool.open_preview_candidate = lambda path: None
+            tool.main.LORA_PREVIEWS = destination
+            with contextlib.redirect_stdout(io.StringIO()):
+                result = tool.run_style_preview_flow(
+                    "demo_style", asset, ask_before=False)
+            target = destination / "demo_style.webp"
+            assert result == "accepted"
+            assert target.is_file()
+            with Image.open(target) as installed:
+                assert installed.size == (448, 576)
+            assert list(destination.glob("*.webp")) == [target]
+    finally:
+        tool.ask_choice = old_ask
+        tool.generate_style_preview_candidate = old_generate
+        tool.open_preview_candidate = old_open
+        tool.main.LORA_PREVIEWS = old_preview_dir
+    assert asset["verified"] == "candidate"
+
+
 def test_local_metadata_reader_stays_inside_onboarding_tool():
     with tempfile.TemporaryDirectory() as folder:
         path = Path(folder) / "demo.safetensors"

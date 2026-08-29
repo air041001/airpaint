@@ -872,3 +872,11 @@ legacy `config.yaml.loras` 没有一并删除：本机运行时核对显示仍�
 前端资源裁为 448×576 WebP 并跟踪于 `server/lora_previews/`。后端保留 Registry 显式 `preview` 优先级，未填写时按安全 Asset key 自动发现受控静态资源，通过 `/lora-previews` 返回带 mtime 的 URL。风格/细节菜单改为两栏接触印样，显示名称、默认强度和选中状态，当前叠加栈同步小图；角色菜单和 selection/binding 请求结构不变，缺图降级为文字占位。
 
 验证：API 实际返回 9/9 预览 URL；Python 编译、`53 prompt unit tests passed`、`6 lora composition tests passed`、前端 2 段内联脚本/132 个 DOM ID 静态检查通过。浏览器在 1920×950 与 390×844、纸本与石墨主题下确认双列加载、菜单上下空间限制、多选/当前栈和无横向溢出；除既有 Tailwind CDN 提示外无 console 错误。
+
+## 第 61 条 2026-08-29 - style 入库后可选生成人物预览
+
+LoRA onboarding 在 Registry 双重确认并原子写入后，若最终类型严格为 `style`，现在询问 `generate/later`。立即生成复用 `style-preview-character-v1`、Registry 默认强度和固定 DeepSeek 人物条件；候选留在 gitignored staging 并尝试用系统查看器打开，默认不接受。只有维护者输入 `accept` 才校验 7:9、缩放为 448×576 WebP并原子安装到 Asset key 对应路径。
+
+预览不属于 Registry 事务：ComfyUI/模型/生成/缩图任何失败都不回滚已完成入库，也不提升 `verified` 或自动提交 Git。选择稍后、拒绝候选或失败时都会给出 `python .tools/register_lora.py --preview <asset-id>` 独立重试命令；character/action/expression 不触发人物主图。
+
+新增 4 项测试覆盖非 style 跳过、later 不生成、失败保留与人工 accept 安装，共 `18 lora onboarding agent tests passed`；系统 Python 和双击脚本使用的 Python 3.10 均完成编译与测试。

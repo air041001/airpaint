@@ -5,8 +5,10 @@
 只作为候选展示，不自动 promote 为正式 trigger knowledge。
 """
 import argparse
+import asyncio
 import html
 import json
+import os
 import re
 import sys
 import tempfile
@@ -20,10 +22,13 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
 from server import main
+import generate_lora_previews as preview_generator
 
 
 REGISTRY_PATH = main.LORA_REGISTRY_PATH
 LORA_DIR = main.LORA_DIR
+PREVIEW_STAGING_ROOT = ROOT / ".tools" / "eval_set" / "render_exp" / "output" / "lora_previews" / "onboarding"
+PREVIEW_SIZE = (448, 576)
 
 
 def load_registry() -> dict:
@@ -606,6 +611,104 @@ def choose_unregistered_file(raw: dict) -> str | None:
         print("请输入列表中的编号。")
 
 
+def preview_retry_command(asset_id: str) -> str:
+    return f'"{sys.executable}" "{Path(__file__).resolve()}" --preview "{asset_id}"'
+
+
+def generate_style_preview_candidate(asset_id: str) -> Path | None:
+    """按正式固定人物协议生成单个 style 候选；不安装、不修改验证状态。"""
+    if not re.fullmatch(r"[A-Za-z0-9_.-]+", asset_id):
+        raise ValueError(f"不安全的 Asset ID: {asset_id}")
+    PREVIEW_STAGING_ROOT.mkdir(parents=True, exist_ok=True)
+    run_dir = Path(tempfile.mkdtemp(prefix=f"{asset_id}-", dir=PREVIEW_STAGING_ROOT))
+    status = asyncio.run(preview_generator.render(
+        run_dir,
+        (asset_id,),
+        seed=20260828,
+        strength=None,
+        size="896x1152",
+        include_baseline=False,
+    ))
+    candidate = run_dir / f"00_{asset_id}.png"
+    if status or not candidate.is_file():
+        return None
+    return candidate
+
+
+def open_preview_candidate(path: Path) -> None:
+    """尽力打开系统图片查看器；失败时由调用方保留路径提示。"""
+    if hasattr(os, "startfile"):
+        os.startfile(path)  # type: ignore[attr-defined]
+
+
+def install_style_preview(source: Path, asset_id: str,
+                          destination_dir: Path | None = None) -> Path:
+    """校验固定协议画幅并原子安装 448x576 WebP。"""
+    if not re.fullmatch(r"[A-Za-z0-9_.-]+", asset_id):
+        raise ValueError(f"不安全的 Asset ID: {asset_id}")
+    from PIL import Image
+
+    destination_dir = destination_dir or main.LORA_PREVIEWS
+    destination_dir.mkdir(parents=True, exist_ok=True)
+    target = destination_dir / f"{asset_id}.webp"
+    temp_path = None
+    try:
+        with Image.open(source) as image:
+            width, height = image.size
+            if width * 9 != height * 7:
+                raise ValueError(
+                    f"预览必须是 7:9 竖幅，实际为 {width}x{height}；保留候选但不自动裁切。")
+            converted = image.convert("RGB").resize(PREVIEW_SIZE, Image.Resampling.LANCZOS)
+            with tempfile.NamedTemporaryFile(
+                    suffix=".webp", dir=destination_dir, delete=False) as handle:
+                temp_path = Path(handle.name)
+            converted.save(temp_path, "WEBP", quality=88, method=6)
+        temp_path.replace(target)
+        return target
+    except Exception:
+        if temp_path and temp_path.exists():
+            temp_path.unlink()
+        raise
+
+
+def run_style_preview_flow(asset_id: str, asset: dict, *, ask_before: bool = True) -> str:
+    """注册后的可选预览流程；任何失败都不回滚已经写入的 Registry。"""
+    if asset.get("type") != "style":
+        return "not_applicable"
+    retry = preview_retry_command(asset_id)
+    if ask_before and ask_choice("检测到风格 LoRA，现在生成固定人物预览?", ["generate", "later"], "generate") != "generate":
+        print(f"已跳过预览；稍后运行：\n  {retry}")
+        return "later"
+    print("正在生成固定 DeepSeek 人物预览，通常需要约一分钟；失败不会影响已完成的 LoRA 入库……")
+    try:
+        candidate = generate_style_preview_candidate(asset_id)
+    except Exception as exc:
+        print(f"预览生成失败，Registry 已保留：{exc}")
+        print(f"稍后重试：\n  {retry}")
+        return "failed"
+    if not candidate:
+        print("预览生成失败或没有得到图片，Registry 已保留。")
+        print(f"稍后重试：\n  {retry}")
+        return "failed"
+    print(f"预览候选：{candidate}")
+    try:
+        open_preview_candidate(candidate)
+    except Exception as exc:
+        print(f"未能自动打开图片查看器：{exc}")
+    if ask_choice("确认采用这张人物预览?", ["accept", "later"], "later") != "accept":
+        print(f"候选已保留，尚未加入网站。稍后可重新运行：\n  {retry}")
+        return "later"
+    try:
+        target = install_style_preview(candidate, asset_id)
+    except Exception as exc:
+        print(f"预览安装失败，候选和 Registry 均已保留：{exc}")
+        print(f"稍后重试：\n  {retry}")
+        return "failed"
+    print(f"人物预览已安装：{target}")
+    print("AirPaint 下次请求 /api/loras 时会自动返回新预览；不修改 verified，也不自动提交 Git。")
+    return "accepted"
+
+
 def run_agent_onboarding(raw: dict, filename: str | None, description_file: str | None,
                          scan_manager: bool = True) -> int:
     filename = filename or choose_unregistered_file(raw)
@@ -667,6 +770,7 @@ def run_agent_onboarding(raw: dict, filename: str | None, description_file: str 
             return 1
         atomic_write_registry(candidate)
         print(f"已写入 {REGISTRY_PATH}。刷新 AirPaint 页面后即可选择；请先真实生图再提升验证状态。")
+        run_style_preview_flow(final_id, asset)
         return 0
 
 
@@ -775,12 +879,21 @@ def main_cli() -> int:
     parser.add_argument("--edit", metavar="ASSET_ID", help="编辑已有 Asset")
     parser.add_argument("--civitai", metavar="URL", help="展示 Civitai 候选描述（不自动解析）")
     parser.add_argument("--agent", action="store_true", help="启动 LLM 辅助的 LoRA 入库向导")
+    parser.add_argument("--preview", metavar="ASSET_ID", help="为已注册的 style Asset 生成并人工确认人物预览")
     parser.add_argument("--description-file", metavar="PATH", help="Agent 模式从 UTF-8 文件读取作者说明")
     parser.add_argument("--no-manager-scan", action="store_true", help="不刷新或验证 LoRA Manager 索引（仅用于离线准备）")
     args = parser.parse_args()
     raw = load_registry()
     if args.agent:
         return run_agent_onboarding(raw, args.filename, args.description_file, not args.no_manager_scan)
+    if args.preview:
+        asset = raw["loras"].get(args.preview)
+        if not asset:
+            raise SystemExit(f"未知 Asset: {args.preview}")
+        if asset.get("type") != "style":
+            raise SystemExit(f"{args.preview} 的类型是 {asset.get('type')}；人物主预览目前只支持 style Asset")
+        result = run_style_preview_flow(args.preview, asset, ask_before=False)
+        return 0 if result in {"accepted", "later"} else 1
     if args.inspect:
         candidate = show_local_civitai_candidate(args.inspect)
         return 0 if candidate else 1
@@ -826,6 +939,8 @@ def main_cli() -> int:
         return 1
     atomic_write_registry(candidate)
     print(f"已写入 {REGISTRY_PATH}；后端下次访问会热更新。")
+    if existing is None:
+        run_style_preview_flow(new_id, asset)
     return 0
 
 

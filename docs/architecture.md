@@ -70,6 +70,7 @@ Active LoRA 时，Reasoning/Vision Model 只看 Asset/Profile 的 `provides` 与
 - SiliconFlow/Vision 实际调用失败时请求以 502 fail closed，不使用缺少 LoRA-aware 语义规划的 Prompt 继续生成；`none/google` 配置降级路径只注入确定性 binding 并向前端显示 warning。首版通过 context 约束避免身份/服装/风格冲突，不实现独立 semantic conflict detector。
 - 本地 onboarding 入口为 `.tools/start_lora_onboard_agent.bat`（或 `python .tools/register_lora.py --agent`）：先尝试刷新 LoRA Manager 增量索引，再让维护者粘贴作者说明。Reasoning Model 只生成候选 Profile/provides；代码固定本地文件名、candidate 状态，从原文恢复 exact trigger 转义并提取明确的单一推荐强度。候选支持自然语言修订，只有双重确认后才原子写 Registry。
 - onboarding Agent 只从 gitignored `config.yaml` 读取现有 `siliconflow_api_key/model`，不复制或打印 key；作者说明按不可信输入处理。它不自动把 Civitai/trainedWords 提升为正式知识，真实出图前保持 `verified: candidate`，用户验收后再提升。
+- 新 Asset 原子写入后，只有 `type: style` 会进入可选预览后置步骤：维护者可立即生成或稍后用 `python .tools/register_lora.py --preview <asset-id>` 重试。生成失败不回滚 Registry；候选先在系统查看器中打开，只有人工输入 `accept` 后才按 7:9 校验并原子安装 448×576 WebP。该流程不修改 `verified`、不自动 Git 提交，character/action/expression 不触发。
 - 风格 Asset 的主预览采用固定 DeepSeek 女仆人物样片：同 checkpoint/workflow/seed/英文 Prompt/896×1152 竖幅，关闭 detailer；baseline 只加载人物 LoRA，每张样片再叠加一个 style LoRA，并使用该 Asset 的 Registry 默认强度。动作允许自然变化，预览只回答“该画风下的人物是否好看”，不声称覆盖场景能力或多 LoRA 组合效果。
 - `preview` 可在 Registry 中显式覆盖；没有显式值时，`resolve_lora_preview()` 按安全 Asset key 从 `server/lora_previews/<key>.webp|png|jpg|jpeg` 查找受控静态资源，并给 URL 加 mtime 版本。当前 9 个 style Asset 均有 448×576 WebP 样片。
 

@@ -81,7 +81,7 @@ Phase 3 不做结构化 char_dict 迁移、156 条全量审计或复杂审批后
 - [x] 41 个确定性单测、前端 smoke 与 5 组真实 A/B：aware 1 胜 4 平 0 负
 - [x] 本地入库 Agent；Remielle Dan / Dolphro-kun / Light 三项新增资产生效并完成人工验收
 - [x] Composition 工程：角色最多 3 个语义 Profile、风格/细节不限；同 Asset 多 Profile 需 Registry opt-in，物理文件只加载一次，逐 Asset 强度 0~2
-- [x] 风格 LoRA 人物印样：9 个当前 style Asset 按固定 DeepSeek 人物协议生成，API 自动绑定轻量 WebP，前端两栏预览并保留缺图降级
+- [x] 风格 LoRA 人物印样：9 个当前 style Asset 按固定 DeepSeek 人物协议生成，API 自动绑定轻量 WebP，前端两栏预览；新 style 入库后可选生成、人工接受或用 `--preview` 稍后补图
 - [ ] 用固定 Prompt/seed 的真实多人图验收空间关系、动作/属性绑定；不从结构支持推导画质完成
 
 LoRA 组合管线在上述边界内关闭；后续质量问题进入 Prompt Intelligence/真实出图评测，Phase 8 Workflow Intelligence 不纳入本工程。

@@ -31,7 +31,7 @@ Phase 2.6（Prompt Expansion）、Phase 2.7（Visual Composer）、Phase 3（Cha
 - active LoRA 在翻译前进入 Reasoning/Vision Model 上下文；translate/jobs/dialog/start-image 共用 binding snapshot/revision。
 - LoRA Composition：角色最多 3 个语义 Profile，风格/动作/表情 LoRA 不设硬上限；同一 Asset 多 Profile 需 Registry opt-in 并只加载一次物理文件，每个 Asset 使用独立 0~2 强度。
 - 前端 Profile auto/显式锁定、连续多选与当前叠加栈、per-asset 强度、provides/verified、切换后 stale Prompt 防串线。
-- onboarding：双击 `.tools/start_lora_onboard_agent.bat` 或运行 `.tools/register_lora.py --agent`，粘贴作者说明后由 Reasoning Model 生成可修订候选；代码恢复 exact trigger/明确单值强度，双重确认后原子更新 Registry。`--inspect/--civitai/--validate` 继续可用，不自动把 HTML/Civitai trainedWords 升格为正式知识。
+- onboarding：双击 `.tools/start_lora_onboard_agent.bat` 或运行 `.tools/register_lora.py --agent`，粘贴作者说明后由 Reasoning Model 生成可修订候选；代码恢复 exact trigger/明确单值强度，双重确认后原子更新 Registry。`--inspect/--civitai/--validate` 继续可用，不自动把 HTML/Civitai trainedWords 升格为正式知识。新 style 写入后可选立即生成人物预览；人工 `accept` 才原子安装 WebP，失败不回滚，`--preview <asset-id>` 可独立重试。
 - 旧 `scan_loras()` / 启动时 Civitai hash lookup / `server/lora_cache.json` / `POST /api/loras/refresh` 已由上述 onboarding 流程取代并退役；`config.yaml.loras` 仍有未迁移资产，只能保留兼容读取，不能直接删除。
 - 风格 LoRA 人物印样已落地：当前 9 个 style Asset 均按固定 DeepSeek 女仆人物协议生成；API 自动按 Asset key 绑定 448×576 WebP，前端以两栏印样菜单展示并保留文字降级。
 
@@ -76,9 +76,9 @@ Phase 2.6（Prompt Expansion）、Phase 2.7（Visual Composer）、Phase 3（Cha
 | `.tools/test_prompt_unit.py` | 53 个零依赖 Composer/Prompt/角色知识/LoRA Registry/Binding/API/session/workflow 单测 |
 | `.tools/test_lora_composition.py` | 6 个 LoRA 多 Profile/多 Asset/强度/物理文件去重确定性测试 |
 | `server/workflows/AnimaFull.json` | 当前统一 Anima 工作流；固定 negative 含质量、构图及紧凑的人体防御词 |
-| `.tools/register_lora.py` | LoRA sidecar inspection、Registry validate 与原子 onboarding |
+| `.tools/register_lora.py` | LoRA sidecar inspection、Registry validate、原子 onboarding 与 style 预览人工验收后置流程 |
 | `.tools/start_lora_onboard_agent.bat` | 双击启动本地 LoRA 入库 Agent；API key 只从 gitignored config 读取 |
-| `.tools/test_lora_onboard_agent.py` | 14 个 onboarding JSON/schema/exact trigger/strength/Civitai/Manager 目标验收/本地 metadata 确定性测试 |
+| `.tools/test_lora_onboard_agent.py` | 18 个 onboarding JSON/schema/exact trigger/strength/Civitai/Manager/预览后置流程确定性测试 |
 | `.tools/generate_lora_previews.py` | `style-preview-character-v1` 固定人物样片生成器；记录 manifest，默认使用 Registry 强度 |
 | `server/lora_previews/` | 9 个当前 style Asset 的 448×576 WebP 前端样片；文件名与 Asset key 对齐 |
 | `.tools/eval_set/render_exp/lora_context_cases.yaml` | 5 组真实 LoRA fixed-condition A/B 夹具 |
@@ -140,7 +140,7 @@ Phase 2.6（Prompt Expansion）、Phase 2.7（Visual Composer）、Phase 3（Cha
 2. 新下载 LoRA 推荐双击 `.tools/start_lora_onboard_agent.bat`：选择目标文件后，工具会调用 LoRA Manager 增量 scan，并通过 `/api/lm/loras/list` 验证该文件确实已解析为完整路径；验证通过后才接收作者说明和调用 Reasoning Model。输入 `revise` 可自然语言修订，只有 `write` + 最终 `y` 才写 Registry，真实生图后再提升 verified。
 3. 若 ComfyUI 未运行、scan 被取消、返回格式异常或目标文件仍未入列表，Agent 会在调用 LLM/写 Registry 前停止。增量未命中时可由用户明确选择一次全量重建；默认不自动承担大文件哈希成本。只有明确需要离线准备 Registry 时才使用 `--no-manager-scan` 绕过运行时索引验收。
 4. `si_arknights_v2` 首次两次生成在 ComfyUI 节点 5 报 `ModelMMAP allocation failed for si_(arknights)-v2.safetensors`。根因是文件尚未进入 LoRA Manager SQLite 索引：`get_lora_info_absolute()` 查找失败后把原始相对文件名交给 Aimdo，因而 mmap 打不开；这与缺 trigger、文件损坏或显存不足无关。用户手动访问 `/api/lm/loras/scan` 后，Manager 已生成 sidecar 并在 `/api/lm/loras/list` 返回完整绝对路径；修订后的入库 Agent 已用该文件完成真实增量扫描与目标命中 smoke。
-5. 风格预览工程已完成，不再是下一步 blocker。新增 style Asset 后先完成正常 onboarding/真实出图验收，再用 `.tools/generate_lora_previews.py --skip-baseline --assets <key> --output <目录>` 按固定人物协议生成候选；人眼排除明显失败后裁为 448×576 WebP，保存为 `server/lora_previews/<key>.webp`。通常无需编辑 Registry；只有外部 URL 或特殊文件名时才写显式 `preview`。
+5. 风格预览工程已完成，不再是下一步 blocker。新增 style Asset 完成 Registry 双重确认后，入库向导会询问 `generate/later`；立即生成约需一分钟，系统打开候选后只有输入 `accept` 才会安装 448×576 WebP。选择稍后或任何失败都保留 Registry，可运行 `python .tools/register_lora.py --preview <asset-id>` 重试。通常无需编辑 Registry；只有外部 URL 或特殊文件名时才写显式 `preview`。
 
 ### 条件性未完成项
 
@@ -179,14 +179,14 @@ python .tools/test_lora_composition.py
 python .tools/register_lora.py --validate
 ```
 
-状态：Python 编译通过；`53 prompt unit tests passed`、`6 lora composition tests passed`、`14 lora onboarding agent tests passed`；当前本机用户维护、未纳入本次修复提交的 Registry 为 `registry valid: 15 assets`。`si_(arknights)-v2.safetensors` 的真实 Manager 增量扫描/列表命中 smoke 通过。`server/workflows/AnimaFull.json` 可正常解析，正负两个 wildcard 字段包含相同人体防御词。真实 img2img 尺寸复测见 D51/DEVLOG 58。
+状态：Python 编译通过；`53 prompt unit tests passed`、`6 lora composition tests passed`、`18 lora onboarding agent tests passed`；当前本机用户维护、未纳入本次修复提交的 Registry 为 `registry valid: 15 assets`。`si_(arknights)-v2.safetensors` 的真实 Manager 增量扫描/列表命中 smoke 通过。`server/workflows/AnimaFull.json` 可正常解析，正负两个 wildcard 字段包含相同人体防御词。真实 img2img 尺寸复测见 D51/DEVLOG 58。
 
 ```text
 python .tools/test_lora_onboard_agent.py
 python .tools/register_lora.py --validate
 ```
 
-状态（既有 LoRA 工程验证）：`9 lora onboarding agent tests passed`。当前 Registry 数量以后续 `--validate` 实际输出为准。
+状态（当前 LoRA 工程验证）：`18 lora onboarding agent tests passed`。当前 Registry 数量以后续 `--validate` 实际输出为准。
 
 前端当前验证：2 个内联 script 语法通过；Composition 与风格印样浏览器 smoke 完成桌面 1920×950 和移动 390×844：多 Profile/跨 Asset、角色上限、风格连续多选、逐项强度、9/9 预览加载、双主题和无横向溢出均符合契约；除 Tailwind CDN 既有提示外无 JS 错误。既有三档构思、stale 阻断、job snapshot 与竖图 contain 验收继续有效。
 

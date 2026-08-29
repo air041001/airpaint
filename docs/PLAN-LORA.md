@@ -588,4 +588,6 @@ Step 0-10 已于 2026-08-23 完成。当前实现包含 versioned Registry/热�
 
 2026-08-29 用户通过首组 DeepSeek baseline + Blue Archive / Light / Fymrie 人物样片后，剩余 Shiratama、Dolphro-kun、Yusano、ningenmame、GPT Image 2、Sakalip 也按同一协议生成并完成肉眼排查。当前 9 个 style Asset 均已落 `server/lora_previews/<key>.webp`，API 在 Registry 未显式填写 `preview` 时按 Asset key 安全回退，前端风格菜单以两栏人物印样展示名称、默认强度和选中状态；缺图仍可用文字占位选择。
 
+同日将这套协议接入 onboarding 的后置可选步骤：新 Asset 必须先完成双重确认并原子写 Registry，只有最终类型严格为 `style` 才询问 `generate/later`。立即生成会按固定协议产出独立候选并打开系统查看器；默认不接受，维护者明确输入 `accept` 后才校验 7:9、缩放为 448×576 WebP 并原子安装。失败或稍后处理都不影响已注册 Asset，可用 `python .tools/register_lora.py --preview <asset-id>` 独立重试；流程不改 `verified`、不自动提交 Git，也不会替 character/action/expression 猜预览语义。
+
 被放弃的两个方向保留为经验而非现行方案：纯 txt2img 固定 seed 不能锁住构图；baseline 驱动的 img2img 虽更容易保持桌面场景，却把预览目标误设成“场景复现”。如果未来确有场景能力展示需求，应增加可选次级样图，而不是替换人物主预览。
