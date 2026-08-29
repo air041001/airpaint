@@ -1094,6 +1094,8 @@ Write in Anima-native prompt language. Use familiar anime/Danbooru concepts for 
 
 Use useful Anima count tags. For one unnamed female character, normally begin with 1girl, solo; use the count and subject actually requested for other cases. Meaningful reinforcement is allowed when a clause binds a few important tags into a relationship or composition. Never mechanically paraphrase or repeat the whole prompt.
 
+For an explicitly multi-subject request, put the matching count in both IR.subject and PROMPT. Two selected or named female character profiles shown together require 2girls, never 1girl, solo, or solo focus. Treat different forms of the same identity as separate visible subjects when the user selected and placed both forms. Bind every named subject or form to its own position, action, prop, and distinguishing clothing with compact named clauses; do not flatten those assignments into one ambiguous attribute list.
+
 Preserve every explicit user fact and constraint. Do not change a named character, subject count, requested clothing state, action, location, camera instruction, or core mood. Do not invent another main character, named IP, incompatible outfit, weapon, sex act, or unrelated spectacle. For an unknown named character, put the best canonical-tag candidate in IR.subject so the backend can verify it. Do not add age labels, safety wording, policy language, or content classifications.
 
 Treat every user-stated clothing state, exposure level, visible body detail, act, and framing requirement as a hard visual lock. Carry it into CONCEPT, IR, and PROMPT in direct, drawable Anima language; do not euphemize, conceal, crop out, or replace it.
@@ -1820,6 +1822,11 @@ _COUNT_TAG_RE = re.compile(
     r"\d+\+(girls|boys|others)|"   # 6+girls
     r"multiple (girls|boys|others))$"
 )
+_EXPLICIT_COUNT_TAG_RE = re.compile(
+    r"(?<![a-z0-9_])([2-9]\d*)\s*(girls?|boys?|others?)(?![a-z0-9_])",
+    re.IGNORECASE,
+)
+_EXPLICIT_TWO_PERSON_RE = re.compile(r"双人(?!床|房)|两人|二人|2\s*人")
 
 
 def collapse_exact_prompt_repetition(prompt: str) -> tuple[str, bool]:
@@ -1846,6 +1853,74 @@ _FULL_BODY_CONFLICT_TERMS = (
 )
 
 
+def _lock_explicit_multi_subject_count(tags: list[str], prompt_ir: dict | None,
+                                       original_text: str) -> list[str]:
+    """Preserve an explicit multi-subject count and remove contradictory solo tags.
+
+    The Composer remains responsible for deciding gender/type. Code only locks an exact
+    user count, or expands the Composer's own singular gender tag when Chinese says two
+    people. This avoids guessing gender from a LoRA profile name.
+    """
+    source = original_text.lower()
+    exact = _EXPLICIT_COUNT_TAG_RE.search(source)
+    count = int(exact.group(1)) if exact else (2 if _EXPLICIT_TWO_PERSON_RE.search(source) else 0)
+    if count < 2:
+        return tags
+
+    target = None
+    if exact:
+        noun = exact.group(2).lower()
+        if noun.startswith("girl"):
+            target = f"{count}girls"
+        elif noun.startswith("boy"):
+            target = f"{count}boys"
+        else:
+            target = f"{count}others"
+    else:
+        evidence = " ".join(
+            [tag.lower() for tag in tags]
+            + [str(item).lower() for item in (prompt_ir or {}).get("subject", [])]
+        )
+        has_girl = bool(re.search(r"\b(?:\d+\s*)?(?:girls?|women|woman|female)\b", evidence))
+        has_boy = bool(re.search(r"\b(?:\d+\s*)?(?:boys?|men|man|male)\b", evidence))
+        has_other = bool(re.search(r"\b(?:\d+\s*)?others?\b", evidence))
+        if has_girl and not has_boy:
+            target = f"{count}girls"
+        elif has_boy and not has_girl:
+            target = f"{count}boys"
+        elif has_other and not has_girl and not has_boy:
+            target = f"{count}others"
+
+    cleaned = []
+    for tag in tags:
+        value = tag.strip()
+        low = value.lower()
+        if low in {"solo", "solo focus"}:
+            continue
+        if low.startswith("solo focus "):
+            value = re.sub(r"^solo focus\b", "focus", value, flags=re.IGNORECASE)
+            low = value.lower()
+        if target and _COUNT_TAG_RE.match(low):
+            continue
+        cleaned.append(value)
+    if target:
+        cleaned.insert(0, target)
+    if isinstance(prompt_ir, dict):
+        ir_subjects = []
+        for item in prompt_ir.get("subject", []):
+            value = str(item).strip()
+            low = value.lower()
+            if low in {"solo", "solo focus"}:
+                continue
+            if target and _COUNT_TAG_RE.match(low):
+                continue
+            ir_subjects.append(value)
+        if target:
+            ir_subjects.insert(0, target)
+        prompt_ir["subject"] = ir_subjects
+    return cleaned
+
+
 def _prepare_composer_tags(tags: list[str], prompt_ir: dict | None,
                            original_text: str, char_tags: list[str]) -> list[str]:
     """Visual Composer 的最小代码护栏：主体计数 + 显式全身构图一致性。
@@ -1855,6 +1930,7 @@ def _prepare_composer_tags(tags: list[str], prompt_ir: dict | None,
     """
     result = [tag.strip() for tag in tags if tag and tag.strip()]
     source = original_text.lower()
+    result = _lock_explicit_multi_subject_count(result, prompt_ir, original_text)
     full_body_locked = any(term in source for term in _FULL_BODY_LOCK_TERMS)
     if full_body_locked:
         result = [tag for tag in result

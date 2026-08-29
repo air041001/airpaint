@@ -179,7 +179,7 @@ python .tools/test_lora_composition.py
 python .tools/register_lora.py --validate
 ```
 
-状态：Python 编译通过；`53 prompt unit tests passed`、`6 lora composition tests passed`、`18 lora onboarding agent tests passed`；当前本机用户维护、未纳入本次修复提交的 Registry 为 `registry valid: 15 assets`。`si_(arknights)-v2.safetensors` 的真实 Manager 增量扫描/列表命中 smoke 通过。`server/workflows/AnimaFull.json` 可正常解析，正负两个 wildcard 字段包含相同人体防御词。真实 img2img 尺寸复测见 D51/DEVLOG 58。
+状态：Python 编译通过；`54 prompt unit tests passed`、`6 lora composition tests passed`、`18 lora onboarding agent tests passed`；当前本机用户维护、未纳入本次修复提交的 Registry 为 `registry valid: 15 assets`。`si_(arknights)-v2.safetensors` 的真实 Manager 增量扫描/列表命中 smoke 通过。`server/workflows/AnimaFull.json` 可正常解析，正负两个 wildcard 字段包含相同人体防御词。真实 img2img 尺寸复测见 D51/DEVLOG 58。
 
 ```text
 python .tools/test_lora_onboard_agent.py
@@ -190,7 +190,7 @@ python .tools/register_lora.py --validate
 
 前端当前验证：2 个内联 script 语法通过；Composition 与风格印样浏览器 smoke 完成桌面 1920×950 和移动 390×844：多 Profile/跨 Asset、角色上限、风格连续多选、逐项强度、9/9 预览加载、双主题和无横向溢出均符合契约；除 Tailwind CDN 既有提示外无 JS 错误。既有三档构思、stale 阻断、job snapshot 与竖图 contain 验收继续有效。
 
-Reasoning Model 当前验证：既有 3 条 SiliconFlow smoke 覆盖普通 auto、`concept_override` 重编译、角色+画风 LoRA context；2026-08-28 追加 Remielle `black` Profile 身份越权复测，最终 IR/PROMPT 均无未请求发色/瞳色。没有重启批量图片 A/B。
+Reasoning Model 当前验证：既有 3 条 SiliconFlow smoke 覆盖普通 auto、`concept_override` 重编译、角色+画风 LoRA context；2026-08-28 追加 Remielle `black` Profile 身份越权复测，最终 IR/PROMPT 均无未请求发色/瞳色。2026-08-29 的四组双角色 `FAITHFUL` 定向验收复现并修复 `2girls` 与 `1girl/solo` 冲突；修复后 Profile、count 与具名关系通过文本门槛。5 张本地图片只证明部分可执行性，左右/牵手/full-body/分屏仍有模型限制，不作为画质完成声明。
 
 高分辨率：修复后 `1024x1536` 无 LoRA/detailer 端到端输出 `1529ed18e206.png`，PIL 实测 1024×1536；`build_prompt`/Comfy history 均确认 txt2img `select=1`、节点 56=`1024x1536`。端到端 84.16 秒，Comfy 执行约 82.3 秒。原 `anima_20260823_00014_.png` 历史记录为 `select=2`，实际 832×1216、执行约 309.7 秒，不能作为高分辨率验证。
 

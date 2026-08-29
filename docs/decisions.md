@@ -863,3 +863,26 @@ LoRA 用户可见名称以 versioned `server/lora_registry.yaml` 为单一真相
 **修订关系**：本决定 supersedes D48 第 2 项的 Registry opt-in 门槛；保留 D48 的语义计数、物理文件去重、逐 Asset 强度与画质边界。
 
 **相关文件**：`server/main.py`、`.tools/register_lora.py`、`.tools/test_lora_composition.py`、`web/index.html`、`docs/PLAN-LORA.md`、`docs/api.md`、`docs/architecture.md`。
+
+## D55. 双角色显式计数由 Compiler 锁定，关系继续由具名短句承载
+
+**背景**：D54 开放所有多 Profile Asset 后，以 Denia/Sigrika、Remielle 白/黑、Cure Mystique/Answer 的四组 `FAITHFUL` 真实翻译做文本门槛。Profile binding 均正确，但三组 SFW 分别出现 `2girls, solo` 或 `1girl, solo`，证明多 Profile 工程正确不等于 Composer 会稳定保留双人 count。
+
+**问题**：矛盾 count 会直接要求模型把两个 Profile 压进一个主体，也会让公开 IR 与最终 Prompt 自相矛盾。仅继续强化 system prompt 仍把明确用户数量交给随机输出；反过来，根据 Profile 名猜性别会制造新知识错误。
+
+**决定**：
+
+1. Composer 对多主体必须在 IR/PROMPT 使用匹配 count，并以具名短句绑定每个主体/形态的位置、动作、道具和区别服装；同一身份的两个锁定形态也按两个可见主体处理。
+2. Compiler 只锁用户明确的英文 count，或“双人/两人/二人/2人”所表达的数量。中文只给数量时，性别沿用 Composer 已输出的 girl/boy/other 语义，不从 LoRA Profile 名推断。
+3. count 大于一时移除冲突的 `solo/solo focus`；同一规则同步清洗公开 IR.subject。12 字段 IR、LORA JSON、binding/Loader 与角色最多 3 Profile 的接口均不改变。
+4. 双角色是当前图片质量边界；三角色保持 best-effort 技术上限，不恢复区域提示词。
+
+**原因**：主体数量是用户锁定且可确定性验证，适合代码兜底；人物关系和属性归属仍需要 LLM 的语义能力。该分工修复明确矛盾，不把一次图片失败扩张成复杂逐角色 IR 或针对单图的提示词特判。
+
+**代价与风险**：双人 count 正确不保证 checkpoint 正确执行左右位置、接触动作或完整人物构图。真实 832×1216 结果中，Denia/Sigrika 左右身份反转，Remielle 未完成牵手，Cure 两个 seed 均裁掉头部，补充场景出现分屏；这些属于当前 Anima/LoRA 执行边界，不继续堆 Composer 规则。
+
+**验证**：四组真实 DeepSeek 文本在修复后均得到 `2girls`、无 `solo`、Profile 原样保留和具名关系；`54 prompt unit tests passed`、`6 lora composition tests passed`、Python 编译通过。图片只证明部分可执行性，最终审美仍待用户人眼验收。
+
+**修订关系**：本决定补充 D54 的多人 Prompt 质量边界，保留 D36/D37 对复杂多角色图片失败不做单点自动特判的结论。
+
+**相关文件**：`server/main.py`、`.tools/test_prompt_unit.py`、`docs/architecture.md`、`docs/DEVLOG.md`。

@@ -888,3 +888,11 @@ Remielle Dan 的多形态同框样图推翻了“同一身份不同形态默认�
 前端在所有多 Profile 选择区明确提示用户写清主体数量、各自形态、位置与互动关系；选择多个形态后，当前叠加栈持续显示责任提示，但不阻断翻译或生成。清晰描述只能降低串形态风险，不能替代模型/seed 的真实多人图验收。
 
 验证覆盖旧 Registry `allow_multiple_profiles:false` 仍能选双 Profile、单 binding/单 Loader、角色上限与既有强度/物理文件护栏；桌面与 390px 浏览器验收确认连续选择、提示和无横向溢出。
+
+## 第 63 条 2026-08-29 - 双角色 count 锁定与真实定向验收
+
+以 Denia/Sigrika、Remielle 白/黑、Cure Mystique/Answer 和一个补充场景执行 `FAITHFUL` 文本门槛。首次真实 DeepSeek 调用中 Profile、位置、动作和道具归属均保留，但三个 SFW Prompt 分别出现 `2girls, solo` 或 `1girl, solo`。生产 Composer 增加多主体具名绑定规则，Compiler 对用户明确 `2girls/2boys` 或双人/两人数量做确定性 count 锁定，并同步移除最终 Prompt 与公开 IR 的 `solo/solo focus`；不扩充 12 字段 IR，也不从 Profile 名推断性别。
+
+修复后四组文本均为 `2girls`、无 `solo`、两个 Profile 原样保留并以具名短句绑定关系。真实 832×1216、生产负面、默认 LoRA 强度、无 style/detailer 共生成 5 张：Denia/Sigrika 的手机归属正确但左右身份反转；Remielle 的白/黑倒置构图成立但未牵手；Cure 两个 seed 都裁掉头部；补充图出现分屏。结论是文本编译缺陷已修复，图片仍受 Anima/LoRA 限制；双角色作为质量边界，三角色只保留 best-effort 技术上限，不恢复区域提示词。
+
+验证：`54 prompt unit tests passed`、`6 lora composition tests passed`、`python -m py_compile server/main.py`。图片最终审美等待用户人眼验收。

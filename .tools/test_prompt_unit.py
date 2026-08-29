@@ -191,6 +191,8 @@ def test_visual_composer_content_fidelity_contract():
     assert "do not euphemize, conceal, crop out, or replace it" in prompt
     assert "Do not infer either nudity or coverage from a sexual act alone" in prompt
     assert "override wins over an active LoRA outfit only for the affected area" in prompt
+    assert "Two selected or named female character profiles shown together require 2girls" in prompt
+    assert "Bind every named subject or form to its own position, action, prop" in prompt
 
 
 def test_visual_composer_protocol_is_strict_and_collapses_whole_repeat():
@@ -303,6 +305,43 @@ def test_composer_guard_only_enforces_count_and_explicit_full_body_lock():
     assert "close-up" not in tags and "upper body" not in tags, tags
     # 新路径不再继承旧 Painter 对画风/剪影的主观删改。
     assert "painterly" in tags and "silhouette" in tags, tags
+
+
+def test_composer_guard_locks_explicit_two_subject_count():
+    remielle_ir = {
+        "subject": ["1girl", "solo", "remielle white form", "remielle black form"],
+    }
+    remielle = main._prepare_composer_tags(
+        ["1girl", "solo", "white form at lower right", "black form at upper left"],
+        remielle_ir,
+        "双人纵向构图，蕾米埃尔白色形态与黑色形态同框",
+        [],
+    )
+    assert remielle[0] == "2girls", remielle
+    assert "1girl" not in remielle and "solo" not in remielle, remielle
+    assert remielle_ir["subject"] == [
+        "2girls", "remielle white form", "remielle black form",
+    ], remielle_ir
+
+    denia_ir = {"subject": ["2girls", "Denia", "Sigrika", "solo focus"]}
+    denia = main._prepare_composer_tags(
+        ["2girls", "solo focus on foreground Denia", "Sigrika behind her"],
+        denia_ir,
+        "达妮娅与西格莉卡，2girls，明确前后层次",
+        [],
+    )
+    assert denia[0] == "2girls", denia
+    assert all("solo" not in tag.lower() for tag in denia), denia
+    assert "focus on foreground Denia" in denia, denia
+    assert denia_ir["subject"] == ["2girls", "Denia", "Sigrika"], denia_ir
+
+    single = main._prepare_composer_tags(
+        ["1girl", "solo", "standing"],
+        {"subject": ["1girl"]},
+        "一名少女站立",
+        [],
+    )
+    assert single[:2] == ["1girl", "solo"], single
 
 
 def test_workflow_negative_contains_compact_anatomy_guard():
@@ -1041,6 +1080,7 @@ def main_test():
         test_visual_composer_protocol_is_strict_and_collapses_whole_repeat,
         test_visual_composer_rejects_unrenderable_model_additions,
         test_composer_guard_only_enforces_count_and_explicit_full_body_lock,
+        test_composer_guard_locks_explicit_two_subject_count,
         test_workflow_negative_contains_compact_anatomy_guard,
         test_siliconflow_composer_bypasses_ordinary_dict_and_isolates_completion_cache,
         test_concept_override_is_authoritative_and_validated,
