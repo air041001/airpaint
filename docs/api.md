@@ -55,7 +55,7 @@ Authorization: Bearer <token>
       "configured": true, "source": "registry", "trigger_policy": "profile",
       "provides": [], "verified": null,
       "strength_model": 1.0, "strength_clip": 1.0,
-      "default_profile": "white", "allow_multiple_profiles": false,
+      "default_profile": "white", "allow_multiple_profiles": true,
       "profiles": [
         { "id": "white", "name": "达妮娅（白）", "aliases": ["达妮娅"],
           "provides": ["Denia character identity"], "verified": "curated",
@@ -72,7 +72,7 @@ Authorization: Bearer <token>
 - `configured` 对当前生产列表恒为 `true`；字段暂保留供旧前端兼容。
 - `source`: `"registry"` 或 `"config"`（尚未迁移兼容项）。
 - `profiles` 只暴露语义 ID、名称、aliases、provides、verified 与 optional ID；不向前端发送 exact tags 作为可编辑真相。
-- `allow_multiple_profiles=true` 表示同一 Asset 可同时选择多个 Profile；它是 Registry 能力声明，不是多人出图质量证明。
+- `allow_multiple_profiles` 为旧前端兼容字段：只要 Asset 暴露多个 Profile 就返回 `true`。Registry 中同名旧字段不再限制选择，也不是多人出图质量证明。
 - `styles` 同时承载 `style/action/expression` 类型，作为风格/细节叠加区；无法分类的条目仍在 `other`。
 - `strength_model/strength_clip` 是 Registry 默认值，前端选择 Asset 时同步到该 Asset 的滑块；请求可逐 Asset 覆盖为 0~2。
 - `preview` 是可直接用于 `<img>` 的 URL。Registry 显式值优先；未填写时后端按安全 Asset key 查找 `server/lora_previews/<key>.webp|png|jpg|jpeg` 并附加 mtime 版本。没有受控资源时为 `null`，前端必须显示文字占位而不能阻断选择。
@@ -107,7 +107,7 @@ Authorization: Bearer <token>
 - `concept_override`: 可选, ≤4000 字符，必须保持 `用户锁定：…｜模型补全：…` 结构。用于把用户编辑后的中文构思作为权威蓝图重新编译；它不是直接注入工作流的 Prompt，也不是跨轮 PromptState。当前只对普通文本 Composer 有效。
 - `image`: 可选, 参考图 base64 (data URI, ≤5MB)。有图走视觉 LLM 提氛围, 不走文本 LLM (③, 见 D23); 图不进 ComfyUI, 仍走 txt2img。
 - `reroll`: 可选, 默认 `false`。`true` 时文本 LLM 在同一 `completion_level` 内高温重出一版**不同构思** (跳过 LRU 缓存)；对视觉 LLM 路径仍是不同图像解读。纯角色 canonical 快路不调用 LLM，因此仍返回同一结果。
-- `lora_selections`: 可选数组。元素为 `{key, profile?, profiles?:[], mode:"auto|explicit", optional?:[], optional_by_profile?:{}, strength_model?, strength_clip?}`。同一 Asset 只保留一条 selection；`profile` 用于单选，`profiles` 用于 Registry 已声明 `allow_multiple_profiles` 的多选，Profile/optional 只能使用 Registry ID。角色总量按 Profile（或未决 auto Asset）计数，最多 3；风格/动作/表情不设硬上限。逐 Asset 强度范围为 0~2。向后兼容 `loras:[key]` 与 `lora:key`。
+- `lora_selections`: 可选数组。元素为 `{key, profile?, profiles?:[], mode:"auto|explicit", optional?:[], optional_by_profile?:{}, strength_model?, strength_clip?}`。同一 Asset 只保留一条 selection；`profile` 用于单选，任何多 Profile Asset 都可用 `profiles` 多选，Profile/optional 只能使用 Registry ID。角色总量按 Profile（或未决 auto Asset）计数，最多 3；风格/动作/表情不设硬上限。逐 Asset 强度范围为 0~2。向后兼容 `loras:[key]` 与 `lora:key`。
 
 SiliconFlow 文本必须返回 `CONCEPT + 精确 12 字段 IR + [LORA] + PROMPT`；有 active LoRA 时 `LORA` 行必需。协议错误自动修复一次，仍不合法则失败，不会把原始响应当 Prompt。翻译失败: `502 {"detail":"翻译失败, 请稍后重试 (...)"}`。
 
@@ -202,7 +202,7 @@ SiliconFlow 文本必须返回 `CONCEPT + 精确 12 字段 IR + [LORA] + PROMPT`
 - `concept`: 可选，≤4000 字符，保持 `用户锁定：…｜模型补全：…` 结构；用于在 job、状态与暗房之间追踪本次生成蓝图，不直接写入 ComfyUI 正向 Prompt。
 - `completion_level`: 可选，`auto | faithful | free`，默认 `auto`；与 `concept` 一起保存，供后续暗房迭代沿用。
 - `size`: 可选, 必须是该工作流 `sizes` 之一; 不传取第一个。后端把该尺寸写入 txt2img 的 EmptyLatent 节点，并显式选择 txt2img 分支；所有尺寸共用配置项 `timeout_seconds`。
-- `lora_selections`: 新客户端的选择真相，契约同 `/api/translate`：角色最多 3 个语义 Profile，风格/细节不设硬上限，同一 Asset 多 Profile 需 Registry opt-in。
+- `lora_selections`: 新客户端的选择真相，契约同 `/api/translate`：角色最多 3 个语义 Profile，风格/细节不设硬上限；任何多 Profile Asset 都可多选。
 - `lora_bindings` + `registry_revision`: 推荐原样回传 translate 结果。后端不信任客户端的 file/tags，而是从 binding 的 key/profile(s)/optional 重新解析；逐 Asset 强度会重新校验，revision 过期返回 409。
 - `loras` / `lora`: 旧客户端兼容入口，内部转为 selection；不传或空表示不用 LoRA。
 - `strength_char` / `strength_style`: 旧客户端兼容字段，各自 0~1；存在时会覆盖对应角色或风格/动作/表情组。新客户端应使用 selection/binding 内逐 Asset 的 `strength_model/strength_clip`（0~2）。旧 `strength` 单字段已废弃。
@@ -211,7 +211,7 @@ SiliconFlow 文本必须返回 `CONCEPT + 精确 12 字段 IR + [LORA] + PROMPT`
 
 - `detailer`: 可选, `{face,hand,nsfw,eyes}` 布尔, 控制 4 路精修 (默认全关=快速; 全开约 95s)。后端删未选节点重连。
 
-校验失败: `400` (未知工作流 / prompt_en 空或过长 / 非法尺寸 / 命中禁词 / 未知 LoRA / 未知精修类型 / 工作流不支持 LoRA / LoRA 强度非法 / 角色超过 3 个 / 未获允许的同 Asset 多 Profile / 同一物理文件以冲突强度重复加载)。
+校验失败: `400` (未知工作流 / prompt_en 空或过长 / 非法尺寸 / 命中禁词 / 未知 LoRA / 未知精修类型 / 工作流不支持 LoRA / LoRA 强度非法 / 角色超过 3 个 / 同一物理文件以冲突强度重复加载)。
 
 响应 `200`:
 ```json

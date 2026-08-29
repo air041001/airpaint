@@ -203,7 +203,7 @@ Return JSON only, with this envelope:
     "type": "character|style|action|expression|unknown",
     "trigger_policy": "profile|required|none",
     "default_strength": {"model": 1.0, "clip": 1.0},
-    "selection": {"default_profile": "profile_id_or_null", "allow_multiple_profiles": false},
+    "selection": {"default_profile": "profile_id_or_null"},
     "profiles": {
       "profile_id": {
         "name": "display name",
@@ -446,7 +446,7 @@ def normalize_agent_candidate(candidate: dict, filename: str) -> tuple[str, dict
             ((raw_asset.get("selection") or {}).get("default_profile") or ""), "")
         default_profile = suggested_default if suggested_default in profiles else next(iter(profiles))
         asset.update({
-            "selection": {"default_profile": default_profile, "allow_multiple_profiles": False},
+            "selection": {"default_profile": default_profile},
             "profiles": profiles,
             "legacy_keys": {},
         })
@@ -854,7 +854,6 @@ def collect_asset(filename: str, asset_id: str | None, existing: dict | None = N
         asset["selection"] = {
             "default_profile": ask("默认 Profile ID（无法自动匹配时使用，可留空）",
                                    (existing.get("selection") or {}).get("default_profile", "")) or None,
-            "allow_multiple_profiles": False,
         }
         asset["profiles"] = profiles
         asset["legacy_keys"] = existing.get("legacy_keys") or {}

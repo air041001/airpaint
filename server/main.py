@@ -124,8 +124,10 @@ class HotLoraRegistry:
                 selection = asset.get("selection") or {}
                 if not isinstance(selection, dict):
                     raise ValueError(f"{key}.selection 必须是对象")
-                allow_multiple = selection.get("allow_multiple_profiles", False)
-                if not isinstance(allow_multiple, bool):
+                # 旧 Registry 可能仍携带 allow_multiple_profiles；D54 起该字段只作兼容，
+                # 是否能多选由“存在多个 Profile”这一结构事实决定。
+                allow_multiple = selection.get("allow_multiple_profiles")
+                if allow_multiple is not None and not isinstance(allow_multiple, bool):
                     raise ValueError(f"{key}.selection.allow_multiple_profiles 必须是布尔值")
                 default_profile = selection.get("default_profile")
                 if default_profile and default_profile not in profiles:
@@ -418,9 +420,6 @@ def normalize_lora_selections(raw, registry: dict[str, dict] | None = None) -> l
     for asset_key, entry in merged.items():
         asset = registry[asset_key]
         profiles = entry.pop("profiles")
-        if len(profiles) > 1 and not (asset.get("selection") or {}).get(
-                "allow_multiple_profiles", False):
-            raise HTTPException(400, f"LoRA {asset_key} 不允许同时选择多个 Profile")
         if asset.get("type") == "character":
             character_count += len(profiles) if profiles else 1
         normalized = {
@@ -580,9 +579,6 @@ def resolve_lora_selections(selections, llm_choices=None, *, allow_unresolved_au
                     profile_ids, resolved_by = [next(iter(profiles))], "single"
                 else:
                     raise HTTPException(400, f"LoRA {selection['key']} 需要明确选择 Profile")
-            if len(profile_ids) > 1 and not (asset.get("selection") or {}).get(
-                    "allow_multiple_profiles", False):
-                raise HTTPException(400, f"LoRA {selection['key']} 不允许同时选择多个 Profile")
             provides = []
             selection_optional_map = selection.get("optional_by_profile") or {}
             choice_optional_map = choice.get("optional_by_profile") or {}
@@ -2592,8 +2588,8 @@ async def list_loras(token: str = Depends(auth)):
             "strength_model": v.get("strength_model", 1.0),
             "strength_clip": v.get("strength_clip", 1.0),
             "default_profile": (v.get("selection") or {}).get("default_profile"),
-            "allow_multiple_profiles": bool(
-                (v.get("selection") or {}).get("allow_multiple_profiles", False)),
+            # 保留响应字段兼容旧前端；现在只要 Asset 有多个 Profile 就可多选。
+            "allow_multiple_profiles": len(v.get("profiles") or {}) > 1,
             "profiles": [
                 {
                     "id": pid,

@@ -64,7 +64,7 @@ Active LoRA 时，Reasoning/Vision Model 只看 Asset/Profile 的 `provides` 与
 
 - `server/lora_registry.yaml` 是版本化人工知识：Asset → Profile → required/default/optional tags、`provides`、默认强度、source/verified。`HotLoraRegistry` 保留嵌套结构，YAML 半写或校验失败时继续使用 last-good snapshot；canonical 内容 hash 作为 `registry_revision`。
 - `get_lora_registry()` 只合并 versioned Registry 与尚未迁移的 legacy config；新文件不会由服务启动扫描或 Civitai trainedWords 自动升格。`.tools/register_lora.py --agent` 直接枚举本地未注册文件，先验收 LoRA Manager 已索引目标，再由维护者确认候选并原子写入 Registry。
-- `resolve_lora_selections()` 只接受 registry key/Profile/optional ID；explicit 锁定，auto 由 LLM 在候选 ID 中选择，失败只可使用显式 default。角色按语义 Profile 计数、最多 3 个；风格/动作/表情不设硬上限。同一 Asset 多 Profile 必须由 `selection.allow_multiple_profiles` 显式允许，并合并为一条 immutable-style binding。
+- `resolve_lora_selections()` 只接受 registry key/Profile/optional ID；explicit 锁定，auto 由 LLM 在候选 ID 中选择，失败只可使用显式 default。角色按语义 Profile 计数、最多 3 个；风格/动作/表情不设硬上限。任何含多个 Profile 的 Asset 都可由用户同时选择，随后合并为一条 immutable-style binding；旧 `selection.allow_multiple_profiles` 只读兼容、不再限制能力。
 - `compile_lora_bindings()` 将 registry exact tags 幂等合入 Prompt；客户端回传的文件名/tags 不作为真相，逐 Asset 强度则作为用户参数重新校验。`jobs` 根据 key/profile(s)/optional 重新解析，并在 revision 变化时返回 409。
 - text、vision、reroll、jobs、dialog redo/tweak/vibe 与 `start-image` 都携带同一 binding snapshot。角色别名同时进入 Character Knowledge 去重，避免 LoRA 人物又被当未知角色查询。
 - SiliconFlow/Vision 实际调用失败时请求以 502 fail closed，不使用缺少 LoRA-aware 语义规划的 Prompt 继续生成；`none/google` 配置降级路径只注入确定性 binding 并向前端显示 warning。首版通过 context 约束避免身份/服装/风格冲突，不实现独立 semantic conflict detector。
@@ -110,7 +110,7 @@ Active LoRA 时，Reasoning/Vision Model 只看 Asset/Profile 的 `provides` 与
 桌面工坊使用固定三栏骨架：画面描述跨左/中两栏，结果态为 `Prompt 检查 324px / 图片 flexible / 成像设置 360px`，最近作品位于左/中两栏下方。首次进入只显示画面描述与成像设置；首次翻译显示跨两栏 Prompt 检查；已有图片后重翻译不移走图片。图片操作位于独立工具栏，媒体余量使用当前图的模糊背景，不覆盖成图。暗房对应为控制左 / 当前图中 / 迭代脉络右。
 移动端按描述 → 图片 → Prompt/参数页签 → 历史纵向排列；暗房按图片 → 控制 → 脉络排列。视图过渡只动画 opacity/translate，`prefers-reduced-motion` 下直接切换，不动画表单或网格尺寸。
 出图两步走 (翻译与生成解耦, 见 D17/D46)：中文 + 补全模式 + `lora_selections` -> `/api/translate` 拿 concept/prompt_en/breakdown/prompt_ir + binding/revision -> 可选编辑中文构思或英文 Prompt -> `/api/jobs` 回传 concept/completion/binding/revision。中文构思编辑后以 `concept_override` 重新调用翻译，不能直接把中文送入工作流；原文、补全模式、构思或 LoRA/Profile 改变都会使当前翻译过期，确认生成前必须应用或重翻译，避免新意图配旧 Prompt。
-描述区提供 `自动 / 忠于描述 / 自由补全` 三档；Prompt 检查区在五项 breakdown 上方显示可编辑的 `用户锁定｜模型补全` 中文构思。成像设置栏保留当前工作流 / 文生图与图生图 / 精修 / 尺寸 / LoRA。LoRA 使用角色与风格/细节两个连续多选菜单和“当前叠加栈”：角色最多 3 个语义 Profile，风格/动作/表情不设硬上限；允许组合的同一 Asset 可多选 Profile，每个 Asset 有独立 0~2 强度、provides/verified 展示与移除操作。角色菜单保持文字列表；风格/细节菜单使用两栏“人物印样”卡片，展示固定预览、名称和默认强度，选中栈同步显示小图，缺图时安全降级为文字占位。菜单根据右栏与视口可用空间上下翻转并限制高度。参考图入口保留在画面描述区。尺寸为点击展开的画幅选择器，标准档与高分辨率实验档分组；选择后自动收起。当前开放标准 `832x1216 / 896x1152 / 1024x1024 / 1344x768`，高分辨率 `1024x1536 / 1536x864`。
+描述区提供 `自动 / 忠于描述 / 自由补全` 三档；Prompt 检查区在五项 breakdown 上方显示可编辑的 `用户锁定｜模型补全` 中文构思。成像设置栏保留当前工作流 / 文生图与图生图 / 精修 / 尺寸 / LoRA。LoRA 使用角色与风格/细节两个连续多选菜单和“当前叠加栈”：角色最多 3 个语义 Profile，风格/动作/表情不设硬上限；所有多 Profile Asset 都可多选，同一文件只加载一次。前端提示用户在画面描述中明确多个主体的形态、位置与互动关系，但不替用户禁止组合；每个 Asset 有独立 0~2 强度、provides/verified 展示与移除操作。角色菜单保持文字列表；风格/细节菜单使用两栏“人物印样”卡片，展示固定预览、名称和默认强度，选中栈同步显示小图，缺图时安全降级为文字占位。菜单根据右栏与视口可用空间上下翻转并限制高度。参考图入口保留在画面描述区。尺寸为点击展开的画幅选择器，标准档与高分辨率实验档分组；选择后自动收起。当前开放标准 `832x1216 / 896x1152 / 1024x1024 / 1344x768`，高分辨率 `1024x1536 / 1536x864`。
 轮询 `/api/jobs/{id}` 每 2s, 完成后展示图 + 入历史画廊(localStorage 缩略图, 最近 12 张)。出图后「继续迭代」进暗房: 换一版(txt2img 重抽, D31 替换意图) / 微调(img2img, 低 denoise)。
 
 > `web/` 是独立 git 仓库 → `air041001/air`。但域名迁移后已**不再依赖 GitHub Pages**

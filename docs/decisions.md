@@ -839,3 +839,27 @@ LoRA 用户可见名称以 versioned `server/lora_registry.yaml` 为单一真相
 **修订关系**：本决定扩展 D40/D49 的 onboarding 易用性和 D52 的预览资源协议；不改变“外部候选不得自动污染 Registry”或“图片质量必须人眼确认”的边界。
 
 **相关文件**：`.tools/register_lora.py`、`.tools/test_lora_onboard_agent.py`、`.tools/generate_lora_previews.py`、`docs/PLAN-LORA.md`、`docs/architecture.md`、`docs/BUILDHANDOFF.md`。
+
+## D54. 多 Profile 组合默认开放，Registry 不替用户禁止画面意图
+
+**背景**：D48 为同一 Asset 多 Profile 增加了 `allow_multiple_profiles` opt-in，目的是在没有真实多人图证据时保守开放。之后 Remielle Dan 的白/黑/泳装同框样图表明，同一身份的不同形态并不天然互斥；是否串形态主要取决于用户是否明确描述主体数量、各自形态、位置与互动，以及模型本身的属性绑定能力。
+
+**问题**：Registry 的布尔开关只能表达维护者是否提前放行，不能判断某个具体 Prompt、seed 与构图能否成功。继续以默认 `false` 阻止组合，会把画质不确定性错误升级为产品硬限制，并让用户无法尝试底层编译器已经能够正确表达的组合。
+
+**决定**：
+
+1. 任何含多个 Profile 的 Asset 都允许用户显式多选；character 仍按 Profile 计数且总量最多 3，style/action/expression 的既有无硬上限规则不变。
+2. 同一 Asset 的多个 Profile 仍合并为一个 binding、一次 safetensors 加载和一组逐 Asset 强度；exact tags/provides/optional 按 Profile 分别解析。
+3. `selection.allow_multiple_profiles` 不再参与校验。旧 Registry 可继续携带该字段，Loader 只验证它若存在必须为布尔值；`/api/loras` 的同名兼容字段改为根据 Profile 数量计算。
+4. 前端在所有多 Profile Asset 上开放连续选择，并在选择区及当前栈提示：用户需要在画面描述中明确主体数量、形态、位置与互动关系。提示不阻断翻译或生成。
+5. onboarding 不再为新 Asset 写入该字段。既有 Registry 不做机械全量重写，避免制造与实际语义无关的版本噪声。
+
+**原因**：产品应表达用户意图并透明提示风险，而不是用不能预测画质的布尔值限制尝试。结构层已经能按语义 Profile 计数、按物理文件去重，因此开放选择不需要改变 workflow 注入模型。
+
+**代价与风险**：清晰描述只能降低串形态风险，不能保证模型正确绑定属性；训练数据、主体数量、构图复杂度与 seed 仍会影响结果。开放能力也不等于多人画质验收完成，失败样本应进入 Prompt Intelligence 或真实渲染评测，而不是重新增加静态禁用名单。
+
+**验证**：Composition 回归覆盖旧 `allow_multiple_profiles:false` Asset 仍可选择两个 Profile、解析为一条 binding 和一条 Loader；角色总量上限与其他物理文件/强度护栏保持。实际 API 中 Salt、Denia、Remielle 与 Cure 四个多 Profile Asset 均返回可多选；前端在 1920×950 与 390×844、纸本与石墨主题下验证连续选择、责任提示、选中态和无横向溢出。
+
+**修订关系**：本决定 supersedes D48 第 2 项的 Registry opt-in 门槛；保留 D48 的语义计数、物理文件去重、逐 Asset 强度与画质边界。
+
+**相关文件**：`server/main.py`、`.tools/register_lora.py`、`.tools/test_lora_composition.py`、`web/index.html`、`docs/PLAN-LORA.md`、`docs/api.md`、`docs/architecture.md`。

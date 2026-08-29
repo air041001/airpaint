@@ -29,7 +29,7 @@ Phase 2.6（Prompt Expansion）、Phase 2.7（Visual Composer）、Phase 3（Cha
 - `AnimaFull.json` 固定 negative 增加常见手指、手臂、腿脚畸形词；这是低成本防御，不是人体质量保证。
 - LoRA Context / Binding：versioned Registry/Profile、last-good revision、legacy adapter、Selection Resolver、幂等 exact Binding Compiler。
 - active LoRA 在翻译前进入 Reasoning/Vision Model 上下文；translate/jobs/dialog/start-image 共用 binding snapshot/revision。
-- LoRA Composition：角色最多 3 个语义 Profile，风格/动作/表情 LoRA 不设硬上限；同一 Asset 多 Profile 需 Registry opt-in 并只加载一次物理文件，每个 Asset 使用独立 0~2 强度。
+- LoRA Composition：角色最多 3 个语义 Profile，风格/动作/表情 LoRA 不设硬上限；所有多 Profile Asset 均可组合并只加载一次物理文件，每个 Asset 使用独立 0~2 强度。旧 Registry `allow_multiple_profiles` 仅兼容读取，不再限制选择。
 - 前端 Profile auto/显式锁定、连续多选与当前叠加栈、per-asset 强度、provides/verified、切换后 stale Prompt 防串线。
 - onboarding：双击 `.tools/start_lora_onboard_agent.bat` 或运行 `.tools/register_lora.py --agent`，粘贴作者说明后由 Reasoning Model 生成可修订候选；代码恢复 exact trigger/明确单值强度，双重确认后原子更新 Registry。`--inspect/--civitai/--validate` 继续可用，不自动把 HTML/Civitai trainedWords 升格为正式知识。新 style 写入后可选立即生成人物预览；人工 `accept` 才原子安装 WebP，失败不回滚，`--preview <asset-id>` 可独立重试。
 - 旧 `scan_loras()` / 启动时 Civitai hash lookup / `server/lora_cache.json` / `POST /api/loras/refresh` 已由上述 onboarding 流程取代并退役；`config.yaml.loras` 仍有未迁移资产，只能保留兼容读取，不能直接删除。
@@ -59,7 +59,7 @@ Phase 2.6（Prompt Expansion）、Phase 2.7（Visual Composer）、Phase 3（Cha
 - “生成”会静默调用翻译并把返回的英文 Prompt/五项拆解同步到左栏，再提交任务；不再只有“先看翻译”路径更新 UI。成图舞台脱离 `flex-1` 的固有尺寸反撑，按视口高度在桌面连续缩放并始终使用 contain，896×1152 等竖图不会再把画布撑成 1152px 高。
 - Visual Composer 真实 SiliconFlow 定向 smoke 覆盖普通 auto、编辑构思重编译与角色+画风 LoRA 上下文；三次均返回完整 12 字段 IR、构思与正确 binding。
 - Remielle Dan `black` + Fymrie 的真实失败复测已通过：Profile 名不再产生未请求的 `black hair/red eyes`，IR/PROMPT 均无越权颜色且 binding 无 warning；1024×1024 构图修复图由用户确认没有问题。
-- Composition 结构验证：新增 6 项测试覆盖同文件多 Profile 单 binding/单加载、角色按 Profile 计数上限 3、Registry opt-in、6 个风格叠加、冲突强度拒绝和 snapshot round-trip；当前 53 项 Prompt/LoRA/workflow 回归继续通过。真实 Registry payload 为 3 个角色 Profile + 4 个风格生成 6 个 binding/6 个唯一 Loader 文件。
+- Composition 结构验证：6 项测试覆盖同文件多 Profile 单 binding/单加载、角色按 Profile 计数上限 3、旧 Registry false 标记不再阻断、6 个风格叠加、冲突强度拒绝和 snapshot round-trip；当前 Prompt/LoRA/workflow 回归继续通过。真实 Registry payload 为 3 个角色 Profile + 4 个风格生成 6 个 binding/6 个唯一 Loader 文件。
 - Composition 浏览器验证：桌面与 390px 下完成同文件双 Profile、跨文件角色组合、第四角色拦截、4 个风格连续多选、逐 Asset 强度与纸本/石墨主题；移动端无横向溢出。该验证不证明多人生成质量。
 - 风格预览浏览器验证：1920×950 与 390×844、纸本/石墨主题下 9/9 印样加载，两栏菜单自动限制在右栏/视口可用空间，连续多选与当前栈缩略图正常且无横向溢出。
 - 前端 mock 已覆盖三档传参、构思 dirty 阻断/重新应用、原文/LoRA stale 防串线、job 的 `concept/completion_level`、1365×720 与 390×844；console 无错误。

@@ -125,7 +125,6 @@ loras:
       clip: 1.0
     selection:
       default_profile: white
-      allow_multiple_profiles: false
     profiles:
       white:
         name: "达妮娅（白）"
@@ -204,8 +203,8 @@ loras:
 - `required_tags/default_tags` 只能由人工或已验证来源写入；LLM 不改写。
 - `optional_tags` 以稳定 option ID 保存 `provides + exact tags`；只有用户明确描述对应细节时，LLM 才能返回允许的 option ID，代码再解析 exact tags。
 - `verified:candidate` 不等于生产验证；真实出图人眼通过后再提升为 `verified`。
-- `allow_multiple_profiles` 只声明 registry 能否组合，不宣称 base Anima 一定能稳定画好多角色。
-- 同一 Asset 的多个 Profile 合并为一个 binding 和一次物理文件加载；角色上限按 Profile/自动选择项计数，不按 safetensors 文件数计数。
+- 所有含多个 Profile 的 Asset 都允许用户组合；旧 `allow_multiple_profiles` 只作兼容读取，不再替用户裁决能力。
+- 同一 Asset 的多个 Profile 合并为一个 binding 和一次物理文件加载；角色上限按 Profile/自动选择项计数，不按 safetensors 文件数计数。用户应在描述中明确主体数量、形态、位置与互动关系。
 - `legacy_keys` 保留旧 API/config key，避免迁移后 `denia_white` 等旧请求突然失效。
 
 ### 2.3 Loader
@@ -240,7 +239,7 @@ loras:
 
 - `mode=explicit`：用户明确选择 Profile，LLM 不得换成别的 Profile。
 - `mode=auto`：用户只选择 LoRA Asset，LLM 必须从 registry 提供的候选 `profile_id` 中选择。
-- `profiles:[...]`：只在 Asset 显式声明 `selection.allow_multiple_profiles:true` 时可用；同一 Asset 仍只能出现一条 selection。
+- `profiles:[...]`：任何多 Profile Asset 均可使用；同一 Asset 仍只能出现一条 selection，并在解析后合并为一次文件加载。
 - 角色 LoRA 最多选择 3 个语义角色（每个显式 Profile 或未决 auto Asset 各计 1）；风格/动作/表情 LoRA 不设产品硬上限。
 - `strength_model/strength_clip` 是逐 Asset 的 0~2 数值；前端当前用一个滑块同时设置两者。旧分组强度字段仅作兼容。
 - 无匹配时：使用明确声明的 `default_profile` 并返回 warning；没有 default 则要求用户选择。
@@ -433,10 +432,10 @@ python .tools/register_lora.py --civitai <url>
 
 ### 7.1 选择体验
 
-- 角色区按语义角色计数，最多 3 个；不同 Asset 可组合，同一 Asset 只有在 Registry 允许时才能同时选多个 Profile。
+- 角色区按语义角色计数，最多 3 个；不同 Asset 可组合，任何多 Profile Asset 也可同时选择多个 Profile。
 - 风格/细节区可连续多选且不设硬上限；选择较多时前端只提示叠加干扰与显存/执行成本，不代替用户作决定。
 - 单 Profile LoRA：直接选择。
-- 多 Profile LoRA：显示二级选择；默认可为 `自动判断`，专家用户可明确锁定 Profile；允许组合的 Asset 可同时点选多个 Profile。
+- 多 Profile LoRA：显示二级选择；默认可为 `自动判断`，专家用户可明确锁定或同时点选多个 Profile。界面提醒多主体描述责任，但不阻止组合。
 - 当前叠加栈显示 `provides`、Profile、verified 状态与逐 Asset 强度；无 trigger 标注“权重生效，无需触发词”。不向普通用户额外展开 exact/minimal tags。
 - 未注册文件不进入生产选择器；由 onboarding 工具的本地文件列表承接“待注册”发现。
 
@@ -547,7 +546,7 @@ Step 0-10 已于 2026-08-23 完成。当前实现包含 versioned Registry/热�
 - 真实 A/B：5 组最终为 aware `1 胜 / 4 平 / 0 负`。唯一明确胜出是服装 Profile 语义组；其余人物、风格、光影与 DeepSeek Anima 组均为平局，没有 LoRA-aware 导致场景/构图退化。
 - DeepSeek：旧 Illustrious 资产换为 Anima 专用 LoRA；同作者身份/女仆装语义以 0.85 绑定，图书馆 aware/legacy 两张均被用户接受，且 Anima 整体优于原 IL 版本。作者水下花园 Prompt 只作 LoRA 控制组，不参与图书馆语义胜负。
 - 光影反馈：`明亮午后` 从旧的 golden/lazy 午后词条中分离为 clear daylight/high sun/crisp shadows；Blue Archive 两张复测光线均正常。
-- Composition 工程扩展（2026-08-28）：角色最多 3 个语义 Profile、风格/细节不限数量；同一 Asset 多 Profile 必须由 Registry opt-in，解析后合并为一个 binding/一次文件加载；不同 Asset 保持独立 binding 与 0~2 强度。6 项新增确定性测试、53 项既有回归、真实 Registry workflow payload 与桌面/390px 浏览器流程均通过。
+- Composition 工程扩展（2026-08-28，D54 于 2026-08-29 修订选择边界）：角色最多 3 个语义 Profile、风格/细节不限数量；所有多 Profile Asset 都允许组合，解析后合并为一个 binding/一次文件加载；不同 Asset 保持独立 binding 与 0~2 强度。旧 Registry opt-in 字段只作兼容。确定性测试、既有回归、真实 Registry workflow payload 与桌面/390px 浏览器流程用于验证结构，不替代多人图片人眼验收。
 - 质量边界：上述验证只证明选择、状态、trigger、强度和 workflow 加载不串线；尚未用固定条件多人出图验证空间关系与身份归属，不宣称多角色 composition 画质完成。
 - 最终一致性审计（2026-08-23）：SiliconFlow/Vision 调用失败为 502 fail-closed；首版没有通用 semantic conflict detector；前端展示 provides/Profile/verified 而不展开 minimal tags。2026-08-28 的 D47 只补充角色 LoRA 发色/瞳色越权这一可确定窄检查，不改变“不建设开放式冲突系统”的边界。
 - 新增 Remielle Dan（base/白/黑/泳装）、Dolphro-kun 风格与无 trigger 的 Light 风格后，用户确认三项 LoRA 均生效并通过验收；Registry 状态已由 candidate 提升为 verified。

@@ -128,17 +128,16 @@ def test_character_limit_counts_profiles_not_files():
             raise AssertionError("four character Profiles must be rejected")
 
 
-def test_registry_must_opt_in_to_same_file_multi_profile():
+def test_legacy_registry_flag_does_not_block_same_file_multi_profile():
     registry = registry_fixture()
     with use_registry(registry):
-        try:
-            main.normalize_lora_selections([
-                {"key": "locked_cast", "profiles": ["one", "two"], "mode": "explicit"}
-            ])
-        except main.HTTPException as exc:
-            assert exc.status_code == 400 and "不允许同时选择多个 Profile" in str(exc.detail)
-        else:
-            raise AssertionError("allow_multiple_profiles=false must fail closed")
+        selections = main.normalize_lora_selections([
+            {"key": "locked_cast", "profiles": ["one", "two"], "mode": "explicit"}
+        ])
+        assert selections[0]["profiles"] == ["one", "two"], selections
+        bindings, warnings, _ = main.resolve_lora_selections(selections)
+        assert not warnings and bindings[0]["profiles"] == ["one", "two"], bindings
+        assert len(main._workflow_lora_entries(bindings)) == 1, bindings
 
 
 def test_style_stack_has_no_product_cap_and_keeps_per_asset_strength():
@@ -190,7 +189,7 @@ def main_test():
     tests = [
         test_same_file_multi_profile_is_one_binding_and_one_loader_entry,
         test_character_limit_counts_profiles_not_files,
-        test_registry_must_opt_in_to_same_file_multi_profile,
+        test_legacy_registry_flag_does_not_block_same_file_multi_profile,
         test_style_stack_has_no_product_cap_and_keeps_per_asset_strength,
         test_same_physical_file_cannot_hide_conflicting_strengths,
         test_binding_roundtrip_keeps_profiles_and_strength,

@@ -80,7 +80,7 @@ Phase 3 不做结构化 char_dict 迁移、156 条全量审计或复杂审批后
 - [x] translate/jobs/dialog 共用 binding snapshot/revision；前端支持 Profile auto/锁定和 stale Prompt 防串线
 - [x] 41 个确定性单测、前端 smoke 与 5 组真实 A/B：aware 1 胜 4 平 0 负
 - [x] 本地入库 Agent；Remielle Dan / Dolphro-kun / Light 三项新增资产生效并完成人工验收
-- [x] Composition 工程：角色最多 3 个语义 Profile、风格/细节不限；同 Asset 多 Profile 需 Registry opt-in，物理文件只加载一次，逐 Asset 强度 0~2
+- [x] Composition 工程：角色最多 3 个语义 Profile、风格/细节不限；所有多 Profile Asset 均可组合，同一物理文件只加载一次，逐 Asset 强度 0~2；界面提示用户明确多主体关系但不限制发挥
 - [x] 风格 LoRA 人物印样：9 个当前 style Asset 按固定 DeepSeek 人物协议生成，API 自动绑定轻量 WebP，前端两栏预览；新 style 入库后可选生成、人工接受或用 `--preview` 稍后补图
 - [ ] 用固定 Prompt/seed 的真实多人图验收空间关系、动作/属性绑定；不从结构支持推导画质完成
 

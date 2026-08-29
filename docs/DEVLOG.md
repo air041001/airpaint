@@ -880,3 +880,11 @@ LoRA onboarding 在 Registry 双重确认并原子写入后，若最终类型严
 预览不属于 Registry 事务：ComfyUI/模型/生成/缩图任何失败都不回滚已完成入库，也不提升 `verified` 或自动提交 Git。选择稍后、拒绝候选或失败时都会给出 `python .tools/register_lora.py --preview <asset-id>` 独立重试命令；character/action/expression 不触发人物主图。
 
 新增 4 项测试覆盖非 style 跳过、later 不生成、失败保留与人工 accept 安装，共 `18 lora onboarding agent tests passed`；系统 Python 和双击脚本使用的 Python 3.10 均完成编译与测试。
+
+## 第 62 条 2026-08-29 - 多 Profile 选择从 Registry 门禁改为用户负责
+
+Remielle Dan 的多形态同框样图推翻了“同一身份不同形态默认应禁止组合”的保守前提。所有含多个 Profile 的 Asset 现在都可连续多选；角色仍按 Profile 计数并最多 3 个，同一 Asset 仍只形成一条 binding、一次物理文件加载和一组强度。旧 `allow_multiple_profiles` 字段保留兼容读取但不再参与能力判断，新 onboarding 不再写入。
+
+前端在所有多 Profile 选择区明确提示用户写清主体数量、各自形态、位置与互动关系；选择多个形态后，当前叠加栈持续显示责任提示，但不阻断翻译或生成。清晰描述只能降低串形态风险，不能替代模型/seed 的真实多人图验收。
+
+验证覆盖旧 Registry `allow_multiple_profiles:false` 仍能选双 Profile、单 binding/单 Loader、角色上限与既有强度/物理文件护栏；桌面与 390px 浏览器验收确认连续选择、提示和无横向溢出。
