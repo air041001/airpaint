@@ -1,94 +1,89 @@
-# airpaint.xyz - AI 绘图小屋
+# AirPaint
 
-面向 ComfyUI 用户的 **Prompt Intelligence Layer**：把脑中的画面编译成比手动写更适合当前模型（Anima）与工作流的 Prompt。不是「小白一句话出图」，是「懂 ComfyUI 的人更快更准」。
-前后端共用固定域名 `airpaint.xyz`, 经 cloudflared 命名隧道穿透内网, 不暴露本机端口。
+AirPaint 是面向 ComfyUI 用户的 Prompt / Intent / Knowledge Intelligence Layer：把用户的画面意图编译成适合当前 Anima 模型与工作流的生成请求。它不替代 ComfyUI，也不隐藏 Prompt、LoRA 或 Workflow 的控制权。
 
-> 文档导航: [开发规约](AGENTS.md) · [长期路线](docs/PLAN-v5%20—%20AirPaint%20Prompt%20Intelligence.md) · [架构](docs/architecture.md) · [API](docs/api.md) · [设计决策](docs/decisions.md) · [开发日志](docs/DEVLOG.md) · [路线图](ROADMAP.md) · [CLAUDE.md 兼容入口](CLAUDE.md)
+## 项目入口
 
-## 架构一览
+- `docs/BUILDHANDOFF.md`：一份文件了解当前能力、验证状态、边界和下一步。
+- `AGENTS.md`：项目开发规约。
+- `docs/architecture.md`：当前系统结构。
+- `docs/api.md`：HTTP API 契约。
+- `docs/decisions.md`：设计取舍与修订关系。
+- `docs/DEVLOG.md`：开发演进记录。
+- `ROADMAP.md`：仍有效的未来事项。
+- `docs/workflow-anatomy.md`：当前 `AnimaFull.json` 节点与注入依据。
 
+## 运行结构
+
+```text
+浏览器 https://airpaint.xyz
+  -> cloudflared 命名隧道
+  -> FastAPI 127.0.0.1:8000
+     - 静态托管 web/index.html
+     - Prompt / LoRA / Workflow 编译
+     - 单并发任务队列
+  -> ComfyUI 127.0.0.1:8188
+     - server/workflows/AnimaFull.json
 ```
-访客浏览器  https://airpaint.xyz (网页) / https://api.airpaint.xyz (API)
-    ▼  cloudflared 命名隧道 (永久固定)
-FastAPI 后端 127.0.0.1:8000  (鉴权/限流/翻译/工作流注入/排队/静态托管)
-    ▼
-ComfyUI 127.0.0.1:8188  (Anima 合并工作流 AnimaFull, 不对公网开放)
-```
+
+前端现在与后端、文档一起由本仓库追踪；不再依赖原 `air041001/air` GitHub Pages 仓库。
 
 ## 快速启动
 
-需要本机三样同时运行:
+1. 启动本机 ComfyUI，监听 `127.0.0.1:8188`。
+2. 双击 `.tools/start_airpaint.bat`，启动 FastAPI 与 cloudflared 命名隧道。
+3. 访问 `https://airpaint.xyz`，输入邀请码。
 
-1. **ComfyUI** - 用 `E:\ComfyUI_windows_portable\run_nvidia_gpu_fast_fp16_accumulation.bat` 启动 (监听 127.0.0.1:8188)。
-2. **后端 + 隧道** - 双击 `.tools\start_airpaint.bat` (起 FastAPI 8000 + cloudflared 命名隧道)。
-3. 访问 `https://airpaint.xyz`, 输入邀请码即可。
-
-> 隧道地址永久固定, **重启不用改任何配置** (这是命名隧道相对临时隧道的核心收益)。
+后端或配置已经运行时，只补隧道可使用 `.tools/start_tunnel.bat`。
 
 ## 配置
 
-`server/config.yaml` (含密钥, 已 `.gitignore`, 不进公开仓库):
+复制 `server/config.example.yaml` 为 `server/config.yaml` 后填写本地路径、token 与 API key。`config.yaml` 已被 Git 忽略，敏感值不得写入代码或文档。
+
+当前关键配置：
 
 ```yaml
 comfy_url: http://127.0.0.1:8188
-comfy_dir: "E:/ComfyUI_windows_portable/ComfyUI"   # 扫 models/loras/ 自动发现新 LoRA
+comfy_dir: "E:/ComfyUI_windows_portable/ComfyUI"
 host: 127.0.0.1
 port: 8000
-allow_origins: ["https://airpaint.xyz", ...]
-tokens: ["friend-xxxx", ...]        # 邀请码 (自己生成, 勿推真实码)
+allow_origins: ["https://airpaint.xyz"]
+tokens: ["friend-xxxx"]
 daily_limit: 30
-translate: siliconflow               # siliconflow | google | none
-siliconflow_api_key: "sk-..."
+translate: siliconflow
 siliconflow_model: "deepseek-ai/DeepSeek-V4-Flash"
-siliconflow_vision_model: "Qwen/Qwen3-VL-8B-Instruct"   # 参考图理解
-reroll_temperature: 0.9              # 再来一版的高温
+siliconflow_vision_model: "Qwen/Qwen3-VL-8B-Instruct"
 workflows:
-  anima:                             # 一份合并工作流: txt2img/img2img/精修
+  anima:
     file: workflows/AnimaFull.json
-    prompt_node: "54"                # CLIPTextEncode 正面
-    seed_node: "6"                   # KSampler
-    size_node: "56"                  # EmptyLatentImage
-    lora_node: "5"                   # LoraLoader (LoRA)
-    image_node: "0"                  # LoadImage (img2img)
-    switch_node: "42"                # ImpactSwitch (img2img 路由)
-    denoise_node: "6"                # 主 KSampler denoise
-    detailer_nodes: { hand: "27", nsfw: "28", face: "29", eyes: "30" }
-    sizes: ["832x1216", "1216x832", "1024x1024"]
-    quality_prefix: "masterpiece, best quality, newest, absurdres, "
 ```
 
-改 token / 限流 / 翻译模型后, **重启后端**生效。
+人工维护的 LoRA 真相源是 `server/lora_registry.yaml`。新增 LoRA 使用 `.tools/start_lora_onboard_agent.bat` 或：
 
-## 加功能分支 (合并工作流 AnimaFull, D32)
+```text
+python .tools/register_lora.py --agent
+```
 
-1. ComfyUI UI 里把功能分支(如 ControlNet / 新 detailer)排好(全活跃), 设置勾选 `Enable Dev mode Options` -> `Save (API Format)`。
-2. 并入 `server/workflows/AnimaFull.json` (与现有节点 id 不冲突即可)。
-3. `config.yaml` 的 `workflows.anima` 加 `<名>_node` 节点映射 (参考 `image_node`/`detailer_nodes` 写法)。
-4. `server/main.py` 的 `build_prompt` 写拼接逻辑(运行时删未选节点/重连), 不是换 JSON 文件。
-5. 若分支含前端专属节点 (WidgetToString / Image Saver), 后端 `sanitize_for_api` 会自动处理; 含 Impact Pack 的 seed 需统一, `build_prompt` 已自动处理。
+服务启动时不会自动扫描 LoRA 目录，也不会把 Civitai trainedWords 自动写入正式 Registry。
 
-## 常用命令
+## 常用验证
 
-```bash
-# 本机健康检查
-curl http://127.0.0.1:8000/api/health        # {"ok":true,"comfy":true}
-
-# 端到端测试
+```text
+python -m compileall -q server
+node .tools/check_frontend.js
+python .tools/test_prompt_unit.py
+python .tools/test_lora_composition.py
+python .tools/test_lora_onboard_agent.py
+python .tools/register_lora.py --validate
+python .tools/inspect_wf.py
 python .tools/test_e2e.py
-
-# 看队列/任务: 后端 stdout
 ```
 
-## 工具 (.tools/)
+确定性测试验证协议、解析、Binding 与 Workflow 结构；生成图片质量仍需固定条件出图和人眼判断。
 
-- `start_airpaint.bat` - 一键起后端 + 命名隧道 (ComfyUI 需先启)
-- `start_tunnel.bat` - 后端已在跑、隧道挂了时单独补隧道 (不碰后端, 避免 8000 端口冲突)
-- `test_e2e.py` - 端到端生图测试
-- `inspect_wf.py` - 工作流节点 id 校准
-- `bind.sh` / `bind.README.md` - **已退役** (旧临时隧道换地址用, 命名隧道后不再需要)
+## 当前边界
 
-## 注意
-
-- `config.yaml` 含 token 与 API key, **不要**提交公开仓库。
-- 单卡串行, 一张约 15~60s, 高峰期前端会显示排队位置。
-- 用量/任务状态为内存态, 后端重启清零 (Phase 3 计划 SQLite)。
+- 用量、任务与对话状态仍是内存态，后端重启后清零。
+- 单卡任务队列并发为 1。
+- PromptState、字段级增量编辑和 Workflow Intelligence 只有在真实使用数据证明需要时才启动。
+- 多 Profile/多 LoRA 的选择、Binding、强度与单文件去重已经可用，但多人关系和属性绑定仍是 best-effort，结构测试不等于画质验证。

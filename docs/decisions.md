@@ -935,3 +935,27 @@ LoRA 用户可见名称以 versioned `server/lora_registry.yaml` 为单一真相
 **修订关系**：本决定 revises D38 的“可选 `CHAR` 已兼容”实现判断和 `IR.subject` 兜底；保留 D38 的 Danbooru exact/category/post_count、formal 优先、auto 隔离、unavailable 不落盘原则。
 
 **相关文件**：`server/main.py`、`server/char_dict.yaml`、`.tools/test_prompt_unit.py`、`docs/architecture.md`、`docs/DEVLOG.md`、`docs/BUILDHANDOFF.md`。
+
+## D58. 根仓库统一产品真相，并把后端单文件按职责拆分
+
+**背景**：根仓库实际部署 `web/index.html`，但 `.gitignore` 忽略整个 `web/`，前端仍带有旧 `air041001/air` 的嵌套 Git 元数据；一次 clone 无法得到可运行产品。根仓库同时保留 5 份已退役 workflow、完成态 PLAN、一次性 Prompt 实验 runner/结果和旧 bind 工具。`server/main.py` 已增长到约 3400 行，Prompt、Knowledge、LoRA、Workflow、API 与运行时状态共享一个文件，局部修改需要阅读无关区域，也放大初始化顺序和全局状态误改风险。
+
+**问题**：清理不能只按文件名删除。BUILDHANDOFF 虽与多份文档有交叠，却是新 Agent 每次使用和更新的唯一综合摘要；相反，完成态 PLAN 与已经被 ADR/DEVLOG 吸收的一次性实验资产继续留在主分支，会制造仍需执行的假任务和多个真相源。后端拆分若直接移动函数又可能破坏维护工具对 `server.main` 的读取、共享 client/队列对象或实验 monkeypatch。
+
+**决定**：
+
+1. 根仓库开始追踪 `web/index.html`；旧前端 `.git` 移到本机忽略备份，`air041001/air` 只保留迁移前历史，不再作为部署或文档真相源。
+2. 保留并重写 `docs/BUILDHANDOFF.md`，将其定义为唯一“单文件项目摘要”；README、AGENTS、architecture、api、decisions、DEVLOG、ROADMAP 继续各自承担入口、规约、现状、契约、原因、历史和未来职责。
+3. 删除两份完成态 PLAN、5 份退役 workflow、旧 bind 文件、已被 ADR/DEVLOG 吸收的 `render_exp` 一次性夹具/runner/结果，以及不再使用的 NSFW 文本校验脚本。历史仍可从 Git 恢复；现行 workflow 只保留 `AnimaFull.json`。
+4. 后端按 `settings/runtime → knowledge/lora → prompt/workflow → api → main` 拆分。共享 HTTP client、队列和内存状态集中在 `runtime.py`；`main.py` 只启动 `api.app` 并在迁移期重导出旧符号。生产已不使用、且由 D46 新路径取代的 `_prepare_painter_tags()` 与旧 system prompt 同步删除。
+5. 新增统一的前端内联脚本语法检查；workflow 检查工具默认读取唯一现行 JSON，同时仍允许显式传入其他文件。
+
+**原因**：一份仓库应能完整 clone、审查、运行和交接。保留按消费场景划分的文档，比把所有信息塞进一份长文更可靠；同时 BUILDHANDOFF 解决新 Agent 的单次阅读成本。职责模块让 Prompt、Knowledge、LoRA、Workflow 与 HTTP 边界可单独定位，又不引入新的框架、服务或抽象层。
+
+**代价与风险**：历史 ADR 中仍会出现已删除 PLAN/实验路径，这是当时证据而不是坏链接承诺。旧脚本若依赖给 `main.py` 的不可变全局重新赋值，需要通过兼容入口或改为直接引用职责模块；兼容层因此暂不删除。模块之间仍共享当前进程内状态，这次不是持久化或依赖注入重构。旧前端远程仓库仍存在，必须避免再次向其开发活跃版本。
+
+**验证**：拆分后 58 项 Prompt/Registry/Workflow/API 路由测试、6 项 LoRA Composition 测试和 18 项 onboarding 测试通过；Registry 15 个 Asset 校验通过；全部 Python 模块编译、前端 2 段内联脚本解析、当前 workflow 检查与直接启动入口导入通过。此次只整理真相源和代码边界，没有重新生图，不作新的画质结论。
+
+**修订关系**：本决定 revises D1/D45 中 `web/` 独立仓库或备份仓库的现状描述；补充 D46 中旧 `_prepare_painter_tags()` 已退出生产后的最终清理。其余历史技术与画质结论不变。
+
+**相关文件**：`.gitignore`、`web/index.html`、`server/main.py`、`server/settings.py`、`server/runtime.py`、`server/knowledge.py`、`server/lora.py`、`server/prompt_engine.py`、`server/workflow_engine.py`、`server/api.py`、`.tools/check_frontend.js`、`README.md`、`AGENTS.md`、`ROADMAP.md`、`docs/BUILDHANDOFF.md`、`docs/architecture.md`、`docs/api.md`、`docs/DEVLOG.md`。

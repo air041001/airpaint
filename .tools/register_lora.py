@@ -27,7 +27,7 @@ import generate_lora_previews as preview_generator
 
 REGISTRY_PATH = main.LORA_REGISTRY_PATH
 LORA_DIR = main.LORA_DIR
-PREVIEW_STAGING_ROOT = ROOT / ".tools" / "eval_set" / "render_exp" / "output" / "lora_previews" / "onboarding"
+PREVIEW_STAGING_ROOT = ROOT / ".tools" / ".artifacts" / "lora_previews" / "onboarding"
 PREVIEW_SIZE = (448, 576)
 
 
@@ -648,7 +648,7 @@ def install_style_preview(source: Path, asset_id: str,
         raise ValueError(f"不安全的 Asset ID: {asset_id}")
     from PIL import Image
 
-    destination_dir = destination_dir or main.LORA_PREVIEWS
+    destination_dir = destination_dir or main.lora_module.LORA_PREVIEWS
     destination_dir.mkdir(parents=True, exist_ok=True)
     target = destination_dir / f"{asset_id}.webp"
     temp_path = None

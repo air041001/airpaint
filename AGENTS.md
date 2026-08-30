@@ -4,11 +4,11 @@
 >
 > 与具体文档的关系：
 > - 本文件：怎么开发（稳定原则 + 当前仓库规约）
-> - `docs/PLAN-v5`：未来路线（具体 Phase 任务）
+> - `docs/BUILDHANDOFF.md`：一份文件的当前项目摘要、验证状态、边界和下一步
 > - `docs/architecture.md`：现在系统是什么样
 > - `docs/decisions.md`：为什么这么设计
 > - `docs/DEVLOG.md`：项目如何演变
-> - `ROADMAP.md`：未来准备做什么（当前主线 = PLAN-v5）
+> - `ROADMAP.md`：仍有效的未来事项
 
 ---
 
@@ -77,11 +77,11 @@ LoRA 是扩展层，不是当前产品主线。
 
 #### 4. Prompt IR 原则
 
-Prompt IR 是下一阶段最重要的新抽象之一。
+Prompt IR 是当前 Visual Composer 的语义中间层。
 
-建议从最小可用字段开始，**不要为了结构漂亮一次性堆很多字段**。
+继续保持最小可用字段，**不要为了结构漂亮继续堆字段**。
 
-当前候选（12 字段）：
+当前协议（12 字段）：
 
 ```text
 subject / appearance / clothing / action / pose / interaction
@@ -196,31 +196,11 @@ LoRA → 它已经提供了什么概念？ → Prompt 还需要描述什么？
 
 #### 10. 开发顺序
 
-不要把所有长期 Phase 一次性铺开。
+Visual Composer、Character Knowledge、LoRA Context / Binding / Composition 已进入当前生产版本。现在没有自动开启的新大阶段：先从真实使用收集可复现失败，再判断是 Prompt、Knowledge、LoRA、Workflow 还是模型局限。
 
-当前 PLAN-v5（详见 `docs/PLAN-v5 — AirPaint Prompt Intelligence.md`）：
+PromptState / 字段级增量编辑由真实暗房使用触发；Workflow Intelligence 只有现有表达层无法满足明确需求时才启动。当前条件与明确不做项以 `ROADMAP.md` 为准，已完成阶段和验证证据以 `docs/BUILDHANDOFF.md` 为准。
 
-```text
-Phase 0  Prompt Baseline / 小型回归集
-↓
-Phase 1  Prompt IR + Prompt Compiler
-↓
-Phase 2  Prompt Quality（TAG/NL、Dictionary vs LLM、canonicalization / ordering / dedup）
-↓
-Phase 3  Character Knowledge 自动成长
-↓
-Phase 4  PromptState + Incremental Editing
-↓
-Phase 5  LoRA Context
-↓
-Phase 6  Trigger Engine
-↓
-Phase 7  LoRA Composition
-↓
-Phase 8  Workflow Intelligence
-```
-
-**基础维护项不是独立 Phase**：旧 `scan_loras` 的历史修复与退役 / 清理明显错误的 `char_dict` / 同步旧文档中的模型名称等，应在需要时完成，**不要让基础维护抢占 Prompt Intelligence 主线**。
+基础维护不是独立产品 Phase，但仓库、文档和兼容代码应在失去职责后及时清理，避免形成多个真相源。
 
 ---
 
@@ -259,8 +239,8 @@ Phase 8  Workflow Intelligence
 每次有意义的代码修改，运行与修改范围匹配的最低验证。
 
 ```bash
-python -m py_compile server/main.py    # Python
-node --check web/index.html            # 前端（如果改了前端）
+python -m compileall -q server         # Python
+node .tools/check_frontend.js          # 前端内联脚本（如果改了前端）
 ```
 
 验证维度（按修改范围选）：
@@ -328,13 +308,12 @@ push
 |---|---|
 | `AGENTS.md`（本文件） | 怎么开发。稳定的行为准则和项目原则 |
 | `CLAUDE.md` | 兼容入口（指向 AGENTS.md） |
+| `docs/BUILDHANDOFF.md` | 新 Agent 的单文件项目摘要：当前能力、验证、边界、接手路由 |
 | `docs/architecture.md` | 现在系统是什么样。架构变化时同步，不长期堆未来计划 |
 | `docs/api.md` | HTTP API 契约 |
 | `docs/decisions.md` | 为什么这么设计。格式建议见 §17 |
 | `docs/DEVLOG.md` | 项目如何演变。一条记录一个有意义的开发事件/阶段 |
 | `ROADMAP.md` | 未来准备做什么。只保留当前仍有效的路线 |
-| `docs/PLAN-v5.md` | 长期实施路线（唯一现行计划，取代已删除的 PLAN-v4） |
-| `docs/PLAN-LORA.md` | LoRA Context 工程最终任务计划 |
 | `docs/workflow-anatomy.md` | ComfyUI / workflow 底层技术知识与踩坑记录 |
 | `README.md` | 给开发者/使用者看的项目入口 |
 
@@ -359,19 +338,20 @@ Dxx. 标题
 
 #### 17. 当前模块地图（仓库现状）
 
-`server/main.py` 是单文件后端，关键模块：
+`server/main.py` 只负责启动与旧维护脚本兼容；生产实现按依赖方向拆分：
 
-| 模块 | 关键符号 | 职责 |
-|---|---|---|
-| 鉴权/限流 | `auth()` `USAGE` | Bearer token + 日限，**内存计数（重启清零）** |
-| 内容过滤 | `check_banned()` | banned_words 子串匹配 |
-| **Prompt Engine** | `translate()` `match_characters()` `match_dict_words()` `siliconflow_translate()` `_parse_structured_output()` `normalize_tag_order()` `_strip_char_bare_names()` `HotDict` | 三层：角色→词典→LLM（信息分流：5 字段给人看 + TAGS 离散 + NL 关系叙事不重复，D28）/ LRU 缓存 500 / reroll 跳过缓存 / tag 规范序 count→char→general / 词典 mtime 热更新 / **裸名变体去重防 IP logo（D30）** |
-| **Workflow Engine** | `sanitize_for_api()` `build_prompt()` `upload_image_to_comfy()` | 清洗 + 注入 prompt/seed/size/多 LoRA/img2img/detailer（D32 合并工作流 + 删节点拼接）/ 统一 seed / img2img + detailer + LoRA 一份 `AnimaFull.json` |
-| **LoRA Registry** | `HotLoraRegistry` `get_lora_registry()` `resolve_lora_selections()` `compile_lora_bindings()` | versioned Registry 为正式真相，未迁移 `config.yaml.loras` 只作兼容；新文件由 `.tools/register_lora.py --agent` 检查 LoRA Manager 索引、蒸馏作者说明并原子入库。旧启动扫描/Civitai cache 已由 D49 退役。 |
-| ComfyUI 客户端 | `submit_and_wait()` | `/prompt` 提交 + `/history` 轮询 + `/view` 取图 |
-| 队列 | `worker()` `QUEUE` | 单并发 asyncio.Queue（GPU 串行） |
-| 静态托管 | `/` `/images` | `/` 返回 `web/index.html`，`/images` 出图 |
-| **Intent Engine** | `match_characters()` `siliconflow_vision_translate()` | 构图/场景/情绪分解（D18 LLM 结构化）/ **参考图理解 ③ Qwen3-VL**（D23）/ **⑤ 对话迭代显式路由**（D25/D26/D31 redo 替换意图检测）/ 否定解析弃用（Anima 负面=常量） |
+| 文件 | 关键职责 |
+|---|---|
+| `server/settings.py` | 配置、路径、长度限制与稳定枚举 |
+| `server/runtime.py` | HTTP client、队列、任务/会话/用量内存态 |
+| `server/knowledge.py` | HotDict、角色词典、Danbooru 候选与缓存 |
+| `server/lora.py` | Registry、selection、context、binding compiler |
+| `server/prompt_engine.py` | Visual Composer、Vision、IR 解析与 Prompt compiler |
+| `server/workflow_engine.py` | Workflow 清洗/注入、ComfyUI 上传提交与取图 |
+| `server/api.py` | FastAPI、中间件、鉴权、路由、队列 worker、静态托管 |
+| `server/main.py` | 启动 `api.app`，迁移期重导出旧符号；不再承载业务实现 |
+
+依赖应保持 `settings/runtime → knowledge/lora → prompt/workflow → api → main`；新增逻辑放入职责模块，不把 `main.py` 重新堆回单文件。
 
 **Sensitive**：`.workbuddy/memory/` 是 Agent 工具数据目录，**不应进 git**（建议加进 `.gitignore`），避免误提交 Agent 内部数据。
 

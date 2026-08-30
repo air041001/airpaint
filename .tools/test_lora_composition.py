@@ -9,6 +9,7 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
 from server import main
+from server import lora as lora_module
 
 
 def profile(name: str, tag: str) -> dict:
@@ -72,12 +73,12 @@ def registry_fixture() -> dict[str, dict]:
 
 @contextmanager
 def use_registry(registry: dict[str, dict]):
-    previous = main.get_lora_registry
-    main.get_lora_registry = lambda: registry
+    previous = lora_module.get_lora_registry
+    lora_module.get_lora_registry = lambda: registry
     try:
         yield
     finally:
-        main.get_lora_registry = previous
+        lora_module.get_lora_registry = previous
 
 
 def test_same_file_multi_profile_is_one_binding_and_one_loader_entry():

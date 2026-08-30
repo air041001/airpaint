@@ -11,6 +11,10 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
 from server import main
+from server import api as api_module
+from server import knowledge as knowledge_module
+from server import lora as lora_module
+from server import prompt_engine as prompt_module
 
 
 def test_character_match():
@@ -425,10 +429,10 @@ def test_workflow_negative_contains_compact_anatomy_guard():
 
 
 def test_siliconflow_composer_bypasses_ordinary_dict_and_isolates_completion_cache():
-    old_translate = main.siliconflow_translate
-    old_match_dict = main.match_dict_words
+    old_translate = prompt_module.siliconflow_translate
+    old_match_dict = prompt_module.match_dict_words
     old_backend = main.CFG.get("translate")
-    old_cache = dict(main._TRANSLATE_CACHE)
+    old_cache = dict(prompt_module._TRANSLATE_CACHE)
     calls = []
 
     def fail_dict(_):
@@ -445,9 +449,9 @@ def test_siliconflow_composer_bypasses_ordinary_dict_and_isolates_completion_cac
 
     try:
         main.CFG["translate"] = "siliconflow"
-        main.siliconflow_translate = fake_translate
-        main.match_dict_words = fail_dict
-        main._TRANSLATE_CACHE = {}
+        prompt_module.siliconflow_translate = fake_translate
+        prompt_module.match_dict_words = fail_dict
+        prompt_module._TRANSLATE_CACHE = {}
         auto = asyncio.run(main.translate(
             "黑发少女，画得好看一点", completion_level="auto", include_meta=True))
         free = asyncio.run(main.translate(
@@ -459,19 +463,19 @@ def test_siliconflow_composer_bypasses_ordinary_dict_and_isolates_completion_cac
         assert auto[3]["concept"].startswith("用户锁定："), auto[3]
         assert free[3]["completion_level"] == "free", free[3]
     finally:
-        main.siliconflow_translate = old_translate
-        main.match_dict_words = old_match_dict
+        prompt_module.siliconflow_translate = old_translate
+        prompt_module.match_dict_words = old_match_dict
         if old_backend is None:
             main.CFG.pop("translate", None)
         else:
             main.CFG["translate"] = old_backend
-        main._TRANSLATE_CACHE = old_cache
+        prompt_module._TRANSLATE_CACHE = old_cache
 
 
 def test_concept_override_is_authoritative_and_validated():
-    old_translate = main.siliconflow_translate
+    old_translate = prompt_module.siliconflow_translate
     old_backend = main.CFG.get("translate")
-    old_cache = dict(main._TRANSLATE_CACHE)
+    old_cache = dict(prompt_module._TRANSLATE_CACHE)
     override = "用户锁定：黑发少女｜模型补全：雨后荷塘、青色薄纱裙与侧逆光"
 
     async def fake_translate(context, reroll=False):
@@ -485,19 +489,19 @@ def test_concept_override_is_authoritative_and_validated():
 
     try:
         main.CFG["translate"] = "siliconflow"
-        main.siliconflow_translate = fake_translate
-        main._TRANSLATE_CACHE = {}
+        prompt_module.siliconflow_translate = fake_translate
+        prompt_module._TRANSLATE_CACHE = {}
         _, _, _, meta = asyncio.run(main.translate(
             "黑发少女", concept_override=override, include_meta=True))
         assert meta["concept"] == override, meta
         assert meta["concept_override_applied"] is True, meta
     finally:
-        main.siliconflow_translate = old_translate
+        prompt_module.siliconflow_translate = old_translate
         if old_backend is None:
             main.CFG.pop("translate", None)
         else:
             main.CFG["translate"] = old_backend
-        main._TRANSLATE_CACHE = old_cache
+        prompt_module._TRANSLATE_CACHE = old_cache
 
     try:
         main._normalize_optional_concept("只写一段自由文本", "concept_override")
@@ -505,39 +509,6 @@ def test_concept_override_is_authoritative_and_validated():
         assert exc.status_code == 400
     else:
         raise AssertionError("unstructured concept override must be rejected")
-
-
-def test_painter_tag_guard_preserves_woman_and_suppresses_unrequested_silhouette():
-    tags = main._prepare_painter_tags(
-        ["woman", "silhouette of a woman", "bedroom"],
-        {"subject": ["woman"]},
-        "女性裸体躺在卧室的床上",
-        [],
-    )
-    assert tags[0] == "1girl", tags
-    assert all("silhouette" not in tag for tag in tags), tags
-
-
-def test_painter_tag_guard_keeps_nsfw_body_framing_and_default_anime_style():
-    tags = main._prepare_painter_tags(
-        ["woman", "nude", "close-up", "painterly", "soft lighting"],
-        {"subject": ["woman"], "appearance": ["nude"]},
-        "女性裸体躺在卧室的床上",
-        [],
-    )
-    assert "1girl" in tags, tags
-    assert "close-up" not in tags and "painterly" not in tags, tags
-    assert "three-quarter view" in tags, tags
-
-
-def test_painter_tag_guard_preserves_explicit_user_intent():
-    tags = main._prepare_painter_tags(
-        ["1girl", "black lace lingerie", "seductive"],
-        {"subject": ["1girl"], "constraints": ["nsfw"]},
-        "成年女性裸体穿着黑色蕾丝内衣",
-        [],
-    )
-    assert "nude" in tags, tags
 
 
 def test_character_hint_protocol_parser():
@@ -657,18 +628,23 @@ def test_danbooru_character_classification():
 
 def test_auto_character_cache_write_and_match():
     with tempfile.TemporaryDirectory() as temp:
-        old_dir, old_path, old_auto = main.KNOWLEDGE_CACHE_DIR, main.CHAR_AUTO_PATH, main.CHAR_AUTO
+        old_dir = knowledge_module.KNOWLEDGE_CACHE_DIR
+        old_path = knowledge_module.CHAR_AUTO_PATH
+        old_auto = knowledge_module.CHAR_AUTO
         try:
             cache_dir = Path(temp)
-            main.KNOWLEDGE_CACHE_DIR = cache_dir
-            main.CHAR_AUTO_PATH = cache_dir / "characters_auto.yaml"
-            main.CHAR_AUTO = main.HotDict(main.CHAR_AUTO_PATH, key_fn=lambda s: s)
+            knowledge_module.KNOWLEDGE_CACHE_DIR = cache_dir
+            knowledge_module.CHAR_AUTO_PATH = cache_dir / "characters_auto.yaml"
+            knowledge_module.CHAR_AUTO = main.HotDict(
+                knowledge_module.CHAR_AUTO_PATH, key_fn=lambda s: s)
             main._record_auto_character("测试角色", "test_character_(series)")
             tags, remaining = main.match_characters("测试角色站在街上")
             assert tags == ["test_character_(series)"], tags
             assert remaining == "站在街上", repr(remaining)
         finally:
-            main.KNOWLEDGE_CACHE_DIR, main.CHAR_AUTO_PATH, main.CHAR_AUTO = old_dir, old_path, old_auto
+            knowledge_module.KNOWLEDGE_CACHE_DIR = old_dir
+            knowledge_module.CHAR_AUTO_PATH = old_path
+            knowledge_module.CHAR_AUTO = old_auto
 
 
 def test_unavailable_lookup_is_retryable():
@@ -687,26 +663,28 @@ def test_unavailable_lookup_is_retryable():
         return FakeResponse()
 
     old_get = main.CLIENT.get
-    old_cache, old_loaded = main._CHAR_LOOKUP_CACHE, main._CHAR_LOOKUP_CACHE_LOADED
+    old_cache = knowledge_module._CHAR_LOOKUP_CACHE
+    old_loaded = knowledge_module._CHAR_LOOKUP_CACHE_LOADED
     try:
         main.CLIENT.get = fake_get
-        main._CHAR_LOOKUP_CACHE = {}
-        main._CHAR_LOOKUP_CACHE_LOADED = True
-        first = asyncio.run(main.lookup_character("临时角色", "temporary_character"))
-        second = asyncio.run(main.lookup_character("临时角色", "temporary_character"))
+        knowledge_module._CHAR_LOOKUP_CACHE = {}
+        knowledge_module._CHAR_LOOKUP_CACHE_LOADED = True
+        first = asyncio.run(knowledge_module.lookup_character("临时角色", "temporary_character"))
+        second = asyncio.run(knowledge_module.lookup_character("临时角色", "temporary_character"))
         assert first["status"] == second["status"] == "unavailable"
         assert calls == 2, calls
-        assert "临时角色|temporary_character" not in main._CHAR_LOOKUP_CACHE
+        assert "临时角色|temporary_character" not in knowledge_module._CHAR_LOOKUP_CACHE
     finally:
         main.CLIENT.get = old_get
-        main._CHAR_LOOKUP_CACHE, main._CHAR_LOOKUP_CACHE_LOADED = old_cache, old_loaded
+        knowledge_module._CHAR_LOOKUP_CACHE = old_cache
+        knowledge_module._CHAR_LOOKUP_CACHE_LOADED = old_loaded
 
 
 def test_unknown_character_fallback_on_unavailable():
-    old_translate = main.siliconflow_translate
-    old_lookup = main.lookup_character
-    old_dict = main.match_dict_words
-    old_cache = dict(main._TRANSLATE_CACHE)
+    old_translate = prompt_module.siliconflow_translate
+    old_lookup = prompt_module.lookup_character
+    old_dict = prompt_module.match_dict_words
+    old_cache = dict(prompt_module._TRANSLATE_CACHE)
 
     async def fake_translate(context, reroll=False):
         out = (
@@ -727,10 +705,10 @@ def test_unknown_character_fallback_on_unavailable():
     def fake_dict(text):
         return [], text
 
-    main.siliconflow_translate = fake_translate
-    main.lookup_character = fake_lookup
-    main.match_dict_words = fake_dict
-    main._TRANSLATE_CACHE = {}
+    prompt_module.siliconflow_translate = fake_translate
+    prompt_module.lookup_character = fake_lookup
+    prompt_module.match_dict_words = fake_dict
+    prompt_module._TRANSLATE_CACHE = {}
     try:
         prompt, breakdown, ir, meta = asyncio.run(
             main.translate("雪之下雪乃坐在教室里", include_meta=True)
@@ -739,16 +717,16 @@ def test_unknown_character_fallback_on_unavailable():
         assert "yukinoshita yukino" not in prompt, prompt
         assert meta["character_lookup"][0]["status"] == "unavailable", meta
     finally:
-        main.siliconflow_translate = old_translate
-        main.lookup_character = old_lookup
-        main.match_dict_words = old_dict
-        main._TRANSLATE_CACHE = old_cache
+        prompt_module.siliconflow_translate = old_translate
+        prompt_module.lookup_character = old_lookup
+        prompt_module.match_dict_words = old_dict
+        prompt_module._TRANSLATE_CACHE = old_cache
 
 
 def test_ir_subject_alone_never_triggers_character_lookup():
-    old_translate = main.siliconflow_translate
-    old_lookup = main.lookup_character
-    old_cache = dict(main._TRANSLATE_CACHE)
+    old_translate = prompt_module.siliconflow_translate
+    old_lookup = prompt_module.lookup_character
+    old_cache = dict(prompt_module._TRANSLATE_CACHE)
 
     async def fake_translate(context, reroll=False):
         out = (
@@ -764,18 +742,18 @@ def test_ir_subject_alone_never_triggers_character_lookup():
     async def fail_lookup(name, candidate):
         raise AssertionError((name, candidate))
 
-    main.siliconflow_translate = fake_translate
-    main.lookup_character = fail_lookup
-    main._TRANSLATE_CACHE = {}
+    prompt_module.siliconflow_translate = fake_translate
+    prompt_module.lookup_character = fail_lookup
+    prompt_module._TRANSLATE_CACHE = {}
     try:
         _, _, _, meta = asyncio.run(
             main.translate("雪之下雪乃坐在教室里", include_meta=True)
         )
         assert meta["character_lookup"] == [], meta
     finally:
-        main.siliconflow_translate = old_translate
-        main.lookup_character = old_lookup
-        main._TRANSLATE_CACHE = old_cache
+        prompt_module.siliconflow_translate = old_translate
+        prompt_module.lookup_character = old_lookup
+        prompt_module._TRANSLATE_CACHE = old_cache
 
 
 def test_lora_registry_preserves_nested_profiles():
@@ -794,11 +772,11 @@ def test_lora_registry_preserves_nested_profiles():
 
 
 def test_lora_preview_prefers_explicit_url_and_falls_back_to_static_asset():
-    old_dir = main.LORA_PREVIEWS
+    old_dir = lora_module.LORA_PREVIEWS
     with tempfile.TemporaryDirectory() as tmp:
         try:
-            main.LORA_PREVIEWS = Path(tmp)
-            preview = main.LORA_PREVIEWS / "style_card.webp"
+            lora_module.LORA_PREVIEWS = Path(tmp)
+            preview = lora_module.LORA_PREVIEWS / "style_card.webp"
             preview.write_bytes(b"preview")
             resolved = main.resolve_lora_preview("style_card")
             assert resolved.startswith("/lora-previews/style_card.webp?v="), resolved
@@ -808,7 +786,7 @@ def test_lora_preview_prefers_explicit_url_and_falls_back_to_static_asset():
             assert main.resolve_lora_preview("../unsafe") is None
             assert main.resolve_lora_preview("missing") is None
         finally:
-            main.LORA_PREVIEWS = old_dir
+            lora_module.LORA_PREVIEWS = old_dir
 
 
 def test_bright_afternoon_uses_daylight_not_golden_hour():
@@ -995,7 +973,7 @@ def test_character_lora_blocks_profile_name_appearance_inference():
 
 
 def test_multi_character_protocol_repairs_split_wording_once():
-    old_client = main.CLIENT
+    old_client = prompt_module.CLIENT
     old_key = main.CFG.get("siliconflow_api_key")
     payloads = []
     ir = (
@@ -1040,17 +1018,17 @@ def test_multi_character_protocol_repairs_split_wording_once():
         "ACTIVE LORA CONTEXT\n"
         "REQUIRED ENGLISH SUBJECT NAMES FOR RELATION SENTENCES: Denia | Sigrika"
     )
-    main.CLIENT = FakeClient()
+    prompt_module.CLIENT = FakeClient()
     main.CFG["siliconflow_api_key"] = "test-key"
     try:
-        result = asyncio.run(main.siliconflow_translate(context))
+        result = asyncio.run(prompt_module.siliconflow_translate(context))
         assert len(payloads) == 2, payloads
         assert payloads[0]["messages"][0]["content"] == main.MULTI_CHARACTER_SYSTEM_PROMPT
         assert "Natural language is optional, not mandatory" in main.MULTI_CHARACTER_SYSTEM_PROMPT
         assert "clear separation" not in result[0].lower(), result[0]
         assert "抽象分割" in payloads[1]["messages"][1]["content"]
     finally:
-        main.CLIENT = old_client
+        prompt_module.CLIENT = old_client
         if old_key is None:
             main.CFG.pop("siliconflow_api_key", None)
         else:
@@ -1058,7 +1036,7 @@ def test_multi_character_protocol_repairs_split_wording_once():
 
 
 def test_character_lora_appearance_conflict_repairs_once():
-    old_client = main.CLIENT
+    old_client = prompt_module.CLIENT
     old_key = main.CFG.get("siliconflow_api_key")
     payloads = []
 
@@ -1101,16 +1079,16 @@ def test_character_lora_appearance_conflict_repairs_once():
         "ACTIVE LORA CONTEXT\n"
         "USER-LOCKED CHARACTER APPEARANCE OVERRIDES: []"
     )
-    main.CLIENT = FakeClient()
+    prompt_module.CLIENT = FakeClient()
     main.CFG["siliconflow_api_key"] = "test-key"
     try:
-        result = asyncio.run(main.siliconflow_translate(context))
+        result = asyncio.run(prompt_module.siliconflow_translate(context))
         assert len(payloads) == 2, payloads
         assert "black hair" not in result[0], result[0]
         repair_text = payloads[1]["messages"][1]["content"]
         assert "LoRA 身份冲突" in repair_text and "black hair" in repair_text, repair_text
     finally:
-        main.CLIENT = old_client
+        prompt_module.CLIENT = old_client
         if old_key is None:
             main.CFG.pop("siliconflow_api_key", None)
         else:
@@ -1135,8 +1113,8 @@ def test_lora_choice_protocol_parser():
 
 
 def test_active_lora_forces_painter_and_compiles_binding():
-    old_translate = main.siliconflow_translate
-    old_cache = dict(main._TRANSLATE_CACHE)
+    old_translate = prompt_module.siliconflow_translate
+    old_cache = dict(prompt_module._TRANSLATE_CACHE)
     calls = []
 
     async def fake_translate(context, reroll=False):
@@ -1148,8 +1126,8 @@ def test_active_lora_forces_painter_and_compiles_binding():
         )
         return main._parse_structured_output(out) + ([], main._parse_lora_choices(out))
 
-    main.siliconflow_translate = fake_translate
-    main._TRANSLATE_CACHE = {}
+    prompt_module.siliconflow_translate = fake_translate
+    prompt_module._TRANSLATE_CACHE = {}
     try:
         prompt, _, _, meta = asyncio.run(main.translate(
             "站在海边", lora_selections=[{"key": "denia", "mode": "auto"}], include_meta=True
@@ -1162,12 +1140,12 @@ def test_active_lora_forces_painter_and_compiles_binding():
         assert meta["lora_aware"] is True
         assert meta["lora_bindings"][0]["profile"] == "white"
     finally:
-        main.siliconflow_translate = old_translate
-        main._TRANSLATE_CACHE = old_cache
+        prompt_module.siliconflow_translate = old_translate
+        prompt_module._TRANSLATE_CACHE = old_cache
 
 
 def test_active_lora_is_present_in_vision_path():
-    old_vision = main.siliconflow_vision_translate
+    old_vision = prompt_module.siliconflow_vision_translate
     calls = []
 
     async def fake_vision(image_b64, context, reroll=False, mode="reference"):
@@ -1177,7 +1155,7 @@ def test_active_lora_is_present_in_vision_path():
             {"denia": {"profile": "white", "optional": []}},
         )
 
-    main.siliconflow_vision_translate = fake_vision
+    prompt_module.siliconflow_vision_translate = fake_vision
     try:
         prompt, _, _, meta = asyncio.run(main.translate(
             "站在海边", image_b64="mock-image",
@@ -1187,12 +1165,12 @@ def test_active_lora_is_present_in_vision_path():
         assert "denia \\(wuthering waves\\)" in prompt, prompt
         assert meta["lora_bindings"][0]["profile"] == "white"
     finally:
-        main.siliconflow_vision_translate = old_vision
+        prompt_module.siliconflow_vision_translate = old_vision
 
 
 def test_lora_cache_isolated_by_profile():
-    old_translate = main.siliconflow_translate
-    old_cache = dict(main._TRANSLATE_CACHE)
+    old_translate = prompt_module.siliconflow_translate
+    old_cache = dict(prompt_module._TRANSLATE_CACHE)
     calls = 0
 
     async def fake_translate(context, reroll=False):
@@ -1206,8 +1184,8 @@ def test_lora_cache_isolated_by_profile():
         )
         return main._parse_structured_output(out) + ([], main._parse_lora_choices(out))
 
-    main.siliconflow_translate = fake_translate
-    main._TRANSLATE_CACHE = {}
+    prompt_module.siliconflow_translate = fake_translate
+    prompt_module._TRANSLATE_CACHE = {}
     try:
         white = asyncio.run(main.translate("街道", lora_selections=["denia_white"]))[0]
         black = asyncio.run(main.translate("街道", lora_selections=["denia_black"]))[0]
@@ -1215,8 +1193,8 @@ def test_lora_cache_isolated_by_profile():
         assert "denia \\(wuthering waves\\)" in white
         assert "blackdenia \\(wuthering waves\\)" in black
     finally:
-        main.siliconflow_translate = old_translate
-        main._TRANSLATE_CACHE = old_cache
+        prompt_module.siliconflow_translate = old_translate
+        prompt_module._TRANSLATE_CACHE = old_cache
 
 
 def test_build_prompt_re_resolves_binding_and_deduplicates_trigger():
@@ -1232,12 +1210,12 @@ def test_build_prompt_re_resolves_binding_and_deduplicates_trigger():
 
 
 def test_enqueue_rebuilds_client_binding_from_registry_snapshot():
-    old_jobs, old_queue, old_usage = main.JOBS, main.QUEUE, main.USAGE
+    old_jobs, old_queue, old_usage = api_module.JOBS, api_module.QUEUE, api_module.USAGE
     _, revision = main.LORA_REGISTRY.snapshot()
     try:
-        main.JOBS = {}
-        main.QUEUE = asyncio.Queue()
-        main.USAGE = {"test-token": ["2099-01-01", 0]}
+        api_module.JOBS = {}
+        api_module.QUEUE = asyncio.Queue()
+        api_module.USAGE = {"test-token": ["2099-01-01", 0]}
         job_id = asyncio.run(main._enqueue(
             "test-token", "anima", "1girl, beach", "测试", "832x1216",
             [], None, None,
@@ -1249,21 +1227,21 @@ def test_enqueue_rebuilds_client_binding_from_registry_snapshot():
             concept="用户锁定：少女｜模型补全：海边构图",
             completion_level="free",
         ))
-        job = main.JOBS[job_id]
+        job = api_module.JOBS[job_id]
         assert "evil trigger" not in job["prompt_en"], job
         assert "denia \\(wuthering waves\\)" in job["prompt_en"], job
         assert job["lora_bindings"][0]["file"] == "denia_lorav4-000005.safetensors"
         assert job["concept"] == "用户锁定：少女｜模型补全：海边构图"
         assert job["completion_level"] == "free"
-        assert asyncio.run(main.QUEUE.get()) == job_id
+        assert asyncio.run(api_module.QUEUE.get()) == job_id
     finally:
-        main.JOBS, main.QUEUE, main.USAGE = old_jobs, old_queue, old_usage
+        api_module.JOBS, api_module.QUEUE, api_module.USAGE = old_jobs, old_queue, old_usage
 
 
 def test_dialog_start_carries_binding_snapshot_into_job():
-    old_translate = main.translate
-    old_jobs, old_sessions = main.JOBS, main.SESSIONS
-    old_queue, old_usage = main.QUEUE, main.USAGE
+    old_translate = api_module.translate
+    old_jobs, old_sessions = api_module.JOBS, api_module.SESSIONS
+    old_queue, old_usage = api_module.QUEUE, api_module.USAGE
     bindings, _, revision = main.resolve_lora_selections(["denia_white"])
 
     class FakeRequest:
@@ -1282,14 +1260,14 @@ def test_dialog_start_carries_binding_snapshot_into_job():
         return "1girl, denia \\(wuthering waves\\), beach", None, None, meta
 
     try:
-        main.translate = fake_translate
-        main.JOBS = {}
-        main.SESSIONS = {}
-        main.QUEUE = asyncio.Queue()
-        main.USAGE = {"dialog-token": ["2099-01-01", 0]}
+        api_module.translate = fake_translate
+        api_module.JOBS = {}
+        api_module.SESSIONS = {}
+        api_module.QUEUE = asyncio.Queue()
+        api_module.USAGE = {"dialog-token": ["2099-01-01", 0]}
         response = asyncio.run(main.dialog_turn(FakeRequest(), token="dialog-token"))
-        session = main.SESSIONS[response["session_id"]]
-        job = main.JOBS[response["job_id"]]
+        session = api_module.SESSIONS[response["session_id"]]
+        job = api_module.JOBS[response["job_id"]]
         assert session["registry_revision"] == revision
         assert session["lora_bindings"] == bindings
         assert session["completion_level"] == "free"
@@ -1297,9 +1275,19 @@ def test_dialog_start_carries_binding_snapshot_into_job():
         assert job["lora_bindings"][0]["profile"] == "white"
         assert job["completion_level"] == "free"
     finally:
-        main.translate = old_translate
-        main.JOBS, main.SESSIONS = old_jobs, old_sessions
-        main.QUEUE, main.USAGE = old_queue, old_usage
+        api_module.translate = old_translate
+        api_module.JOBS, api_module.SESSIONS = old_jobs, old_sessions
+        api_module.QUEUE, api_module.USAGE = old_queue, old_usage
+
+
+def test_api_routes_are_registered_after_module_split():
+    routes = {route.path for route in api_module.app.routes}
+    expected = {
+        "/", "/api/health", "/api/auth/check", "/api/workflows", "/api/loras",
+        "/api/translate", "/api/jobs", "/api/jobs/{job_id}",
+        "/api/dialog/turn", "/api/dialog/{session_id}",
+    }
+    assert expected <= routes, expected - routes
 
 
 def main_test():
@@ -1329,9 +1317,6 @@ def main_test():
         test_workflow_negative_contains_compact_anatomy_guard,
         test_siliconflow_composer_bypasses_ordinary_dict_and_isolates_completion_cache,
         test_concept_override_is_authoritative_and_validated,
-        test_painter_tag_guard_preserves_woman_and_suppresses_unrequested_silhouette,
-        test_painter_tag_guard_keeps_nsfw_body_framing_and_default_anime_style,
-        test_painter_tag_guard_preserves_explicit_user_intent,
         test_character_hint_protocol_parser,
         test_character_hint_requires_explicit_name_span,
         test_character_bare_name_space_variant_is_removed,
@@ -1364,6 +1349,7 @@ def main_test():
         test_build_prompt_re_resolves_binding_and_deduplicates_trigger,
         test_enqueue_rebuilds_client_binding_from_registry_snapshot,
         test_dialog_start_carries_binding_snapshot_into_job,
+        test_api_routes_are_registered_after_module_split,
     ]
     for test in tests:
         test()

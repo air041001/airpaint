@@ -1,7 +1,7 @@
 # 架构
 
-> 当前状态反映 2026-08-29（风格 LoRA 人物预览接入后）。
-> 改动架构时同步本文件 (见 `CLAUDE.md` 规则 2)。
+> 当前状态反映 2026-08-30（前后端统一追踪、后端职责拆分后）。
+> 改动架构时同步本文件（见 `AGENTS.md`）。
 
 ## 部署拓扑
 
@@ -14,7 +14,7 @@
 cloudflared 命名隧道 "airpaint" (永久固定, 重启不变)
    │  ~/.cloudflared/config.yml 路由两域名 → 127.0.0.1:8000
    ▼
-FastAPI 后端  127.0.0.1:8000  (server/main.py)
+FastAPI 后端  127.0.0.1:8000  (server/api.py，server/main.py 启动)
    ├─ 鉴权 / 日限流 / 内容过滤
    ├─ Prompt Engine:  中文 → danbooru tag
    ├─ Workflow Engine: 注入 prompt/seed/size/LoRA, detailer 删节点拼接, 清洗前端专属节点
@@ -32,9 +32,22 @@ ComfyUI  127.0.0.1:8188  (不对公网开放)
 > 隧道单独挂了用 `.tools/start_tunnel.bat` 补起 (不碰后端, 避免 8000 端口冲突)。
 > bat 必须存 GBK+CRLF, 否则 cmd 解析错乱 cloudflared 行不执行 (见 decisions.md D14)。
 
-## 后端模块 (server/main.py)
+## 后端模块
 
-单文件, 按职责分块:
+后端已经按职责拆分，`server/main.py` 只保留启动和旧工具兼容导出：
+
+| 文件 | 职责 |
+|---|---|
+| `settings.py` | 读取本地配置，集中路径、限制与稳定协议常量 |
+| `runtime.py` | 共享 HTTP client、队列、任务、会话和用量内存态 |
+| `knowledge.py` | 词典热加载、角色匹配、Danbooru 候选与本地缓存 |
+| `lora.py` | Registry 热加载、selection/context、binding 编译与预览解析 |
+| `prompt_engine.py` | Reasoning/Vision 调用、Composer 协议、IR 与 Prompt compiler |
+| `workflow_engine.py` | Workflow 清洗/注入、ComfyUI 上传、提交、轮询与取图 |
+| `api.py` | FastAPI app、中间件、鉴权、路由、worker 与静态托管 |
+| `main.py` | 启动 `api.app`；迁移期兼容维护脚本对旧符号的读取 |
+
+依赖方向为 `settings/runtime → knowledge/lora → prompt/workflow → api → main`。业务实现不应再写回启动入口；跨模块共享可变状态集中在 `runtime.py`，避免复制队列或 HTTP client。
 
 ### 鉴权 & 限流
 - `auth(req)` 依赖: 取 `Authorization: Bearer <token>`, 校验是否在 `TOKENS` 集合。
@@ -113,8 +126,7 @@ Active LoRA 时，Reasoning/Vision Model 只看 Asset/Profile 的 `provides` 与
 描述区提供 `自动 / 忠于描述 / 自由补全` 三档；Prompt 检查区在五项 breakdown 上方显示可编辑的 `用户锁定｜模型补全` 中文构思。成像设置栏保留当前工作流 / 文生图与图生图 / 精修 / 尺寸 / LoRA。LoRA 使用角色与风格/细节两个连续多选菜单和“当前叠加栈”：角色最多 3 个语义 Profile，风格/动作/表情不设硬上限；所有多 Profile Asset 都可多选，同一文件只加载一次。前端提示用户在画面描述中明确多个主体的形态、位置与互动关系，但不替用户禁止组合；每个 Asset 有独立 0~2 强度、provides/verified 展示与移除操作。角色菜单保持文字列表；风格/细节菜单使用两栏“人物印样”卡片，展示固定预览、名称和默认强度，选中栈同步显示小图，缺图时安全降级为文字占位。菜单根据右栏与视口可用空间上下翻转并限制高度。参考图入口保留在画面描述区。尺寸为点击展开的画幅选择器，标准档与高分辨率实验档分组；选择后自动收起。当前开放标准 `832x1216 / 896x1152 / 1024x1024 / 1344x768`，高分辨率 `1024x1536 / 1536x864`。
 轮询 `/api/jobs/{id}` 每 2s, 完成后展示图 + 入历史画廊(localStorage 缩略图, 最近 12 张)。出图后「继续迭代」进暗房: 换一版(txt2img 重抽, D31 替换意图) / 微调(img2img, 低 denoise)。
 
-> `web/` 是独立 git 仓库 → `air041001/air`。但域名迁移后已**不再依赖 GitHub Pages**
-> (前端由后端直接托管), 该仓库仅作备份, push 与否不影响线上。
+`web/index.html` 与后端、文档由根仓库 `air041001/airpaint` 统一追踪，保证一次 clone 能得到完整产品。旧 `air041001/air` 仓库只保留迁移前的前端历史，不再作为活跃真相源，也不再依赖 GitHub Pages。
 
 ## 配置 (server/config.yaml, gitignore)
 
@@ -129,6 +141,6 @@ Active LoRA 时，Reasoning/Vision Model 只看 Asset/Profile 的 `provides` 与
 - **构思不是 PromptState**：Visual Composer 已有三档补全、12 字段 IR 与单轮可编辑 CONCEPT，但 session 仍保存编译后的字符串；它不能做到“只改 clothing、其余字段永久锁定”的结构化历史。字段级增量修改仍留给真实暗房使用触发的 Phase 4。
 - **多角色构图限制**: 双角色已对 count、Registry 身份注入、tag-first/具名短句分流和已复现的分屏措辞建立窄护栏；受控同 seed 对比也证明部分分页/黑线来自 Prompt 写法而非必然的模型上限。但 LoRA 训练、复杂遮挡、手部接触与 seed 仍可能导致融合或归属漂移，不能把已通过的两个案例扩张成通用画质保证。三角色继续为 best-effort，不恢复区域提示词。
 - **LoRA composition 边界**：选择、binding、逐 Asset 强度、同文件去重和 workflow 注入已支持最多 3 个语义角色及不限风格/细节；结构/API/浏览器验证不等于多人画质验证。base Anima 的多人物空间关系、动作绑定和属性防串仍需固定条件出图与人眼判断。
-- 用量/任务状态全内存, 重启清零 (Phase 3 计划 SQLite)。
+- 用量/任务状态全内存, 重启清零；持久化由真实规模触发。
 - 单份合并工作流 AnimaFull; 加功能分支 = 改 AnimaFull.json + config 声明节点 + build_prompt 拼接逻辑 (D32)。
-- 轮询取状态 (Phase 3 计划 WebSocket)。
+- 当前轮询取状态；WebSocket 由真实并发和延迟需求触发。

@@ -1,6 +1,6 @@
 # HTTP API
 
-> 契约源自 `server/main.py` 路由定义。改接口时同步本文件 (见 `CLAUDE.md` 规则 2)。
+> 契约源自 `server/api.py` 路由定义。改接口时同步本文件，并按 `AGENTS.md` 完成验证与文档闭环。
 
 Base URL: `https://api.airpaint.xyz` (公网) / `http://127.0.0.1:8000` (本机)
 
@@ -76,15 +76,6 @@ Authorization: Bearer <token>
 - `styles` 同时承载 `style/action/expression` 类型，作为风格/细节叠加区；无法分类的条目仍在 `other`。
 - `strength_model/strength_clip` 是 Registry 默认值，前端选择 Asset 时同步到该 Asset 的滑块；请求可逐 Asset 覆盖为 0~2。
 - `preview` 是可直接用于 `<img>` 的 URL。Registry 显式值优先；未填写时后端按安全 Asset key 查找 `server/lora_previews/<key>.webp|png|jpg|jpeg` 并附加 mtime 版本。没有受控资源时为 `null`，前端必须显示文字占位而不能阻断选择。
-
-### POST /api/loras/refresh（已移除）
-
-旧接口会扫描全目录、计算 hash 并把 Civitai trainedWords 暴露为自动 inventory，已由 `.tools/register_lora.py --agent` 的“目标 LoRA Manager 索引验收 + 人工确认 Registry 候选”取代。新客户端不应调用此接口。
-
-响应 `200`:
-```json
-{ "ok": true, "scanned": 10, "new": 2, "failed": 1, "excluded": 2, "total_auto": 5 }
-```
 
 ### POST /api/translate
 只编译不排队 (需鉴权, 不计入 image 限额)：中文/参考图 + 补全程度 + 可选 LoRA selection -> LoRA-aware 英文 Prompt。前端「先看构思」和「生成」都先调用它；文本 Composer 同时返回可编辑中文 `concept` 与 binding snapshot。

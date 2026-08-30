@@ -914,3 +914,13 @@ Remielle Dan 的多形态同框样图推翻了“同一身份不同形态默认�
 生产协议现为 `CONCEPT + IR + CHAR + [LORA] + PROMPT`，无未知角色也必须输出 `CHAR: none`。首次真实 Reasoning Model smoke 证明“可选 CHAR”会被漏掉，第二次必填但因“模型自己认识角色”而写成 `none`；最终将 BACKEND-KNOWN 机械定义为只看词典/LoRA 上下文，并加入纯协议示例。同一 `雪之下雪乃坐在教室里` 第三次真实 smoke 返回 `CHAR: 雪之下雪乃 => yukinoshita_yukino`，未把“坐在教室里”带入 name。解析器仍兼容旧三行响应。有候选时，`CHAR` 必须使用 USER IDEA 中原样出现的显式角色名和小写 canonical tag，且经 Danbooru exact 角色分类/覆盖量验证才可写 auto cache。整句、通用指令、空/重复候选会修复一次并 fail closed；`IR.subject` 单独出现的猜测不再发起查询或落盘。正式 `char_dict.yaml` 只更正了“历史条目未逐一验证”的说明，未批量改写 155 条映射，也未引入第三方运行数据/程序。
 
 验证：反向真实 smoke `黑发少女坐在教室里` 返回空 hints；Danbooru 当前只读 exact 查询确认 `yukinoshita_yukino` 为 `likely_supported`、`post_count=2086`。`60 prompt unit tests passed`、`python -m py_compile server/main.py .tools/test_prompt_unit.py`与 `git diff --check` 通过。测试只证明协议、名字边界和缓存权限；本次未生图，不宣称角色外观还原已改善。
+
+## 第 66 条 2026-08-30 - 仓库收口与后端职责拆分
+
+仓库整理以“当前是否仍有唯一职责和消费方”为准，而不是按文件名机械删除。`docs/BUILDHANDOFF.md` 保留并重写为新 Agent 的唯一单文件项目摘要；README、AGENTS、architecture、api、decisions、DEVLOG 和 ROADMAP 分别保留入口、规约、现状、契约、原因、历史与未来职责。已经完成的两份 PLAN、5 个退役 workflow、旧 bind 工具、被 ADR/DEVLOG 吸收的一次性 `render_exp` 资产及无消费方的 NSFW 文本校验脚本从主分支移除，历史仍可由 Git 恢复。
+
+根仓库现直接追踪 `web/index.html`，部署所用前端不再被 `.gitignore` 排除。旧 `air041001/air` 的嵌套 Git 元数据移到本机忽略备份，远程只作为迁移前历史，避免前端代码与项目文档继续双仓漂移。
+
+约 3400 行的 `server/main.py` 按配置、运行时、知识、LoRA、Prompt、Workflow 与 API 拆成七个职责模块；`main.py` 只保留启动和维护脚本兼容导出。HTTP client、队列、任务/会话/用量仍是同一进程共享状态，没有借整理提前引入持久化或服务拆分。D46 后生产已无调用的旧 Painter 预处理函数和 legacy system prompt 同步删除。
+
+验证：`58 prompt unit tests passed`、`6 lora composition tests passed`、`18 lora onboarding agent tests passed`、`registry valid: 15 assets`；Python 全模块编译、前端 2 段内联脚本解析、当前 `AnimaFull.json` 检查、API 路由与直接启动入口导入通过。此次没有更改 Prompt/LoRA/Workflow 契约，也未重新生图，因此不新增画质结论。

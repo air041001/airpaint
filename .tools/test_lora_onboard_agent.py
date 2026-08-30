@@ -368,7 +368,7 @@ def test_accepted_style_preview_is_atomically_resized_without_promoting_asset():
             tool.ask_choice = lambda *args, **kwargs: "accept"
             tool.generate_style_preview_candidate = lambda asset_id: source
             tool.open_preview_candidate = lambda path: None
-            tool.main.LORA_PREVIEWS = destination
+            tool.main.lora_module.LORA_PREVIEWS = destination
             with contextlib.redirect_stdout(io.StringIO()):
                 result = tool.run_style_preview_flow(
                     "demo_style", asset, ask_before=False)
@@ -382,7 +382,7 @@ def test_accepted_style_preview_is_atomically_resized_without_promoting_asset():
         tool.ask_choice = old_ask
         tool.generate_style_preview_candidate = old_generate
         tool.open_preview_candidate = old_open
-        tool.main.LORA_PREVIEWS = old_preview_dir
+        tool.main.lora_module.LORA_PREVIEWS = old_preview_dir
     assert asset["verified"] == "candidate"
 
 
