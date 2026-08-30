@@ -896,3 +896,13 @@ Remielle Dan 的多形态同框样图推翻了“同一身份不同形态默认�
 修复后四组文本均为 `2girls`、无 `solo`、两个 Profile 原样保留并以具名短句绑定关系。真实 832×1216、生产负面、默认 LoRA 强度、无 style/detailer 共生成 5 张：Denia/Sigrika 的手机归属正确但左右身份反转；Remielle 的白/黑倒置构图成立但未牵手；Cure 两个 seed 都裁掉头部；补充图出现分屏。结论是文本编译缺陷已修复，图片仍受 Anima/LoRA 限制；双角色作为质量边界，三角色只保留 best-effort 技术上限，不恢复区域提示词。
 
 验证：`54 prompt unit tests passed`、`6 lora composition tests passed`、`python -m py_compile server/main.py`。图片最终审美等待用户人眼验收。
+
+## 第 64 条 2026-08-30 - 双角色 Prompt 语法与共享插画瞬间修复
+
+用户用社区正向 Prompt 在同一 ComfyUI 环境复现出正常 Cure 与 Denia/Sigrika 双人图，推翻了第 63 条把裁切、分屏主要归为 Anima/LoRA 限制的结论。固定同一失败 seed、workflow、LoRA、负面和 832×1216 后，旧具名长关系段产生横向双格与单主体重复，社区 tag Prompt 正常；将生产输出改为 tag 主体并只保留 6 词身份位置绑定后，同 seed 得到单画面双主体，用户认可其构图和人物表现。
+
+生产新增显式多角色 Profile 的精简 Composer：Registry 提供稳定英文主体名，代码继续锁 count 与 exact identity cluster；贴身高密度互动优先使用 Anima 熟悉的关系 tag，只在归属无法表达时允许最多 12 个英文词的一条位置绑定。Compiler 改为只切顶层逗号，保留括号内逐角色属性簇；确定性修复覆盖抽象分割措辞、下半身与近景冲突及多句逐部位关系段，不增加逐角色 IR 或区域提示词。
+
+首轮 Cure 虽结构正确但像左右角色展示，原因是 `FAITHFUL` 验收输入和 system example 同时锁死左右、正面与持剑分工。删除该静态示例，并让稀疏 `auto/free` 双人输入围绕一个共享画面瞬间、主要互动和单一构图重点补全。开放式 Cure 只锁双人全身、发光长剑中心与蓝色背景，真实单张形成中央剑光、视线互动、交错腿部和完整角色，用户认可插画方向。第三方 `comfyui-good-anima` 只吸收情境因果启发，不采纳固定 `Place A/Place B` 模板或未经本地验证的动态负面词。
+
+验证：`59 prompt unit tests passed`、`python -m py_compile server/main.py .tools/test_prompt_unit.py` 与 `git diff --check` 通过。双角色为正式质量边界；三角色继续 best-effort。“动作→回应”作为后续创作候选记录，不在本阶段继续堆规则或生图。

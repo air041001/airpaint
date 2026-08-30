@@ -713,6 +713,51 @@ def lora_selection_aliases(selections) -> set[str]:
     return aliases
 
 
+def _lora_multi_relation_names(selections: list[dict], registry: dict) -> list[str]:
+    """Return stable English subject labels for named multi-character clauses."""
+    names: list[str] = []
+    for selection in selections:
+        asset = registry.get(selection.get("key")) or {}
+        if asset.get("type") != "character":
+            continue
+        profiles = asset.get("profiles") or {}
+        for profile_id in _selection_profile_ids(selection):
+            profile = profiles.get(profile_id) or {}
+            name = ""
+            for provided in profile.get("provides") or []:
+                value = str(provided).strip()
+                match = re.fullmatch(r"character\s+(.+)", value, flags=re.IGNORECASE)
+                if match:
+                    name = match.group(1).strip()
+                    break
+                match = re.fullmatch(r"(.+?)\s+character\s+identity", value,
+                                     flags=re.IGNORECASE)
+                if match:
+                    name = match.group(1).strip()
+                    break
+            if not name:
+                for provided in profile.get("provides") or []:
+                    value = str(provided).strip()
+                    match = re.fullmatch(r"(.+?)\s+identity", value, flags=re.IGNORECASE)
+                    if match and re.search(r"[a-z]", match.group(1), flags=re.IGNORECASE):
+                        name = match.group(1).replace("-", " ").strip()
+                        break
+            if not name:
+                name = next(
+                    (str(alias).strip() for alias in profile.get("aliases") or []
+                     if re.search(r"[a-z]", str(alias), flags=re.IGNORECASE)),
+                    "",
+                )
+            if not name:
+                required = profile.get("required_tags") or []
+                if required:
+                    name = _lora_tag_key(str(required[0])).split(" (")[0].strip()
+            name = re.sub(r"\s+", " ", name).strip()
+            if name and name.lower() not in {existing.lower() for existing in names}:
+                names.append(name)
+    return names
+
+
 def _lora_tag_key(tag: str) -> str:
     value = tag.lower().replace("\\", "").replace("_", " ").replace("-", " ")
     value = re.sub(r"[()\[\]{}]", " ", value)
@@ -828,6 +873,81 @@ def _composer_character_lora_appearance_issue(prompt_ir: dict, prompt_line: str,
             + "；请从 IR.appearance 与 PROMPT 删除这些属性，让角色 LoRA 提供身份外观")
 
 
+def _composer_multi_prompt_shape_issue(prompt_ir: dict, prompt_line: str,
+                                       context: str) -> str | None:
+    """Reject only reproduced multi-character wording that encourages split/crop failures."""
+    source = context.lower()
+    subjects = " ".join(str(item).lower() for item in prompt_ir.get("subject", []))
+    explicit_multi = bool(
+        re.search(r"\b[2-9]\s*(?:girls?|boys?|others?|characters?|people|persons?)\b", source)
+        or re.search(r"\b[2-9](?:girls|boys|others)\b", subjects)
+        or re.search(r"双人(?!床|房)|两人|二人", context)
+    )
+    if not explicit_multi:
+        return None
+
+    low = prompt_line.lower()
+    split_meta_patterns = (
+        r"\bclear separation\b",
+        r"\bdistinct silhouettes?\b",
+        r"\bcolor separation\b",
+        r"\bclear depth\b",
+        r"\bforeground[- ]background layering\b",
+        r"\bclear front[- ]back layering\b",
+        r"\bkeep (?:the )?(?:figures|characters) separated\b",
+        r"\bkeep (?:both |the )?(?:figures|characters|faces) readable\b",
+    )
+    matched = next(
+        (pattern for pattern in split_meta_patterns if re.search(pattern, low)),
+        None,
+    )
+    if matched:
+        return (
+            "多人 PROMPT 使用了抽象分割/防失败措辞；删除 clear separation, distinct silhouettes, "
+            "color separation, clear depth, foreground-background layering 等词，只用具名角色短句"
+            "表达同一画面中的位置、接触和道具归属"
+        )
+
+    semantic_text = " ".join(
+        [low]
+        + [
+            str(item).lower()
+            for field in ("action", "pose", "interaction", "composition", "constraints")
+            for item in prompt_ir.get(field, [])
+        ]
+    )
+    lower_body_visible = any(
+        term in semantic_text
+        for term in (
+            "spread legs", "legs spread", "thigh", "pelvis", "hips", "pussy",
+            "genitals", "visible feet", "full body", "entire figure",
+        )
+    )
+    if lower_body_visible and re.search(r"\bclose[- ]?up\b|\bupper body\b", low):
+        return (
+            "多人 PROMPT 要求下半身/全身可见却使用 close-up 或 upper body；改为 cowboy shot "
+            "或 three-quarter view，并保留用户要求的身体接触和可见细节"
+        )
+
+    dense_contact = any(
+        term in semantic_text
+        for term in (
+            "body contact", "after sex", "after vaginal", "front-to-back",
+            "behind another", "cuddling", "embrace", "pressed close", "sex",
+        )
+    )
+    _tag_backbone, separator, prose_tail = prompt_line.partition(". ")
+    if dense_contact and separator:
+        prose_words = re.findall(r"[a-z0-9']+", prose_tail.lower())
+        if len(prose_words) > 12 or ";" in prose_tail or prose_tail.count(".") > 1:
+            return (
+                "多人贴身互动被写成了逐部位关系段；把可用的动作、接触、前后关系和可见细节"
+                "改成 Anima 熟悉的 tags。只有身份归属确实无法由 tags 表达时，才允许在末尾保留"
+                "不超过 12 个英文词的一条位置绑定，禁止分号和第二句"
+            )
+    return None
+
+
 def _lora_selected_identity_keys(bindings: list[dict]) -> set[str]:
     """从 binding.provides 提取可安全删除的短 identity 复述。"""
     keys: set[str] = set()
@@ -847,12 +967,52 @@ def _lora_selected_identity_keys(bindings: list[dict]) -> set[str]:
 
 def _strip_lora_identity_prefix(segment: str, identity_keys: set[str]) -> str:
     """移除短句开头的 LoRA 身份复述，同时保留后面的动作/场景关系。"""
+    # A parenthesized character cluster may contain comma-separated appearance
+    # anchors. It is not a bare identity prefix, and flattening it would remove
+    # the ownership relation or leave unmatched punctuation after tokenization.
+    if re.search(r"(?<!\\)[([{]", segment):
+        return segment.strip()
     key = _lora_tag_key(segment)
     for identity in sorted(identity_keys, key=len, reverse=True):
         prefix = identity + " "
         if key.startswith(prefix):
             return key[len(prefix):].strip()
     return segment.strip()
+
+
+def _split_prompt_commas(text: str) -> list[str]:
+    """Split top-level prompt commas while preserving grouped character anchors."""
+    parts: list[str] = []
+    start = 0
+    depth = 0
+    escaped = False
+    pairs = {")": "(", "]": "[", "}": "{"}
+    opens = set(pairs.values())
+    stack: list[str] = []
+    for index, char in enumerate(text):
+        if escaped:
+            escaped = False
+            continue
+        if char == "\\":
+            escaped = True
+            continue
+        if char in opens:
+            stack.append(char)
+            depth += 1
+            continue
+        if char in pairs and stack and stack[-1] == pairs[char]:
+            stack.pop()
+            depth -= 1
+            continue
+        if char == "," and depth == 0:
+            part = text[start:index].strip()
+            if part:
+                parts.append(part)
+            start = index + 1
+    tail = text[start:].strip()
+    if tail:
+        parts.append(tail)
+    return parts
 
 
 def _lora_sibling_profile_tag_keys(bindings: list[dict]) -> set[str]:
@@ -895,7 +1055,7 @@ def compile_lora_bindings(prompt_en: str, bindings: list[dict] | None) -> str:
         return prompt_en.strip()
     # Prompt 当前以 comma tags 为主；保留可能存在的短 NL 后缀。
     body, sep, nl = prompt_en.partition(". ")
-    existing = [t.strip() for t in body.split(",") if t.strip()]
+    existing = _split_prompt_commas(body)
     lora_keys = {_lora_tag_key(t) for t in lora_tags}
     sibling_keys = _lora_sibling_profile_tag_keys(bindings)
     identity_keys = _lora_selected_identity_keys(bindings)
@@ -1051,6 +1211,49 @@ LEGACY_SILICONFLOW_SYSTEM_PROMPT = (
     "NL: A sense of gentle renewal pervades the scene.\n"
 )
 
+# Explicit multi-profile character requests use a smaller protocol so DeepSeek
+# does not lose Anima's tag backbone inside the general creative-completion rules.
+_MULTI_RELATION_NAMES_PREFIX = "REQUIRED ENGLISH SUBJECT NAMES FOR RELATION SENTENCES:"
+MULTI_CHARACTER_SYSTEM_PROMPT = """You compile a Chinese multi-character image idea into one English positive prompt for Anima, an anime model trained on Danbooru/Gelbooru tags and natural-language captions.
+
+Preserve every explicit subject, identity, clothing state, visible body detail, action, interaction, prop, camera intention, mood, and content detail. Do not censor, euphemize, cover, crop away, or invent a conflicting fact.
+
+COMPLETION LEVEL controls only unspecified details:
+- FAITHFUL: add no new premise; only make the requested picture executable.
+- AUTO: preserve all locks and fill a few important missing visual decisions.
+- FREE: preserve all locks and freely design the remaining picture.
+If CONCEPT OVERRIDE is present, follow it as authoritative and copy it unchanged after CONCEPT:.
+
+Unless the user explicitly asks for a lineup, character sheet, reference display, or formal symmetrical presentation, compose the characters around one shared visual moment instead of two independent poses. Use one existing scene event, shared prop, gaze exchange, body-direction response, or environmental force as the focal link. Let compatible expression, hair or fabric motion, light direction, and depth support that same moment. Do not default to both characters standing straight, equally spaced left and right, and facing the viewer.
+
+Under FAITHFUL, do not invent a new premise merely to add motion; only reveal a compatible body angle, gaze, overlap, or environmental response already supported by the user's scene. Under AUTO or FREE, when the request is sparse, complete one concrete shared focal event before choosing tags. Keep one primary interaction and one primary composition idea rather than assigning an independent checklist of limb actions to each subject.
+
+For two selected female Profiles, use `2girls` in IR.subject and as the first PROMPT item. Never use `1girl`, `solo`, or `solo focus`.
+
+Write a tag-first prompt. ACTIVE LORA profile identities, appearances, and outfits are injected by the backend directly after the count, so do not copy them into the shared tag backbone. Start with the exact count, then add familiar action, pose, interaction, object, framing, scene, lighting, mood, and style tags. Prefer canonical visible tags over caption-like substitutes.
+
+Natural language is optional, not mandatory. If familiar tags already express a close interaction, body contact, pose, and visible details, output one comma-separated tag list and stop. This tag-dominant form is preferred for dense intimate or overlapping scenes; use tags such as `yuri`, `after sex`, `after vaginal`, `body contact`, `front-to-back`, `behind another`, `breast grab`, `sitting`, `spread legs`, `stuffed toy`, and other applicable familiar concepts instead of narrating anatomy in prose.
+
+Append one compact named relation sentence only when the user locks an asymmetric position, an unusual spatial arrangement, or prop/action ownership that tags cannot bind reliably. Use names from REQUIRED ENGLISH SUBJECT NAMES FOR RELATION SENTENCES. Bind only the unresolved identity relationship; do not turn the sentence into a complete pose specification for both bodies. For dense body contact, any named tail must contain at most 12 English words and bind only the unresolved identity positions, for example `Denia in front, Sigrika close behind.` Never restate body parts or visible details in that tail. For other scenes use at most one sentence. Never output `Character A`, `Character B`, or other placeholders. A named sentence may repeat one distinguishing supplied outfit or accessory when needed for ownership, but never the complete backend identity cluster.
+
+Do not write generic anti-failure instructions such as clear separation, distinct silhouettes, color separation, clear depth, foreground-background layering, keep separated, or keep readable. Do not write `same overlapping two-shot`, multi-sentence anatomy narration, or `foreground/background` prose when `front-to-back` and `behind another` tags express the relation. Put `no split screen` and `no third person` only in IR.constraints, never PROMPT. If pelvis, thighs, full body, or spread legs must remain visible, use cowboy shot, three-quarter view, or full body instead of close-up.
+
+Dense-contact shape example; replace placeholders with the required English names:
+`2girls, after sex, after vaginal, nude, sitting, spread legs, pussy, cum in pussy, cumdrip, yuri, body contact, breast grab, front-to-back, behind another, stuffed toy, cowboy shot. <NAME_1> in front, <NAME_2> close behind.`
+
+ACTIVE LORA CONTEXT supplies exact backend triggers and identity clusters. Do not output filenames, weights, trigger syntax, or a second unowned appearance list. Do not infer appearance from profile IDs or names. Echo the exact locked Profiles in the mandatory LORA JSON line.
+
+CONCEPT is concise Chinese. 用户锁定 contains only user facts and selected LoRA concepts. 模型补全 lists only material additions, or 无.
+IR is one compact JSON object with exactly these array fields: subject, appearance, clothing, action, pose, interaction, scene, composition, lighting, mood, style, constraints.
+Do not output quality/score tags, rating labels, negative tags, generation settings, XML, filenames, weights, or explanations.
+
+Output exactly four non-empty lines:
+CONCEPT: 用户锁定：<explicit facts>｜模型补全：<major additions or 无>
+IR: <one-line JSON with all 12 fields>
+LORA: <JSON using only supplied key/profile/optional IDs>
+PROMPT: <English positive prompt only>"""
+
+
 # Visual Composer production protocol. Prompt shape is chosen for Anima by the
 # reasoning model; the backend keeps only deterministic identity/binding/validation work.
 PAINTER_SYSTEM_PROMPT = """You are an expert prompt composer for Anima, an anime image model trained to understand Danbooru-style concepts, ordinary English image phrases, natural-language captions, and mixtures of them.
@@ -1094,7 +1297,9 @@ Write in Anima-native prompt language. Use familiar anime/Danbooru concepts for 
 
 Use useful Anima count tags. For one unnamed female character, normally begin with 1girl, solo; use the count and subject actually requested for other cases. Meaningful reinforcement is allowed when a clause binds a few important tags into a relationship or composition. Never mechanically paraphrase or repeat the whole prompt.
 
-For an explicitly multi-subject request, put the matching count in both IR.subject and PROMPT. Two selected or named female character profiles shown together require 2girls, never 1girl, solo, or solo focus. Treat different forms of the same identity as separate visible subjects when the user selected and placed both forms. Bind every named subject or form to its own position, action, prop, and distinguishing clothing with compact named clauses; do not flatten those assignments into one ambiguous attribute list.
+For an explicitly multi-subject request, put the matching count in both IR.subject and PROMPT. Two selected or named female character profiles shown together require 2girls, never 1girl, solo, or solo focus. Treat different forms of the same identity as separate visible subjects when the user selected and placed both forms.
+
+MULTI-CHARACTER PROMPT SHAPE: the backend injects each selected LoRA Profile as an adjacent identity-tag cluster after the count. Unless the user explicitly requests a lineup, character sheet, reference display, or formal symmetry, organize the characters around one shared visual moment rather than two independent poses. Do not default to both subjects standing straight, equally spaced left and right, and facing the viewer. Under AUTO/FREE, fill one concrete shared focal event; under FAITHFUL, preserve the premise and use only compatible gaze, body direction, overlap, motion, light, or environmental response. Keep one primary interaction and one primary composition idea. Build a tag-first mixed prompt: begin with the exact count and familiar shared action, interaction, object, framing, and scene tags. Natural language is optional. Use at most one compact named sentence only for identity relationship, ownership, or unusual spatial arrangement that tags cannot bind, and do not specify every limb action. For dense touching or overlapping scenes, prefer familiar relation tags and allow only a position-binding tail of at most 12 English words. Put negative constraints such as no split screen or no third person in IR.constraints only, not PROMPT. Do not write abstract anti-failure phrases such as clear separation, distinct silhouettes, color separation, clear depth, foreground-background layering, keep separated, or keep readable. If the pelvis, thighs, or spread legs must remain visible, use cowboy shot or three-quarter view rather than close-up.
 
 Preserve every explicit user fact and constraint. Do not change a named character, subject count, requested clothing state, action, location, camera instruction, or core mood. Do not invent another main character, named IP, incompatible outfit, weapon, sex act, or unrelated spectacle. For an unknown named character, put the best canonical-tag candidate in IR.subject so the backend can verify it. Do not add age labels, safety wording, policy language, or content classifications.
 
@@ -1104,7 +1309,7 @@ An explicit user clothing or exposure override wins over an active LoRA outfit o
 
 For erotic input, use the same illustration principles. Sensuality may come from clothing design and exposure, pose, gaze, expression, body line, framing, fabric/skin contrast, lighting, or interaction. Do not automatically turn erotic intent into nudity, and do not suppress nudity or explicit content when the user actually requests it.
 
-The backend supplies the standard quality prefix, rating control, negative prompt, exact known character tags, and all LoRA filenames, weights, and required triggers. Do not output or guess any of those. Plan around KNOWN CANONICAL TAGS without repeating them in PROMPT. Treat every ACTIVE LORA `Already provides` capability as present; do not redundantly re-author or conflict with its character identity, outfit, or style. For an active character LoRA, identity appearance is already supplied rather than an open creative slot: only use hair/eye color overrides listed under USER-LOCKED CHARACTER APPEARANCE OVERRIDES. An empty list means omit hair and eye colors from IR and PROMPT. Never infer them from a profile ID/name, an outfit color, or a form label such as black/white/swim. When a style LoRA is active, do not add a vague replacement style phrase.
+The backend supplies the standard quality prefix, rating control, negative prompt, exact known character tags, and all LoRA filenames, weights, and required triggers. Do not output or guess any of those. Plan around KNOWN CANONICAL TAGS without repeating them in PROMPT. Treat every ACTIVE LORA `Already provides` capability as present and never conflict with its character identity, outfit, or style. For one active character, do not redundantly re-author its supplied identity appearance. For multiple visible Profiles, rely on the backend-injected adjacent identity clusters and use the compact named relationship sentences above to preserve ownership; do not flatten new unowned appearance tags into a shared list. Only use hair/eye color overrides listed under USER-LOCKED CHARACTER APPEARANCE OVERRIDES. An empty list means do not invent hair or eye colors in IR or PROMPT; verified Registry appearance remains in the backend-injected cluster. Never infer appearance from a profile ID/name, an outfit color, or a form label such as black/white/swim. When a style LoRA is active, do not add a vague replacement style phrase.
 
 IR is a compact semantic inventory for backend inspection. Output a valid one-line JSON object with exactly these 12 array fields: subject, appearance, clothing, action, pose, interaction, scene, composition, lighting, mood, style, constraints.
 
@@ -1698,6 +1903,7 @@ async def siliconflow_translate(context: str, reroll: bool = False,
              "Still follow the exact output protocol.\n\n") if reroll else ""
     user_content = ("/no_think " if not thinking else "") + nudge + context
     active_lora = "ACTIVE LORA CONTEXT" in context
+    multi_character_protocol = _MULTI_RELATION_NAMES_PREFIX in context
     character_appearance_locks = _character_appearance_locks_from_context(context)
 
     parsed = None
@@ -1721,7 +1927,10 @@ async def siliconflow_translate(context: str, reroll: bool = False,
             json={
                 "model": model,
                 "messages": [
-                    {"role": "system", "content": PAINTER_SYSTEM_PROMPT},
+                    {"role": "system", "content": (
+                        MULTI_CHARACTER_SYSTEM_PROMPT
+                        if multi_character_protocol else PAINTER_SYSTEM_PROMPT
+                    )},
                     # /no_think: Qwen3 软开关, 强制不进思考模式 (思考会慢到 30s+ 且易复读). thinking 开则不前置.
                     {"role": "user", "content": user_content + repair},
                 ],
@@ -1750,6 +1959,11 @@ async def siliconflow_translate(context: str, reroll: bool = False,
                 )
                 if identity_issue:
                     raise RuntimeError(identity_issue)
+            multi_shape_issue = _composer_multi_prompt_shape_issue(
+                parsed[3], parsed[0], context
+            )
+            if multi_shape_issue:
+                raise RuntimeError(multi_shape_issue)
             break
         except RuntimeError as exc:
             last_protocol_error = exc
@@ -2113,6 +2327,7 @@ async def translate(text: str, reroll: bool = False, image_b64: str | None = Non
         (registry.get(selection["key"]) or {}).get("type") == "character"
         for selection in normalized_loras
     )
+    multi_relation_names = _lora_multi_relation_names(normalized_loras, registry)
     appearance_source = text + (("\n" + concept_override) if concept_override else "")
     character_appearance_locks = (
         sorted(_explicit_character_appearance_locks(appearance_source))
@@ -2234,6 +2449,11 @@ async def translate(text: str, reroll: bool = False, image_b64: str | None = Non
             )
         if lora_context:
             ctx_lines.append(lora_context)
+            if len(multi_relation_names) >= 2:
+                ctx_lines.append(
+                    _MULTI_RELATION_NAMES_PREFIX + " "
+                    + " | ".join(multi_relation_names)
+                )
             if has_character_lora:
                 ctx_lines.append(
                     _CHARACTER_APPEARANCE_LOCKS_PREFIX + " "

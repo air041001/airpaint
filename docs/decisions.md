@@ -886,3 +886,28 @@ LoRA 用户可见名称以 versioned `server/lora_registry.yaml` 为单一真相
 **修订关系**：本决定补充 D54 的多人 Prompt 质量边界，保留 D36/D37 对复杂多角色图片失败不做单点自动特判的结论。
 
 **相关文件**：`server/main.py`、`.tools/test_prompt_unit.py`、`docs/architecture.md`、`docs/DEVLOG.md`。
+
+## D56. 双角色按场景密度选择 tag 与短关系句，并恢复共享画面瞬间
+
+**背景**：D55 的首轮图片把 Cure 裁切、补充场景分屏主要归为 Anima/LoRA 执行边界。用户随后在同一 ComfyUI 环境只替换为社区正向 Prompt，Cure 与 Denia/Sigrika 都能形成正常双人图，推翻了“底模或额外 LoRA 是主因”的判断。继续用相同 workflow、LoRA、负面、832×1216 与同一失败 seed 做受控对比：旧的具名长关系段稳定产生横向双格和单主体重复，社区 tag Prompt 得到单画面双主体，改成 tag 主体加 6 词身份位置绑定后也得到单画面双主体并由用户认可。
+
+**问题**：所有双人场景都强制“每个角色一条完整关系句”，会把身体部位、前后层次和连续接触解释成多个镜头；反过来把所有场景都压成纯 tag，又会丢失道具归属和特殊空间关系。首轮 Cure 为了验证左右与持剑归属，把 `FAITHFUL` 输入及 system example 都写成左右站立展示，虽然结构正确，却只得到呆板角色排班，不能作为插画质量通过。
+
+**决定**：
+
+1. 显式选择至少两个角色 Profile 时，由 Registry `provides`、alias 或 exact trigger 生成稳定英文主体名并启用精简双角色协议；文件名、权重和 Profile 名猜测不进入语义。
+2. count 与 LoRA identity cluster 仍由代码掌管。Compiler 只按顶层逗号拆分 Prompt，保留括号内逐角色属性簇，避免去重时破坏归属结构。
+3. 双角色默认 tag-first。熟悉的动作、接触、前后关系和可见细节优先使用 Anima tag；只有身份位置、特殊空间或道具归属无法由 tag 稳定表达时才追加一条具名关系句。贴身高密度互动的关系尾句最多 12 个英文词，不逐部位复述、不使用分号或第二句。
+4. `auto/free` 的稀疏双人请求围绕一个共享画面瞬间、一个主要互动和一个构图重点补全，不默认两人正面、等距、左右排开。`faithful` 不为增加动势发明新前提。删除静态 Cure 左右持剑示例，避免 in-context 模板把归属验收误当审美模板。
+5. 只对已复现的确定性坏形态修复一次：抽象分割/防失败措辞、需要下半身却使用 close-up/upper body，以及贴身场景的多句逐部位关系段。`no split screen/no third person` 只留在 IR.constraints，不塞进正向 Prompt。
+6. 双角色继续作为正式图片质量边界，三角色只保留 best-effort 技术能力，不扩展逐角色 IR，不恢复区域提示词。
+
+**原因**：本地同 seed 对照已能把 Prompt 写法与 seed、LoRA、workflow 区分开。最佳分工不是“NL 或 tag 二选一”，而是让 Anima 熟悉 tag 承载高密度身体关系，让最短必要句承载归属；对稀疏输入再由 Composer 建立共享瞬间，避免把正确绑定误当成好构图。
+
+**代价与风险**：通过案例不能保证所有角色 LoRA 或 seed。共享道具或互相注视也不必然形成强叙事；“动作→回应”仍只是后续候选创作偏好，本阶段不把它升级为硬规则，以免所有双人图收敛成同一种事件模板。第三方 `comfyui-good-anima` 的情境因果与三层 Prompt 可作启发，但其固定布局句、动态负面、额外美学 LoRA 和不兼容内容规则不整套采纳。
+
+**验证**：`59 prompt unit tests passed`、Python 编译与 `git diff --check` 通过。真实 DeepSeek 文本覆盖 Denia/Sigrika 贴身 tag 主体和开放式 Cure `AUTO` 共享长剑构思；同一失败 seed 的 Denia/Sigrika 修订图消除分屏，开放式 Cure 单张形成中央剑光、视线互动、交错腿部与完整双主体，两张均由用户人眼认可。动态负面词未在本阶段修改或宣称有效。
+
+**修订关系**：本决定 revises D55 的“关系继续由具名短句承载”和图片失败归因；保留 D55 的显式 count Compiler 锁、D54 的多 Profile 工程边界及 D50 的用户显式内容锁。
+
+**相关文件**：`server/main.py`、`.tools/test_prompt_unit.py`、`docs/architecture.md`、`docs/DEVLOG.md`。

@@ -192,7 +192,9 @@ def test_visual_composer_content_fidelity_contract():
     assert "Do not infer either nudity or coverage from a sexual act alone" in prompt
     assert "override wins over an active LoRA outfit only for the affected area" in prompt
     assert "Two selected or named female character profiles shown together require 2girls" in prompt
-    assert "Bind every named subject or form to its own position, action, prop" in prompt
+    assert "MULTI-CHARACTER PROMPT SHAPE" in prompt
+    assert "backend injects each selected LoRA Profile as an adjacent identity-tag cluster" in prompt
+    assert "foreground-background layering" in prompt
 
 
 def test_visual_composer_protocol_is_strict_and_collapses_whole_repeat():
@@ -291,6 +293,69 @@ def test_visual_composer_rejects_unrenderable_model_additions():
     )
     parsed = main._parse_composer_output(intentional_three_quarter)
     assert "three-quarter body view" in parsed[0], parsed[0]
+
+
+def test_multi_character_shape_guard_targets_reproduced_split_and_crop_terms():
+    prompt_ir = {field: [] for field in main._IR_FIELDS}
+    prompt_ir["subject"] = ["2girls", "cure mystique", "cure answer"]
+    context = "USER IDEA:\n双人全身立绘"
+    issue = main._composer_multi_prompt_shape_issue(
+        prompt_ir,
+        "2girls, full body, clear separation of outfits and identities",
+        context,
+    )
+    assert issue and "抽象分割" in issue, issue
+
+    prompt_ir["pose"] = ["sitting with legs spread"]
+    issue = main._composer_multi_prompt_shape_issue(
+        prompt_ir,
+        "2girls, close-up, sitting, spread legs. A sits while B presses close behind her.",
+        "USER IDEA:\n2girls",
+    )
+    assert issue and "cowboy shot" in issue, issue
+
+    assert main._composer_multi_prompt_shape_issue(
+        prompt_ir,
+        "2girls, cowboy shot, sitting, spread legs. A sits while B presses close behind her.",
+        "USER IDEA:\n2girls",
+    ) is None
+
+    prompt_ir["interaction"] = ["body contact", "behind another"]
+    issue = main._composer_multi_prompt_shape_issue(
+        prompt_ir,
+        (
+            "2girls, sitting, body contact, behind another, cowboy shot. "
+            "Denia sits in the foreground with her legs apart; Sigrika presses close behind her "
+            "and touches Denia's chest with one hand."
+        ),
+        "USER IDEA:\n2girls",
+    )
+    assert issue and "逐部位关系段" in issue, issue
+    assert main._composer_multi_prompt_shape_issue(
+        prompt_ir,
+        (
+            "2girls, sitting, body contact, front-to-back, behind another, cowboy shot. "
+            "Denia in front, Sigrika close behind."
+        ),
+        "USER IDEA:\n2girls",
+    ) is None
+    assert main._composer_multi_prompt_shape_issue(
+        {**prompt_ir, "subject": ["1girl"]},
+        "1girl, solo, clear depth, close-up",
+        "USER IDEA:\n单人近景",
+    ) is None
+
+
+def test_multi_character_prompt_uses_shared_moment_without_static_lineup_template():
+    dedicated = main.MULTI_CHARACTER_SYSTEM_PROMPT
+    general = main.PAINTER_SYSTEM_PROMPT
+    for prompt in (dedicated, general):
+        assert "one shared visual moment" in prompt, prompt
+        assert "Do not default to both" in prompt, prompt
+        assert "one primary interaction" in prompt, prompt
+    assert "stands on the left and reaches toward the hilt" not in dedicated
+    assert "stands on the right and holds the sword upright" not in dedicated
+    assert "Denia in front, Sigrika close behind" in dedicated
 
 
 def test_composer_guard_only_enforces_count_and_explicit_full_body_lock():
@@ -790,6 +855,33 @@ def test_lora_binding_compiler_removes_sibling_profile_trigger():
     assert "reclining" in segments and "poolside" in segments, compiled
 
 
+def test_lora_binding_compiler_preserves_grouped_character_anchors():
+    bindings, warnings, _ = main.resolve_lora_selections([
+        {"key": "denia", "profiles": ["white", "sigrika"], "mode": "explicit"}
+    ])
+    assert not warnings, warnings
+    prompt = (
+        "2girls, Denia (black headband, blue headpiece), "
+        "Sigrika (headrest, white headwear), sitting, vertical composition. "
+        "Denia sits in front while Sigrika presses close behind her."
+    )
+    compiled = main.compile_lora_bindings(prompt, bindings)
+    assert "Denia (black headband, blue headpiece)" in compiled, compiled
+    assert "Sigrika (headrest, white headwear)" in compiled, compiled
+    assert compiled.endswith(
+        "Denia sits in front while Sigrika presses close behind her."
+    ), compiled
+    assert main.compile_lora_bindings(compiled, bindings) == compiled, compiled
+
+
+def test_multi_profile_relation_names_are_registry_owned():
+    registry = main.get_lora_registry()
+    denia = main.normalize_lora_selections([
+        {"key": "denia", "profiles": ["white", "sigrika"], "mode": "explicit"}
+    ], registry)
+    assert main._lora_multi_relation_names(denia, registry) == ["Denia", "Sigrika"]
+
+
 def test_character_lora_blocks_profile_name_appearance_inference():
     assert main._explicit_character_appearance_locks(
         "蕾米埃尔黑色形态，人物为主，背景从简"
@@ -814,6 +906,67 @@ def test_character_lora_blocks_profile_name_appearance_inference():
         prompt_ir, prompt, {"black hair", "red eyes"}
     )
     assert issue is None, issue
+
+
+def test_multi_character_protocol_repairs_split_wording_once():
+    old_client = main.CLIENT
+    old_key = main.CFG.get("siliconflow_api_key")
+    payloads = []
+    ir = (
+        '{"subject":["2girls","denia","sigrika"],"appearance":[],"clothing":[],'
+        '"action":[],"pose":[],"interaction":[],"scene":[],"composition":["full body"],'
+        '"lighting":[],"mood":[],"style":[],"constraints":[]}'
+    )
+    bad = (
+        "CONCEPT: 用户锁定：双人全身｜模型补全：无\n"
+        f"IR: {ir}\n"
+        'LORA: {"denia":{"profiles":["white","sigrika"],"optional_by_profile":'
+        '{"white":[],"sigrika":[]}}}\n'
+        "PROMPT: 2girls, full body, clear separation of the two figures\n"
+    )
+    repaired = (
+        "CONCEPT: 用户锁定：双人全身｜模型补全：无\n"
+        f"IR: {ir}\n"
+        'LORA: {"denia":{"profiles":["white","sigrika"],"optional_by_profile":'
+        '{"white":[],"sigrika":[]}}}\n'
+        "PROMPT: 2girls, full body. Denia stands on the left beside Sigrika on the right.\n"
+    )
+
+    class FakeResponse:
+        status_code = 200
+        text = ""
+
+        def __init__(self, output):
+            self.output = output
+
+        def json(self):
+            return {"choices": [{"message": {"content": self.output}}]}
+
+    class FakeClient:
+        async def post(self, *args, **kwargs):
+            payloads.append(kwargs["json"])
+            return FakeResponse(bad if len(payloads) == 1 else repaired)
+
+    context = (
+        "COMPLETION LEVEL: FAITHFUL\nUSER IDEA:\n双人全身\n"
+        "ACTIVE LORA CONTEXT\n"
+        "REQUIRED ENGLISH SUBJECT NAMES FOR RELATION SENTENCES: Denia | Sigrika"
+    )
+    main.CLIENT = FakeClient()
+    main.CFG["siliconflow_api_key"] = "test-key"
+    try:
+        result = asyncio.run(main.siliconflow_translate(context))
+        assert len(payloads) == 2, payloads
+        assert payloads[0]["messages"][0]["content"] == main.MULTI_CHARACTER_SYSTEM_PROMPT
+        assert "Natural language is optional, not mandatory" in main.MULTI_CHARACTER_SYSTEM_PROMPT
+        assert "clear separation" not in result[0].lower(), result[0]
+        assert "抽象分割" in payloads[1]["messages"][1]["content"]
+    finally:
+        main.CLIENT = old_client
+        if old_key is None:
+            main.CFG.pop("siliconflow_api_key", None)
+        else:
+            main.CFG["siliconflow_api_key"] = old_key
 
 
 def test_character_lora_appearance_conflict_repairs_once():
@@ -1079,6 +1232,8 @@ def main_test():
         test_visual_composer_content_fidelity_contract,
         test_visual_composer_protocol_is_strict_and_collapses_whole_repeat,
         test_visual_composer_rejects_unrenderable_model_additions,
+        test_multi_character_shape_guard_targets_reproduced_split_and_crop_terms,
+        test_multi_character_prompt_uses_shared_moment_without_static_lineup_template,
         test_composer_guard_only_enforces_count_and_explicit_full_body_lock,
         test_composer_guard_locks_explicit_two_subject_count,
         test_workflow_negative_contains_compact_anatomy_guard,
@@ -1106,7 +1261,10 @@ def main_test():
         test_lora_registry_revision_rejects_stale_binding,
         test_lora_binding_compiler_is_exact_and_idempotent,
         test_lora_binding_compiler_removes_sibling_profile_trigger,
+        test_lora_binding_compiler_preserves_grouped_character_anchors,
+        test_multi_profile_relation_names_are_registry_owned,
         test_character_lora_blocks_profile_name_appearance_inference,
+        test_multi_character_protocol_repairs_split_wording_once,
         test_character_lora_appearance_conflict_repairs_once,
         test_lora_choice_protocol_parser,
         test_active_lora_forces_painter_and_compiles_binding,
