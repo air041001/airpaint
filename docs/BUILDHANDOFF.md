@@ -1,6 +1,6 @@
 # AirPaint Build Handoff
 
-> 交接日期：2026-08-29
+> 交接日期：2026-08-30
 > 当前分支：`main`
 > 远程状态：Visual Composer、LoRA Context / Binding 与双主题三栏工作台均已实现和验收；实际提交以根仓库及 `web/` 子仓库各自的 `git log` / `git status` 为准
 
@@ -14,13 +14,15 @@ Phase 2.6（Prompt Expansion）、Phase 2.7（Visual Composer）、Phase 3（Cha
 
 ### 已完成模块
 
-- Phase 2.7 Visual Composer：SiliconFlow 普通文本严格输出 `CONCEPT + 12 字段 IR + [LORA] + PROMPT`；支持 `auto | faithful | free`，失败修复一次后 fail closed。
+- Phase 2.7 Visual Composer：SiliconFlow 普通文本严格输出 `CONCEPT + 12 字段 IR + CHAR + [LORA] + PROMPT`；支持 `auto | faithful | free`，失败修复一次后 fail closed。`CHAR` 为必填判断：无未知角色时写 `none`，有时只允许 USER IDEA 原文角色名。
 - 最终 Anima Prompt 可自由使用 tag、短句、自然语言或混合，不设固定元素数。ordinary `dict.yaml` 不再短路普通文本 Reasoning Model；Vision 与其他 legacy 路径保持兼容。
 - 中文构思固定为 `用户锁定：…｜模型补全：…`，前端可编辑后以 `concept_override` 重编译；它是单轮控制面，不是 PromptState。
 - `compile_prompt()` 与新 Composer 护栏：角色 canonical/裸名去重、主体计数、完整重复折叠、明确全身请求的互斥近景清理；新路径不再自动补裸体、年龄、rating、三分之四景别或删除画风。
 - 定向可画性/身份护栏：模型补全不得把上半身近景与裙摆/髋腿交互或多个手部操作塞进同一画面；角色 LoRA 的 Profile 名不得推断发色/瞳色，只有用户明确改色可通过，越权时修复一次后 fail closed。
 - `/api/translate/jobs/dialog`：贯通 `concept`、`completion_level`、`prompt_ir_meta` 与 LoRA binding snapshot，旧 `breakdown` 契约保持兼容。
-- 结构性回归：由 53 个零依赖单测覆盖 Composer 协议、Prompt/角色知识、LoRA Registry/Binding、API/session 与 workflow，不依赖未验证 baseline。
+- 结构性回归：由 60 个零依赖单测覆盖 Composer 协议、Prompt/角色知识、LoRA Registry/Binding、API/session 与 workflow，不依赖未验证 baseline。
+- Character Knowledge 继续自有平铺角色名层，不引入 `comfyui-good-anima` 的 CSV/SQLite/程序作运行依赖。历史 `char_dict.yaml` 未逐条人工验证；未知角色只有显式 `CHAR` 原文名字经 Danbooru exact 验证才可自动缓存，`IR.subject` 不再拥有落盘权限。
+- Character Knowledge 真实 Reasoning Model smoke：`雪之下雪乃坐在教室里` 最终返回 `CHAR: 雪之下雪乃 => yukinoshita_yukino`，未把动作/场景带入名字；`黑发少女坐在教室里` 返回空 hints。当前 Danbooru 只读 exact 结果为 `likely_supported / 2086 posts`。该 smoke 不写 auto cache，也不证明 Anima 外观还原质量。
 - Failure taxonomy：已覆盖 counting、entity binding、action/pose、interaction、spatial、lighting、NSFW anatomy、model artifact、semantic misread 等类型。
 - NSFW 结构评测集：8 条明确成人内容，结构与 explicit safety 验证通过。
 - Rendering Strategy 实验工具：固定 Prompt、seed、尺寸、workflow，支持盲评页、manifest、variant 对照。
@@ -38,7 +40,7 @@ Phase 2.6（Prompt Expansion）、Phase 2.7（Visual Composer）、Phase 3（Cha
 ### 已验证项
 
 - Phase 2 profile 收窄后，结构回归由单测覆盖（历史 30/30 仅记录，baseline 已清理）。
-- Prompt/LoRA 单测：最近一次为 `53` 个通过（旧 scanner 退役后删除其 2 项专用测试；随后增加 Composer 硬锁、img2img 尺寸与预览资源回退回归）。
+- Prompt/LoRA 单测：最近一次为 `60` 个通过；已追加显式 CHAR 协议、原文名字边界、整句拒绝和无 CHAR 不查询回归。
 - NSFW 结构验证：`8/8`，workflow safety 为 `explicit`。
 - Failure taxonomy 聚合：`17 pass / 18 fail`，主要失败类型为 `interaction_relation`、`model_artifact`、`action_pose`、`anatomy_nsfw`。
 - Phase 1.5 首轮：30 张图生成成功，用户完成盲评。
@@ -48,7 +50,7 @@ Phase 2.6（Prompt Expansion）、Phase 2.7（Visual Composer）、Phase 3（Cha
 - Phase 2 W6 girl/female：4 张图生成成功，用户认为无明显差异。
 - Phase 2.5 E1-E7 扩写实验：14 张图生成成功，用户已完成详细评审。
 - Phase 2.6 A1/A2/A3 三路实验：21 张图和 E1/E6/E7 换 seed 的 9 张补测图均生成成功；用户已完成两轮 A/B/C 盲评，A3 对 A2 为 4 胜、1 平、2 负；初版生产 A/B 被判定为协议退化，已改为独立 `IR + PROMPT` 画师协议并修复护栏；v5 新旧 A/B 为 3 胜 2 平 0 负，提示词增强保留。
-- Phase 3 Danbooru 角色查询：主 API exact lookup 与 `name_matches` 连通；长门有希/御坂美琴已分别写入 `nagato_yuki`/`misaka_mikoto` auto cache，长门固定 Prompt 已生图并经用户确认。
+- Phase 3 Danbooru 角色查询：主 API exact lookup 与 `name_matches` 历史验证连通；长门有希固定 Prompt 的早期生图人眼结果仍是历史证据。2026-08-30 发现当前 18 条 lookup 全是整句/指令键、10 条已污染 auto cache，两个 gitignored 缓存已全部清空；不再把早期长门/御坂记录描述为当前缓存现状。
 - 未验证的 baseline 回归资产已清理（DEVLOG 40）；结构不变量由确定性单测覆盖。
 - PLAN-LORA v2 已落地并通过用户验收：5 组真实 A/B 为 aware 1 胜 4 平 0 负；DeepSeek 换 Anima 后图书馆 pair 平局且用户认为优于旧 IL；Blue Archive 午后光线补测正常。
 - Remielle Dan（base/白/黑/泳装）、Dolphro-kun 风格与无 trigger Light 风格均由用户确认生效并通过验收，Registry 已提升为 verified。LoRA 显示名来自 `server/lora_registry.yaml` 的 Asset/Profile `name`，不要在前端按 key 硬编码别名。
@@ -73,7 +75,7 @@ Phase 2.6（Prompt Expansion）、Phase 2.7（Visual Composer）、Phase 3（Cha
 |---|---|
 | `server/main.py` | Prompt/Intent/Workflow Engine + LoRA Registry/Resolver/Binding/API/static preview/session |
 | `server/lora_registry.yaml` | versioned LoRA Asset/Profile/trigger/provides/default strength 人工知识 |
-| `.tools/test_prompt_unit.py` | 53 个零依赖 Composer/Prompt/角色知识/LoRA Registry/Binding/API/session/workflow 单测 |
+| `.tools/test_prompt_unit.py` | 60 个零依赖 Composer/Prompt/角色知识/LoRA Registry/Binding/API/session/workflow 单测 |
 | `.tools/test_lora_composition.py` | 6 个 LoRA 多 Profile/多 Asset/强度/物理文件去重确定性测试 |
 | `server/workflows/AnimaFull.json` | 当前统一 Anima 工作流；固定 negative 含质量、构图及紧凑的人体防御词 |
 | `.tools/register_lora.py` | LoRA sidecar inspection、Registry validate、原子 onboarding 与 style 预览人工验收后置流程 |

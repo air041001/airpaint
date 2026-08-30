@@ -911,3 +911,27 @@ LoRA 用户可见名称以 versioned `server/lora_registry.yaml` 为单一真相
 **修订关系**：本决定 revises D55 的“关系继续由具名短句承载”和图片失败归因；保留 D55 的显式 count Compiler 锁、D54 的多 Profile 工程边界及 D50 的用户显式内容锁。
 
 **相关文件**：`server/main.py`、`.tools/test_prompt_unit.py`、`docs/architecture.md`、`docs/DEVLOG.md`。
+
+## D57. 未知角色用显式原文名字查询，禁止从 IR 整句猜缓存键
+
+**背景**：复核第三方 `comfyui-good-anima` 后确认，它提供的是英文 Anima/Danbooru tag 查验索引，不是可复制的中文角色名层。同时检查 D38 生产实现发现：文档声称解析器“兼容可选 `CHAR`”，但严格 Composer 实际只接受 3/4 行；因此未知角色主要由 `_infer_character_hints_from_ir()` 把唯一剩余文本与 `IR.subject` 候选配对。当剩余文本是整句用户请求时，整句会被当成角色名。
+
+**事实**：2026-08-30 本地运行时 `characters_lookup.json` 的 18 条记录全部是句子/指令片段，其中 10 条 `likely_supported` 进入 `characters_auto.yaml`；例如“雪之下雪乃坐在里”、“有轻微暴露最好”被当作 name。这些记录的 tag 即使在 Danbooru 属于角色分类，也不能证明左侧整句是角色别名。正式 `char_dict.yaml` 的历史条目由 AI 生成且未逐条人工验证，因此“正式优先”不应再表述为“全部可靠”。
+
+**决定**：
+
+1. 不复制第三方代码、CSV、SQLite 或可执行文件；AirPaint 继续自有角色名层。
+2. 生产 Composer 严格协议必填位于 `IR` 之后的 `CHAR`：没有未知角色时输出 `CHAR: none`，否则输出 `CHAR: <用户原文名字> => <canonical candidate>`；多个名字可在同一行以分号分隔，`LORA` 仍位于 `CHAR` 之后。解析器保留对旧三行响应的兼容，但生产提示不再允许模型因“可选”而漏掉该判断。
+3. 后端只接受原样出现于 USER IDEA 的名字片段和小写 canonical tag 形状；明显整句/指令标记、重复名、空候选或错误位置均进入一次修复，第二次仍错则 fail closed。
+4. 删除 `IR.subject` 自动配对剩余整句的兜底。`IR.subject` 可保留语义候选，但不再是查询/落盘权限。模型漏掉 `CHAR` 时降低自动发现 recall，优先保护知识库 precision。
+5. 清空已污染的 18 条 lookup 和 10 条 auto 运行时缓存；两个文件均为 gitignored 可再生产物。不在本次局部修复中批量改写 155 条历史正式映射，避免把未经出图/别名复核的候选再次升格为正式真相。
+
+**作用**：用户输入词典未收录的显式角色名时，Composer 可提供候选，代码经 Danbooru exact 角色分类和覆盖量验证后用于当次 Prompt 并记住该别名；后续同名输入可稳定命中，不必每次让 LLM 重猜。更显著的收益是普通动作/场景/内容指令不再变成角色别名，减少错误身份 tag 污染后续请求。
+
+**代价与风险**：Composer 若漏掉 `CHAR`，该角色不会自动入库；少量合法长名或含指令词形的角色名可能被保守拒绝，仍可手动写入 `char_dict.yaml`。Danbooru 当前 category/post_count 只验证 tag 身份与覆盖代理，不证明 Anima 一定画对外观；后者仍需固定 Prompt/seed 与人眼。
+
+**验证**：首次真实 Reasoning Model smoke 在 `CHAR` 为可选时漏掉了该行，第二次尽管输出必填行却写成 `none`；将 BACKEND-KNOWN 明确为“只看后端提供的词典/LoRA，不看模型自己认不认识”并加入纯协议示例后，同一 `雪之下雪乃坐在教室里` 真实 smoke 稳定返回 `CHAR: 雪之下雪乃 => yukinoshita_yukino`，未把动作/场景带入 name；反向 `黑发少女坐在教室里` 返回空 hints，未误建角色。当前 Danbooru API 只读 exact 查询为 HTTP 200，`yukinoshita_yukino` 归类 `likely_supported`、`post_count=2086`；未调用落盘函数。`60 prompt unit tests passed`；`python -m py_compile server/main.py .tools/test_prompt_unit.py` 与 `git diff --check` 通过。覆盖严格 `CHAR` 位置/形状、`none`、原文名字边界、整句拒绝、无候选的 `IR.subject` 不查询，以及 Danbooru unavailable 只服务当次 Prompt。本次没有执行出图，不作画质结论。
+
+**修订关系**：本决定 revises D38 的“可选 `CHAR` 已兼容”实现判断和 `IR.subject` 兜底；保留 D38 的 Danbooru exact/category/post_count、formal 优先、auto 隔离、unavailable 不落盘原则。
+
+**相关文件**：`server/main.py`、`server/char_dict.yaml`、`.tools/test_prompt_unit.py`、`docs/architecture.md`、`docs/DEVLOG.md`、`docs/BUILDHANDOFF.md`。

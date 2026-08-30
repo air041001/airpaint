@@ -195,6 +195,8 @@ def test_visual_composer_content_fidelity_contract():
     assert "MULTI-CHARACTER PROMPT SHAPE" in prompt
     assert "backend injects each selected LoRA Profile as an adjacent identity-tag cluster" in prompt
     assert "foreground-background layering" in prompt
+    assert "BACKEND-KNOWN is a mechanical definition" in prompt
+    assert "The CHAR line is mandatory" in prompt
 
 
 def test_visual_composer_protocol_is_strict_and_collapses_whole_repeat():
@@ -547,30 +549,76 @@ def test_character_hint_protocol_parser():
         {"name": "未知角色", "candidate_tag": "unknown_tag"},
     ], hints
 
-
-def test_character_hint_ir_fallback():
-    hints = main._infer_character_hints_from_ir(
-        {"subject": ["hakurei_reimu_(touhou)"], "appearance": []},
-        ["博丽灵梦"],
-        set(),
+    output = (
+        "CONCEPT: 用户锁定：帕姆｜模型补全：车站夜景\n"
+        'IR: {"subject":["1 character","pom_pom_(honkai:_star_rail)"],'
+        '"appearance":[],"clothing":[],"action":[],"pose":[],"interaction":[],'
+        '"scene":["station"],"composition":[],"lighting":["night"],'
+        '"mood":[],"style":[],"constraints":[]}\n'
+        "CHAR: 帕姆 => pom_pom_(honkai:_star_rail)\n"
+        "PROMPT: 1 character, pom pom, station, night\n"
     )
-    assert hints == [{"name": "博丽灵梦", "candidate_tag": "hakurei_reimu_(touhou)"}], hints
-    assert main._infer_character_hints_from_ir(
-        {"subject": ["ganyu_(genshin_impact)"]},
-        ["站在望舒客栈的阳台上"],
-        set(),
-        ["ganyu_(genshin_impact)"],
-    ) == []
-    assert main._infer_character_hints_from_ir(
-        {"subject": ["misaka_mikoto"]},
-        ["御坂美琴"],
-        set(),
-    ) == [{"name": "御坂美琴", "candidate_tag": "misaka_mikoto"}]
-    assert main._infer_character_hints_from_ir(
-        {"subject": ["yukinoshita yukino"]},
-        ["雪之下雪乃"],
-        set(),
-    ) == [{"name": "雪之下雪乃", "candidate_tag": "yukinoshita_yukino"}]
+    parsed = main._parse_composer_output(output, require_character_line=True)
+    assert parsed[4] == [{
+        "name": "帕姆", "candidate_tag": "pom_pom_(honkai:_star_rail)"
+    }], parsed[4]
+
+    with_lora = output.replace(
+        "PROMPT:",
+        'LORA: {"denia":{"profile":"white","optional":[]}}\nPROMPT:',
+    )
+    parsed_with_lora = main._parse_composer_output(
+        with_lora, active_lora=True, require_character_line=True
+    )
+    assert parsed_with_lora[4] == parsed[4], parsed_with_lora[4]
+    assert parsed_with_lora[5] == {
+        "denia": {"profile": "white", "optional": []}
+    }, parsed_with_lora[5]
+
+    no_hint = main._parse_composer_output(
+        output.replace(
+            "CHAR: 帕姆 => pom_pom_(honkai:_star_rail)", "CHAR: none"
+        ),
+        require_character_line=True,
+    )
+    assert no_hint[4] == [], no_hint[4]
+
+    legacy_without_char = output.replace(
+        "CHAR: 帕姆 => pom_pom_(honkai:_star_rail)\n", ""
+    )
+    assert main._parse_composer_output(legacy_without_char)[4] == []
+    try:
+        main._parse_composer_output(
+            legacy_without_char, require_character_line=True
+        )
+    except RuntimeError as exc:
+        assert "必填 CHAR" in str(exc), exc
+    else:
+        raise AssertionError("production Composer response without CHAR must be rejected")
+
+    malformed = output.replace(
+        "CHAR: 帕姆 => pom_pom_(honkai:_star_rail)", "CHAR: 帕姆"
+    )
+    try:
+        main._parse_composer_output(malformed)
+    except RuntimeError as exc:
+        assert "CHAR" in str(exc), exc
+    else:
+        raise AssertionError("malformed CHAR line must be rejected")
+
+
+def test_character_hint_requires_explicit_name_span():
+    good = [{"name": "雪之下雪乃", "candidate_tag": "yukinoshita_yukino"}]
+    assert main._character_hint_issue(good, "雪之下雪乃坐在教室里") is None
+    assert main._character_hint_issue(
+        [{"name": "雪之下雪乃坐在教室里", "candidate_tag": "yukinoshita_yukino"}],
+        "雪之下雪乃坐在教室里",
+    )
+    assert main._character_hint_issue(good, "另一个用户请求")
+    assert main._character_hint_issue(
+        [{"name": "雪之下雪乃", "candidate_tag": "Yukinoshita Yukino"}],
+        "雪之下雪乃坐在教室里",
+    )
 
 
 def test_character_bare_name_space_variant_is_removed():
@@ -662,10 +710,15 @@ def test_unknown_character_fallback_on_unavailable():
 
     async def fake_translate(context, reroll=False):
         out = (
-            'IR: {"subject":["yukinoshita yukino"],"appearance":[],"clothing":[],"action":[],"pose":[],"interaction":[],"scene":["classroom"],"composition":[],"lighting":[],"mood":[],"style":[],"constraints":[]}\n'
-            "PROMPT: yukinoshita yukino, classroom\n"
+            "CONCEPT: 用户锁定：雪之下雪乃坐在教室里｜模型补全：无\n"
+            'IR: {"subject":["1girl","yukinoshita_yukino"],"appearance":[],'
+            '"clothing":[],"action":["sitting"],"pose":[],"interaction":[],'
+            '"scene":["classroom"],"composition":[],"lighting":[],"mood":[],'
+            '"style":[],"constraints":[]}\n'
+            "CHAR: 雪之下雪乃 => yukinoshita_yukino\n"
+            "PROMPT: 1girl, solo, sitting, classroom\n"
         )
-        return main._parse_structured_output(out) + (main._parse_character_hints(out),)
+        return main._parse_composer_output(out)
 
     async def fake_lookup(name, candidate):
         return {"name": name, "candidate_tag": candidate, "canonical_tag": "",
@@ -689,6 +742,39 @@ def test_unknown_character_fallback_on_unavailable():
         main.siliconflow_translate = old_translate
         main.lookup_character = old_lookup
         main.match_dict_words = old_dict
+        main._TRANSLATE_CACHE = old_cache
+
+
+def test_ir_subject_alone_never_triggers_character_lookup():
+    old_translate = main.siliconflow_translate
+    old_lookup = main.lookup_character
+    old_cache = dict(main._TRANSLATE_CACHE)
+
+    async def fake_translate(context, reroll=False):
+        out = (
+            "CONCEPT: 用户锁定：雪之下雪乃坐在教室里｜模型补全：无\n"
+            'IR: {"subject":["1girl","yukinoshita_yukino"],"appearance":[],'
+            '"clothing":[],"action":["sitting"],"pose":[],"interaction":[],'
+            '"scene":["classroom"],"composition":[],"lighting":[],"mood":[],'
+            '"style":[],"constraints":[]}\n'
+            "PROMPT: 1girl, solo, yukinoshita yukino, sitting, classroom\n"
+        )
+        return main._parse_composer_output(out)
+
+    async def fail_lookup(name, candidate):
+        raise AssertionError((name, candidate))
+
+    main.siliconflow_translate = fake_translate
+    main.lookup_character = fail_lookup
+    main._TRANSLATE_CACHE = {}
+    try:
+        _, _, _, meta = asyncio.run(
+            main.translate("雪之下雪乃坐在教室里", include_meta=True)
+        )
+        assert meta["character_lookup"] == [], meta
+    finally:
+        main.siliconflow_translate = old_translate
+        main.lookup_character = old_lookup
         main._TRANSLATE_CACHE = old_cache
 
 
@@ -920,6 +1006,7 @@ def test_multi_character_protocol_repairs_split_wording_once():
     bad = (
         "CONCEPT: 用户锁定：双人全身｜模型补全：无\n"
         f"IR: {ir}\n"
+        "CHAR: none\n"
         'LORA: {"denia":{"profiles":["white","sigrika"],"optional_by_profile":'
         '{"white":[],"sigrika":[]}}}\n'
         "PROMPT: 2girls, full body, clear separation of the two figures\n"
@@ -927,6 +1014,7 @@ def test_multi_character_protocol_repairs_split_wording_once():
     repaired = (
         "CONCEPT: 用户锁定：双人全身｜模型补全：无\n"
         f"IR: {ir}\n"
+        "CHAR: none\n"
         'LORA: {"denia":{"profiles":["white","sigrika"],"optional_by_profile":'
         '{"white":[],"sigrika":[]}}}\n'
         "PROMPT: 2girls, full body. Denia stands on the left beside Sigrika on the right.\n"
@@ -979,6 +1067,7 @@ def test_character_lora_appearance_conflict_repairs_once():
         'IR: {"subject":["1girl"],"appearance":["long black hair"],"clothing":[],'
         '"action":[],"pose":[],"interaction":[],"scene":["dark background"],'
         '"composition":[],"lighting":[],"mood":[],"style":[],"constraints":[]}\n'
+        "CHAR: none\n"
         'LORA: {"remielle_dan":{"profile":"black","optional":[]}}\n'
         "PROMPT: 1girl, solo, long black hair, dark background\n"
     )
@@ -987,6 +1076,7 @@ def test_character_lora_appearance_conflict_repairs_once():
         'IR: {"subject":["1girl"],"appearance":[],"clothing":[],"action":[],"pose":[],'
         '"interaction":[],"scene":["dark background"],"composition":[],"lighting":[],'
         '"mood":[],"style":[],"constraints":[]}\n'
+        "CHAR: none\n"
         'LORA: {"remielle_dan":{"profile":"black","optional":[]}}\n'
         "PROMPT: 1girl, solo, dark background\n"
     )
@@ -1243,12 +1333,13 @@ def main_test():
         test_painter_tag_guard_keeps_nsfw_body_framing_and_default_anime_style,
         test_painter_tag_guard_preserves_explicit_user_intent,
         test_character_hint_protocol_parser,
-        test_character_hint_ir_fallback,
+        test_character_hint_requires_explicit_name_span,
         test_character_bare_name_space_variant_is_removed,
         test_danbooru_character_classification,
         test_auto_character_cache_write_and_match,
         test_unavailable_lookup_is_retryable,
         test_unknown_character_fallback_on_unavailable,
+        test_ir_subject_alone_never_triggers_character_lookup,
         test_lora_registry_preserves_nested_profiles,
         test_lora_preview_prefers_explicit_url_and_falls_back_to_static_asset,
         test_bright_afternoon_uses_daylight_not_golden_hour,

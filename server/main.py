@@ -179,8 +179,9 @@ class HotLoraRegistry:
 
 # 属性/感觉词典: 中文 -> danbooru tag. key 小写匹配.
 DICT = HotDict(DICT_PATH, key_fn=str.lower)
-# 角色词典: 中文名 -> danbooru 精确 tag. LLM 认不准角色 tag (字面翻译/编造/漏认),
-# 故角色走词典可靠命中, 命中后把 tag 作为上下文喂给 LLM (见 decisions.md D12). key 不小写 (中文无大小写).
+# 角色词典: 中文名 -> danbooru canonical tag. 这是确定性命中层，
+# 不代表历史条目已逐一验证；新未知角色另走显式 CHAR + Danbooru exact 验证。
+# key 不小写 (中文无大小写).
 CHAR_DICT = HotDict(CHAR_DICT_PATH, key_fn=lambda s: s)
 # 自动角色缓存保持与正式词典同样的平铺格式；正式 CHAR_DICT 优先。
 CHAR_AUTO = HotDict(CHAR_AUTO_PATH, key_fn=lambda s: s)
@@ -1243,13 +1244,16 @@ Dense-contact shape example; replace placeholders with the required English name
 
 ACTIVE LORA CONTEXT supplies exact backend triggers and identity clusters. Do not output filenames, weights, trigger syntax, or a second unowned appearance list. Do not infer appearance from profile IDs or names. Echo the exact locked Profiles in the mandatory LORA JSON line.
 
+CHAR is also mandatory. Use `CHAR: none` when every named character is supplied by ACTIVE LORA CONTEXT. If USER IDEA explicitly names an additional fictional character not supplied by ACTIVE LORA, use `CHAR: <exact USER IDEA name span> => <lowercase canonical Danbooru tag candidate>`; never use a whole sentence or generic phrase.
+
 CONCEPT is concise Chinese. 用户锁定 contains only user facts and selected LoRA concepts. 模型补全 lists only material additions, or 无.
 IR is one compact JSON object with exactly these array fields: subject, appearance, clothing, action, pose, interaction, scene, composition, lighting, mood, style, constraints.
 Do not output quality/score tags, rating labels, negative tags, generation settings, XML, filenames, weights, or explanations.
 
-Output exactly four non-empty lines:
+Output exactly five non-empty lines:
 CONCEPT: 用户锁定：<explicit facts>｜模型补全：<major additions or 无>
 IR: <one-line JSON with all 12 fields>
+CHAR: none
 LORA: <JSON using only supplied key/profile/optional IDs>
 PROMPT: <English positive prompt only>"""
 
@@ -1301,7 +1305,7 @@ For an explicitly multi-subject request, put the matching count in both IR.subje
 
 MULTI-CHARACTER PROMPT SHAPE: the backend injects each selected LoRA Profile as an adjacent identity-tag cluster after the count. Unless the user explicitly requests a lineup, character sheet, reference display, or formal symmetry, organize the characters around one shared visual moment rather than two independent poses. Do not default to both subjects standing straight, equally spaced left and right, and facing the viewer. Under AUTO/FREE, fill one concrete shared focal event; under FAITHFUL, preserve the premise and use only compatible gaze, body direction, overlap, motion, light, or environmental response. Keep one primary interaction and one primary composition idea. Build a tag-first mixed prompt: begin with the exact count and familiar shared action, interaction, object, framing, and scene tags. Natural language is optional. Use at most one compact named sentence only for identity relationship, ownership, or unusual spatial arrangement that tags cannot bind, and do not specify every limb action. For dense touching or overlapping scenes, prefer familiar relation tags and allow only a position-binding tail of at most 12 English words. Put negative constraints such as no split screen or no third person in IR.constraints only, not PROMPT. Do not write abstract anti-failure phrases such as clear separation, distinct silhouettes, color separation, clear depth, foreground-background layering, keep separated, or keep readable. If the pelvis, thighs, or spread legs must remain visible, use cowboy shot or three-quarter view rather than close-up.
 
-Preserve every explicit user fact and constraint. Do not change a named character, subject count, requested clothing state, action, location, camera instruction, or core mood. Do not invent another main character, named IP, incompatible outfit, weapon, sex act, or unrelated spectacle. For an unknown named character, put the best canonical-tag candidate in IR.subject so the backend can verify it. Do not add age labels, safety wording, policy language, or content classifications.
+Preserve every explicit user fact and constraint. Do not change a named character, subject count, requested clothing state, action, location, camera instruction, or core mood. Do not invent another main character, named IP, incompatible outfit, weapon, sex act, or unrelated spectacle. BACKEND-KNOWN is a mechanical definition: a named fictional character is backend-known only when its canonical tag appears in KNOWN CANONICAL TAGS or its identity is supplied by ACTIVE LORA CONTEXT. Your own recognition or world knowledge does not make it backend-known. If KNOWN CANONICAL TAGS is absent, no dictionary character was recognized. Emit a CHAR candidate for every explicit backend-unknown character name as specified below. Copy the name span exactly from USER IDEA; never use a whole sentence, pronoun, generic phrase, style name, or inferred identity as the name. Do not add age labels, safety wording, policy language, or content classifications.
 
 Treat every user-stated clothing state, exposure level, visible body detail, act, and framing requirement as a hard visual lock. Carry it into CONCEPT, IR, and PROMPT in direct, drawable Anima language; do not euphemize, conceal, crop out, or replace it.
 Details the user left unspecified remain completion slots. Do not infer either nudity or coverage from a sexual act alone, and ensure every invented clothing or framing decision remains compatible with the locked visible content.
@@ -1315,12 +1319,16 @@ IR is a compact semantic inventory for backend inspection. Output a valid one-li
 
 FINAL CHECK: remove quality/score tokens, rating labels, negative tags, generation metadata, XML wrappers, filenames, weights, and explanations. Remove contradictory framing. In particular, full body or entire figure visible cannot coexist with mid-shot, medium shot, upper body, close-up, cropped, or out of frame. There is no target tag count, sentence count, word count, or character count: use as much concrete visible information as the picture benefits from, then stop.
 
-Normally output exactly three non-empty lines, with no markdown or other text:
+Always output exactly four non-empty lines, with no markdown or other text:
 CONCEPT: 用户锁定：<explicit Chinese locks>｜模型补全：<major Chinese additions or 无>
 IR: <one-line compact JSON with all 12 required array fields>
+CHAR: none
 PROMPT: <one English positive prompt ready for Anima>
 
-If ACTIVE LORA CONTEXT is present, insert exactly one LORA JSON line between IR and PROMPT. Use only supplied key/profile/optional IDs, echo locked explicit profiles unchanged, and never put trigger strings, filenames, or weights in LORA or PROMPT."""
+The CHAR line is mandatory. Replace none with <exact USER IDEA name span> => <lowercase canonical Danbooru tag candidate> whenever USER IDEA contains one or more BACKEND-UNKNOWN named fictional characters, even when you personally recognize them. Use semicolons between multiple name => candidate pairs. CHAR is the only authority for backend unknown-character lookup; an IR.subject guess alone never triggers lookup.
+Protocol examples: USER IDEA `雪之下雪乃坐在教室里` with no KNOWN CANONICAL TAGS requires `CHAR: 雪之下雪乃 => yukinoshita_yukino`; USER IDEA `黑发少女坐在教室里` requires `CHAR: none`.
+
+If ACTIVE LORA CONTEXT is present, insert exactly one LORA JSON line after the mandatory CHAR line and before PROMPT. Use only supplied key/profile/optional IDs, echo locked explicit profiles unchanged, and never put trigger strings, filenames, or weights in LORA or PROMPT."""
 
 # LLM 结构化输出的字段 (顺序即展示顺序). TAGS 行单独解析为最终 tag.
 _STRUCTURED_FIELDS = ("scene", "composition", "mood", "lighting", "style")
@@ -1453,7 +1461,7 @@ def _breakdown_from_ir(prompt_ir: dict) -> dict:
 
 
 def _character_items():
-    """正式角色词典优先，其次是联网确认过的自动缓存。"""
+    """历史正式角色词典优先，其次是 Danbooru exact 确认过的自动缓存。"""
     formal = list(CHAR_DICT.items())
     auto = list(CHAR_AUTO.items())
     formal_names = {name for name, _ in formal}
@@ -1484,9 +1492,51 @@ def _parse_character_hints(out: str) -> list[dict]:
                 name, candidate = (part.strip() for part in item.split("=>", 1))
             else:
                 name, candidate = item, ""
-            if name and name.lower() not in {"none", "null", "无"}:
+            if (name and candidate and
+                    name.lower() not in {"none", "null", "无"}):
                 hints.append({"name": name, "candidate_tag": candidate})
     return hints
+
+
+def _character_hint_issue(hints: list[dict], user_idea: str) -> str | None:
+    """CHAR 只能引用用户原文中的显式名字，候选必须是 canonical tag 形状。"""
+    non_name_markers = (
+        "这个人物", "这个角色", "画一个", "生成一个", "提示词", "图片",
+        "坐在", "站在", "躺在", "穿着", "看起来", "一脸", "露出", "暴露",
+        "展示", "尽情发挥", "完整保留", "仅作", "我想看", "要有",
+    )
+    seen_names = set()
+    for hint in hints:
+        name = str(hint.get("name") or "").strip()
+        candidate = str(hint.get("candidate_tag") or "").strip()
+        if not name or not candidate:
+            return "Composer CHAR 缺少角色名或 canonical tag 候选"
+        if name not in user_idea:
+            return "Composer CHAR 角色名必须原样出现在 USER IDEA 中"
+        if len(name) > 32 or any(marker in name for marker in non_name_markers):
+            return "Composer CHAR 角色名包含句子/指令片段，不能用于自动缓存"
+        if name in seen_names:
+            return "Composer CHAR 含重复角色名"
+        if not re.fullmatch(r"[a-z0-9_():+'\-]+", candidate):
+            return "Composer CHAR 候选不是小写 Danbooru canonical tag"
+        seen_names.add(name)
+    return None
+
+
+def _user_idea_from_composer_context(context: str) -> str:
+    """从生产 Composer context 取回原始 USER IDEA，只用于校验 CHAR 名字边界。"""
+    marker = "USER IDEA:\n"
+    if marker not in context:
+        return ""
+    idea = context.split(marker, 1)[1]
+    for section in (
+        "\nKNOWN CANONICAL TAGS:",
+        "\nCONCEPT OVERRIDE ",
+        "\nACTIVE LORA CONTEXT",
+        "\nRegistry revision:",
+    ):
+        idea = idea.split(section, 1)[0]
+    return idea.rstrip()
 
 
 def _parse_lora_choices(out: str) -> dict[str, dict]:
@@ -1504,7 +1554,7 @@ def _parse_lora_choices(out: str) -> dict[str, dict]:
 
 
 def _normalize_character_candidate(item: str) -> str | None:
-    """把 subject 里的候选归一化成 Danbooru 下划线 canonical 形式；非角色名返回 None."""
+    """把候选归一化成 Danbooru 下划线 canonical 形式；非角色名返回 None."""
     s = str(item).strip()
     if not s:
         return None
@@ -1513,22 +1563,6 @@ def _normalize_character_candidate(item: str) -> str | None:
     if re.fullmatch(r"[a-z][a-z0-9]*(?:[ _][a-z][a-z0-9]*)+", s):
         return s.replace(" ", "_")
     return None
-
-
-def _infer_character_hints_from_ir(prompt_ir: dict | None, misses: list[str],
-                                   known_names: set[str], known_tags: list[str] | None = None) -> list[dict]:
-    """CHAR 行缺失时，从 IR.subject 归一化出候选角色 tag，配唯一剩余中文名做保守兜底."""
-    known_tags = set(known_tags or [])
-    candidates = []
-    for item in (prompt_ir or {}).get("subject", []):
-        norm = _normalize_character_candidate(item)
-        if norm and norm not in known_tags and norm not in candidates:
-            candidates.append(norm)
-    names = [miss for miss in misses if len(miss) >= 2 and miss not in known_names]
-    if len(candidates) == 1 and len(names) == 1:
-        return [{"name": names[0], "candidate_tag": candidates[0]}]
-    return []
-
 
 def _classify_danbooru_rows(rows: list[dict], candidate_tag: str,
                             min_posts: int = CHARACTER_AUTO_MIN_POSTS) -> dict:
@@ -1801,19 +1835,33 @@ def _parse_concept(out: str) -> str | None:
     return None
 
 
-def _parse_composer_output(out: str, active_lora: bool = False) -> tuple:
-    """严格解析 Visual Composer 的 CONCEPT + IR + [LORA] + PROMPT 协议。"""
+def _parse_composer_output(out: str, active_lora: bool = False,
+                           require_character_line: bool = False) -> tuple:
+    """严格解析 Visual Composer 的 CONCEPT + IR + [CHAR] + [LORA] + PROMPT 协议。"""
     text = out.strip().strip("`").strip()
     lines = [line.strip() for line in text.splitlines() if line.strip()]
-    expected_count = 4 if active_lora else 3
-    expected_prefixes = ["concept:", "ir:"]
+    if (len(lines) < 3 or not lines[0].lower().startswith("concept:") or
+            not lines[1].lower().startswith("ir:")):
+        raise RuntimeError("Composer 输出未遵守 CONCEPT + IR + [CHAR] + [LORA] + PROMPT 行协议")
+
+    cursor = 2
+    character_hints = []
+    has_character_line = cursor < len(lines) and lines[cursor].lower().startswith("char:")
+    if require_character_line and not has_character_line:
+        raise RuntimeError("Composer 生产协议缺少必填 CHAR 行")
+    if has_character_line:
+        char_payload = lines[cursor].split(":", 1)[1].strip().lower()
+        character_hints = _parse_character_hints(lines[cursor])
+        if not character_hints and char_payload not in {"none", "null", "empty", "无"}:
+            raise RuntimeError("Composer CHAR 行缺少有效的 name => canonical tag")
+        cursor += 1
     if active_lora:
-        expected_prefixes.append("lora:")
-    expected_prefixes.append("prompt:")
-    if len(lines) != expected_count or any(
-            not line.lower().startswith(prefix)
-            for line, prefix in zip(lines, expected_prefixes)):
-        raise RuntimeError("Composer 输出未遵守 CONCEPT + IR + [LORA] + PROMPT 行协议")
+        if cursor >= len(lines) or not lines[cursor].lower().startswith("lora:"):
+            raise RuntimeError("Composer 缺少有效 LORA 选择")
+        cursor += 1
+    if (cursor != len(lines) - 1 or
+            not lines[cursor].lower().startswith("prompt:")):
+        raise RuntimeError("Composer 输出未遵守 CONCEPT + IR + [CHAR] + [LORA] + PROMPT 行协议")
 
     concept = _canonicalize_concept(lines[0])
     try:
@@ -1840,12 +1888,12 @@ def _parse_composer_output(out: str, active_lora: bool = False) -> tuple:
     feasibility_issue = _composer_feasibility_issue(prompt_ir, concept, prompt_line)
     if feasibility_issue:
         raise RuntimeError(feasibility_issue)
-    return (prompt_line, breakdown, nl, prompt_ir, _parse_character_hints(text),
+    return (prompt_line, breakdown, nl, prompt_ir, character_hints,
             lora_choices, concept, repetition_collapsed)
 
 
 def match_characters(text: str) -> tuple[list[str], str]:
-    """子串匹配正式/自动确认角色名. 正式词典优先, 返回 canonical tag 列表和剩余文本."""
+    """子串匹配历史正式/自动 exact 角色名. 正式词典优先, 返回 tag 列表和剩余文本."""
     found_tags: list[str] = []
     remaining = text
     for name, tag in _character_items():
@@ -1916,8 +1964,10 @@ async def siliconflow_translate(context: str, reroll: bool = False,
                 "\nREPAIR REQUEST: Your previous response was rejected for this reason: "
                 + previous_issue
                 + ". Re-plan model-added decisions when the issue is semantic; preserve every USER lock. "
-                "Return CONCEPT first, then one "
-                "compact valid IR JSON line with all 12 array fields, "
+                "Return CONCEPT first, then one compact valid IR JSON line with all 12 array fields, "
+                "then the mandatory CHAR line: use none, or proper character names copied exactly from "
+                "USER IDEA whenever the backend did not supply them through KNOWN CANONICAL TAGS or active "
+                "LoRA identities; your own recognition does not count as backend knowledge, "
                 + ("then the mandatory LORA JSON line using only supplied IDs, " if active_lora else "")
                 + "then PROMPT. Use exactly one non-empty line for each required field and no other text.\n"
             )
@@ -1952,7 +2002,14 @@ async def siliconflow_translate(context: str, reroll: bool = False,
             raise RuntimeError("翻译服务返回空内容")
 
         try:
-            parsed = _parse_composer_output(out, active_lora=active_lora)
+            parsed = _parse_composer_output(
+                out, active_lora=active_lora, require_character_line=True
+            )
+            character_hint_issue = _character_hint_issue(
+                parsed[4], _user_idea_from_composer_context(context)
+            )
+            if character_hint_issue:
+                raise RuntimeError(character_hint_issue)
             if character_appearance_locks is not None:
                 identity_issue = _composer_character_lora_appearance_issue(
                     parsed[3], parsed[0], character_appearance_locks
@@ -1967,6 +2024,7 @@ async def siliconflow_translate(context: str, reroll: bool = False,
             break
         except RuntimeError as exc:
             last_protocol_error = exc
+            parsed = None
 
     if parsed is None:
         raise RuntimeError(f"Composer 协议修复失败: {last_protocol_error}")
@@ -2495,10 +2553,12 @@ async def translate(text: str, reroll: bool = False, image_b64: str | None = Non
         resolved_char_tags = list(char_tags)
         known_names = set(_character_names())
         active_lora_aliases = lora_selection_aliases(normalized_loras) if has_lora else set()
-        if not character_hints:
-            character_hints = _infer_character_hints_from_ir(
-                prompt_ir, misses, known_names, char_tags
-            )
+        # Defense in depth for mocked/legacy callers that bypass siliconflow_translate's repair loop.
+        # IR.subject is deliberately not a lookup authority: only explicit CHAR name spans may query/cache.
+        character_hints = [
+            hint for hint in character_hints
+            if _character_hint_issue([hint], text) is None
+        ]
         for hint in character_hints:
             name = hint["name"]
             if name.strip().lower() in active_lora_aliases:

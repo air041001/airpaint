@@ -906,3 +906,11 @@ Remielle Dan 的多形态同框样图推翻了“同一身份不同形态默认�
 首轮 Cure 虽结构正确但像左右角色展示，原因是 `FAITHFUL` 验收输入和 system example 同时锁死左右、正面与持剑分工。删除该静态示例，并让稀疏 `auto/free` 双人输入围绕一个共享画面瞬间、主要互动和单一构图重点补全。开放式 Cure 只锁双人全身、发光长剑中心与蓝色背景，真实单张形成中央剑光、视线互动、交错腿部和完整角色，用户认可插画方向。第三方 `comfyui-good-anima` 只吸收情境因果启发，不采纳固定 `Place A/Place B` 模板或未经本地验证的动态负面词。
 
 验证：`59 prompt unit tests passed`、`python -m py_compile server/main.py .tools/test_prompt_unit.py` 与 `git diff --check` 通过。双角色为正式质量边界；三角色继续 best-effort。“动作→回应”作为后续创作候选记录，不在本阶段继续堆规则或生图。
+
+## 第 65 条 2026-08-30 - 未知角色显式 CHAR 协议与缓存污染修复
+
+复核 `comfyui-good-anima` 后确认其没有可直接复制的中文角色层，只提供英文 Anima/Danbooru tag 查验能力。反查 D38 实现时发现，严格 Composer 并不接受文档所述的可选 `CHAR` 行；实际兜底会把剩余整句与 `IR.subject` 候选配对。本地 lookup 的 18 条全部是句子/指令键，其中 10 条已进入 auto 角色缓存，两份 gitignored 运行时缓存已清空。
+
+生产协议现为 `CONCEPT + IR + CHAR + [LORA] + PROMPT`，无未知角色也必须输出 `CHAR: none`。首次真实 Reasoning Model smoke 证明“可选 CHAR”会被漏掉，第二次必填但因“模型自己认识角色”而写成 `none`；最终将 BACKEND-KNOWN 机械定义为只看词典/LoRA 上下文，并加入纯协议示例。同一 `雪之下雪乃坐在教室里` 第三次真实 smoke 返回 `CHAR: 雪之下雪乃 => yukinoshita_yukino`，未把“坐在教室里”带入 name。解析器仍兼容旧三行响应。有候选时，`CHAR` 必须使用 USER IDEA 中原样出现的显式角色名和小写 canonical tag，且经 Danbooru exact 角色分类/覆盖量验证才可写 auto cache。整句、通用指令、空/重复候选会修复一次并 fail closed；`IR.subject` 单独出现的猜测不再发起查询或落盘。正式 `char_dict.yaml` 只更正了“历史条目未逐一验证”的说明，未批量改写 155 条映射，也未引入第三方运行数据/程序。
+
+验证：反向真实 smoke `黑发少女坐在教室里` 返回空 hints；Danbooru 当前只读 exact 查询确认 `yukinoshita_yukino` 为 `likely_supported`、`post_count=2086`。`60 prompt unit tests passed`、`python -m py_compile server/main.py .tools/test_prompt_unit.py`与 `git diff --check` 通过。测试只证明协议、名字边界和缓存权限；本次未生图，不宣称角色外观还原已改善。
