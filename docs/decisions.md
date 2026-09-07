@@ -959,3 +959,28 @@ LoRA 用户可见名称以 versioned `server/lora_registry.yaml` 为单一真相
 **修订关系**：本决定 revises D1/D45 中 `web/` 独立仓库或备份仓库的现状描述；补充 D46 中旧 `_prepare_painter_tags()` 已退出生产后的最终清理。其余历史技术与画质结论不变。
 
 **相关文件**：`.gitignore`、`web/index.html`、`server/main.py`、`server/settings.py`、`server/runtime.py`、`server/knowledge.py`、`server/lora.py`、`server/prompt_engine.py`、`server/workflow_engine.py`、`server/api.py`、`.tools/check_frontend.js`、`README.md`、`AGENTS.md`、`ROADMAP.md`、`docs/BUILDHANDOFF.md`、`docs/architecture.md`、`docs/api.md`、`docs/DEVLOG.md`。
+
+## D59. 参考契约、独立 Img2Img 与按源图分支的增量迭代
+
+**背景**：旧参考图路径由 Vision 直接生成提示词，绕开已验证的 Composer；同一张压缩分析图又被拿去图生图。暗房将 delta 追加到历史中文，源图和语义随“最近一次”漂移，实际 seed 只在 workflow 内生成后丢失。用户批准以参考范围、双份图片和现有 IR 增量修改收口这些问题。
+
+**决定**：
+
+1. Vision 只输出结构化观察；三档 `composition_vibe/composition/full` 决定可参考字段。Reasoning Model 将观察、用户要求与 LoRA Context 编译为现有 Concept/十二字段 IR/Prompt，不增加逐角色 IR。优先级固定为用户明确要求 > LoRA 身份/Profile > 参考范围 > 模型补全。
+2. 图片分析按最长边 768/JPEG 0.85，生成按最长边 1536/JPEG 0.92 分开。独立 Img2Img 用 full 观察作基线，文字只表述改动。preserve 默认映射 `pad_edge`，crop 可选位置；比例不同时提示最近画幅但不静默改尺寸。重绘预设 0.35/0.55/0.75，范围 0.1–0.9。
+3. 每轮保存原始意图、Concept、IR、最终 Prompt、LoRA Binding、尺寸/seed 和父任务等快照。`source_job_id` 决定读哪张历史图与语义；`parent_job_id` 建立分支。微调默认继承源尺寸和 seed；换一版不带 delta 时不调用模型，复用 Prompt 并换 seed。
+4. 增量修订必须输出 `CHANGE_FIELDS`，未声明字段从原 IR 原样复制；一次修复后仍非法则失败，不污染会话。手动编辑最终 Prompt 后以它为权威，下次修订才重建 IR，不声称已有完整字段锁。
+5. 同链固定 LoRA 选择/强度；变更回工坊开新链。旧 `image` 与 `vibe` 保留一兼容周期。内存态保持，不引入数据库、ControlNet、IP-Adapter、区域提示词或局部重绘。
+6. 删除未跟踪的 `.tools/eval_set/visual_director/` 一次性资产；有效结论已经进入 D55/D56、DEVLOG 和正式回归，不迁移旧候选/缓存。Registry 在本阶段完全排除于同步、修改和提交之外。
+
+**原因**：参考范围是语义选择，源图与 seed 是可确定工程状态。把 Vision 限于观察、把每次修改锚定具体源任务，可保留既有 Composer 能力并防止字符串历史累积矛盾，而不创建完整 PromptState 框架。
+
+**代价与风险**：参考流程多一次 Reasoning 调用；缓存只降低重复观察成本，模型版本配置不变时无法识别服务商内部权重更新。视觉范围的字段白名单不是完美语义隔离，布局描述可能带入具体装饰，仍需 Composer 适配和人眼检查。Img2Img 是全图重绘，不保证局部编辑或不变区域；更低强度也可能改不动指定颜色。进程重启后会话失效。低分辨率结构测试不构成画质证据。
+
+**验证状态**：新增参考/增量/seed/适配/旧接口回归；真实 Vision 首次省略被排除的空字段，被过严协议误拒绝，已改为规范空字段且仍拒绝未知字段/空观察。最多五张真实验收图的结果及人眼结论见 BUILDHANDOFF；未获用户图片确认前不将本阶段标记为完成。
+
+**界面措辞修订（2026-08-31）**：实际图像未达到「只改指定内容、其余保持」的预期，用户要求介绍与已验证能力一致。暗房「微调」改名「基于此图重绘」，工坊/教程/占位文字/进度/历史标签统一说明整图重绘、连带变化风险、留空仍重新生成，以及独立上传不自动继承 LoRA。预设改称低/中/高强度，不把数值当作修改成功率。保留 `tweak` action、节点、强度值和生成逻辑；此文案修订不代表图像质量验收通过。
+
+**修订关系**：supersedes D23 的 Vision 直接编写最终 Prompt；revises D26 的共用压缩图、D31 的 raw 累积替换和旧 dialog 最新图逻辑。保留 D46/D56 Composer、十二字段边界、单 Loader/共享强度与固定负面词。
+
+**相关文件**：`server/settings.py`、`server/prompt_engine.py`、`server/workflow_engine.py`、`server/api.py`、`web/index.html`、`.tools/test_image_iteration.py`、`.tools/test_prompt_unit.py`、当前架构/API/交接文档。

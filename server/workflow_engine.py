@@ -13,7 +13,7 @@ from server.lora import (
     resolve_lora_selections,
 )
 from server.runtime import CLIENT, CLIENT_ID, IMAGES
-from server.settings import BASE, CFG, COMFY, WORKFLOWS
+from server.settings import BASE, CFG, COMFY, WORKFLOWS, normalize_image_fit
 
 
 def sanitize_for_api(wf: dict) -> dict:
@@ -79,11 +79,18 @@ def build_prompt(wf_name: str, prompt_en: str, width: int | None, height: int | 
                  detailer: dict | None = None,
                  negative_text: str | None = None,
                  lora_bindings: list[dict] | None = None,
-                 registry_revision: str | None = None) -> dict:
+                 registry_revision: str | None = None,
+                 seed: int | None = None,
+                 fit_mode: str = "preserve",
+                 crop_position: str = "center") -> dict:
     wcfg = WORKFLOWS[wf_name]
     wf = json.loads((BASE / wcfg["file"]).read_text(encoding="utf-8"))
     wf = sanitize_for_api(wf)
-    seed = random.randint(1, 2**31 - 1)
+    if seed is None:
+        seed = random.randint(1, 2**31 - 1)
+    if isinstance(seed, bool) or not isinstance(seed, int) or not 1 <= seed <= 2**63 - 1:
+        raise HTTPException(400, "seed 必须是 1~2^63-1 的整数")
+    fit_mode, crop_position = normalize_image_fit(fit_mode, crop_position)
 
     # 统一 seed: 把工作流里所有 int 型 seed/noise_seed 输入都写成正整数。
     # 为什么必须做:
@@ -168,6 +175,15 @@ def build_prompt(wf_name: str, prompt_en: str, width: int | None, height: int | 
     detailer_cfg = wcfg.get("detailer_nodes")
     if image_filename and "image_node" in wcfg:
         set_input("image_node", "image", image_filename)   # LoadImage: img2img 用
+        resize_nodes = [
+            node for node in wf.values()
+            if node.get("class_type") == "ImageResizeKJv2"
+        ]
+        if len(resize_nodes) != 1:
+            raise HTTPException(500, f"workflow {wf_name} 必须恰好包含一个 ImageResizeKJv2")
+        resize_inputs = resize_nodes[0].get("inputs") or {}
+        resize_inputs["keep_proportion"] = "crop" if fit_mode == "crop" else "pad_edge"
+        resize_inputs["crop_position"] = crop_position if fit_mode == "crop" else "center"
     if detailer_cfg:
         chain_source = "43"   # 主 VAEDecode (detailer 链源)
         save_id = next((nid for nid, n in wf.items() if n.get("class_type") == "SaveImage"), None)
@@ -210,12 +226,16 @@ async def submit_and_wait(wf_name: str, prompt_en: str, width, height, lora_keys
                           detailer: dict | None = None,
                           negative_text: str | None = None,
                           lora_bindings: list[dict] | None = None,
-                          registry_revision: str | None = None) -> str:
+                          registry_revision: str | None = None,
+                          seed: int | None = None,
+                          fit_mode: str = "preserve",
+                          crop_position: str = "center") -> str:
     payload = build_prompt(
         wf_name, prompt_en, width, height, lora_keys,
         strength_char, strength_style, image_filename, denoise,
         detailer, negative_text, lora_bindings=lora_bindings,
-        registry_revision=registry_revision,
+        registry_revision=registry_revision, seed=seed,
+        fit_mode=fit_mode, crop_position=crop_position,
     )
     payload.pop("_seed")
     r = await CLIENT.post(f"{COMFY}/prompt", json=payload)

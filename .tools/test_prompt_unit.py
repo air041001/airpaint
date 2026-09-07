@@ -1146,26 +1146,42 @@ def test_active_lora_forces_painter_and_compiles_binding():
 
 def test_active_lora_is_present_in_vision_path():
     old_vision = prompt_module.siliconflow_vision_translate
+    old_translate = prompt_module.siliconflow_translate
+    old_cache = prompt_module._TRANSLATE_CACHE
     calls = []
 
-    async def fake_vision(image_b64, context, reroll=False, mode="reference"):
-        calls.append((context, reroll, mode))
-        return (
-            "1girl, beach, sunset", {"scene": "beach", "lighting": "sunset"}, "", None,
-            {"denia": {"profile": "white", "optional": []}},
-        )
+    async def fake_vision(image_b64, **kwargs):
+        calls.append(("vision", kwargs))
+        fields = {field: [] for field in main._IR_FIELDS}
+        fields.update(scene=["beach"], lighting=["sunset"])
+        return {"scope": kwargs["reference_scope"], "fields": fields, "source_model": "test"}
+
+    async def fake_translate(context, reroll=False):
+        calls.append(("composer", context))
+        ir = {field: [] for field in main._IR_FIELDS}
+        ir.update(subject=["1girl"], scene=["beach"], lighting=["sunset"])
+        return ("1girl, beach, sunset", main._breakdown_from_ir(ir), "", ir, [],
+                {"denia": {"profile": "white", "optional": []}},
+                "用户锁定：海边｜模型补全：夕阳", False)
 
     prompt_module.siliconflow_vision_translate = fake_vision
+    prompt_module.siliconflow_translate = fake_translate
+    prompt_module._TRANSLATE_CACHE = {}
     try:
-        prompt, _, _, meta = asyncio.run(main.translate(
+        prompt, _, prompt_ir, meta = asyncio.run(main.translate(
             "站在海边", image_b64="mock-image",
             lora_selections=[{"key": "denia", "mode": "auto"}], include_meta=True,
         ))
-        assert calls and "ACTIVE LORA CONTEXT" in calls[0][0], calls
-        assert "denia \\(wuthering waves\\)" in prompt, prompt
+        assert [call[0] for call in calls] == ["vision", "composer"], calls
+        assert "ACTIVE LORA CONTEXT" in calls[1][1] and "REFERENCE CONTRACT" in calls[1][1]
+        assert "denia" in prompt and prompt_ir["scene"] == ["beach"]
         assert meta["lora_bindings"][0]["profile"] == "white"
+        assert meta["reference_scope"] == "composition_vibe"
+        assert meta["concept"]
     finally:
         prompt_module.siliconflow_vision_translate = old_vision
+        prompt_module.siliconflow_translate = old_translate
+        prompt_module._TRANSLATE_CACHE = old_cache
 
 
 def test_lora_cache_isolated_by_profile():

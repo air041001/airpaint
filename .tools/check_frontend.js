@@ -17,3 +17,15 @@ scripts.forEach((source, index) => {
 });
 
 console.log(`${scripts.length} inline scripts parsed: ${path.relative(root, htmlPath)}`);
+
+// Img2Img is a full-image redraw, not a guarantee of isolated edits (D59).
+for (const claim of ["只写改动即可，其余内容从原图理解", "留空则保留原图内容", "直接在这张图上改、保留构图"]) {
+  if (html.includes(claim)) throw new Error(`unsupported Img2Img claim: ${claim}`);
+}
+if (!/<button id="dlg-img2img"[^>]*>基于此图重绘<\/button>/.test(html)
+    || !html.includes("不保证只改指定内容")
+    || !html.includes("高强度可能连带改变人物、发型与构图")
+    || !html.includes("$('dlg-img2img').onclick = () => setDlgMode('tweak')")) {
+  throw new Error("Img2Img copy or legacy tweak button contract changed; review D59");
+}
+console.log("Img2Img capability copy and legacy tweak button contract checked");

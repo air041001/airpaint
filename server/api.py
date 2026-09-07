@@ -1,7 +1,10 @@
 """FastAPI 组装、鉴权、任务队列与对话会话。"""
 import asyncio
 import base64
-import re
+import copy
+import json
+import random
+import struct
 import time
 import uuid
 
@@ -10,14 +13,13 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
-from server.knowledge import _character_names
 from server.lora import (
     _bindings_as_selections,
     compile_lora_bindings,
     get_lora_registry,
     resolve_lora_selections,
 )
-from server.prompt_engine import _normalize_optional_concept, translate
+from server.prompt_engine import _IR_FIELDS, _normalize_optional_concept, _validate_prompt_ir, translate
 from server.runtime import CLIENT, IMAGES, JOBS, QUEUE, SESSIONS, USAGE
 from server.settings import (
     BASE,
@@ -31,9 +33,14 @@ from server.settings import (
     MAX_DIALOG_DELTA_CHARS,
     MAX_PROMPT_EN_CHARS,
     MAX_USER_PROMPT_CHARS,
+    MAX_REFERENCE_IMAGE_CHARS,
+    MAX_SOURCE_IMAGE_CHARS,
     TOKENS,
     WORKFLOWS,
     _normalize_completion_level,
+    normalize_reference_scope,
+    normalize_image_fit,
+    normalize_denoise,
 )
 from server.workflow_engine import submit_and_wait, upload_image_to_comfy
 
@@ -90,7 +97,9 @@ async def worker():
                                          job.get("loras"), job.get("strength_char"), job.get("strength_style"),
                                          job.get("image_filename"), job.get("denoise"),
                                          job.get("detailer"), lora_bindings=job.get("lora_bindings"),
-                                         registry_revision=job.get("registry_revision"))
+                                         registry_revision=job.get("registry_revision"),
+                                         seed=job["seed"], fit_mode=job["fit_mode"],
+                                         crop_position=job["crop_position"])
             job.update(status="done", image=f"/images/{fname}")
         except Exception as e:
             job.update(status="failed", error=str(e))
@@ -177,22 +186,116 @@ def _extract_lora_selections(body: dict):
     single = body.get("lora")
     return [single] if single else []
 
+
+def _request_image(body: dict, field: str, *, legacy: bool = False) -> str:
+    value = body.get(field)
+    if value is None and legacy:
+        value = body.get("image")
+    if value is None:
+        return ""
+    if not isinstance(value, str):
+        raise HTTPException(400, f"{field} 必须是 base64 字符串")
+    limit = MAX_SOURCE_IMAGE_CHARS if field == "source_image" else MAX_REFERENCE_IMAGE_CHARS
+    if len(value) > limit:
+        raise HTTPException(400, f"{field} 过大")
+    return value.strip()
+
+
+def _decode_image(value: str) -> bytes:
+    payload = value.partition(",")[2] if value.startswith("data:") else value
+    try:
+        data = base64.b64decode(payload, validate=True)
+    except (ValueError, TypeError):
+        raise HTTPException(400, "图片不是有效 base64")
+    if not data or not (data.startswith(b"\x89PNG\r\n\x1a\n") or data.startswith(b"\xff\xd8")
+                        or (data.startswith(b"RIFF") and data[8:12] == b"WEBP")):
+        raise HTTPException(400, "图片必须是 PNG、JPEG 或 WebP")
+    return data
+
+
+def _image_dimensions(data: bytes) -> tuple[int, int] | None:
+    """读取 PNG/JPEG 尺寸用于提示，不改变上传图片或工作流画幅。"""
+    if data.startswith(b"\x89PNG") and len(data) >= 24:
+        return struct.unpack(">II", data[16:24])
+    if data.startswith(b"\xff\xd8"):
+        offset = 2
+        while offset + 4 <= len(data):
+            if data[offset] != 0xFF:
+                break
+            marker = data[offset + 1]
+            offset += 2
+            if marker in (0xD8, 0xD9):
+                continue
+            length = int.from_bytes(data[offset:offset + 2], "big")
+            if length < 2 or offset + length > len(data):
+                break
+            if marker in (0xC0, 0xC1, 0xC2, 0xC3) and length >= 7:
+                height, width = struct.unpack(">HH", data[offset + 3:offset + 7])
+                return width, height
+            offset += length
+    return None
+
+
+def _normalize_seed(value) -> int:
+    if value is None:
+        return random.randint(1, 2**31 - 1)
+    if isinstance(value, bool) or not isinstance(value, int) or not 1 <= value <= 2**63 - 1:
+        raise HTTPException(400, "seed 必须是 1~2^63-1 的整数")
+    return value
+
+
+def _request_ir(value) -> dict | None:
+    if value is None:
+        return None
+    if (not isinstance(value, dict) or set(value) != set(_IR_FIELDS)
+            or any(not isinstance(items, list) or any(not isinstance(x, str) for x in items)
+                   for items in value.values()) or len(json.dumps(value)) > 24000):
+        raise HTTPException(400, "prompt_ir 必须是完整十二字段字符串数组")
+    return _validate_prompt_ir(value)
+
+
+_SNAPSHOT_FIELDS = (
+    "prompt_raw", "prompt_en", "prompt_ir", "prompt_edited", "concept", "completion_level",
+    "lora_bindings", "registry_revision", "width", "height", "seed", "parent_job_id",
+    "generation_mode", "denoise", "fit_mode", "crop_position", "change_fields",
+    "reference_contract", "reference_scope", "detailer",
+)
+
+
+def _state_snapshot(job: dict) -> dict:
+    return copy.deepcopy({key: job.get(key) for key in _SNAPSHOT_FIELDS})
+
+
+def _public_job(job: dict) -> dict:
+    keys = ("id", "status", "prompt_raw", "prompt_en", "workflow", "concept", "completion_level",
+            "lora_bindings", "lora_warnings", "registry_revision", "prompt_ir", "seed",
+            "parent_job_id", "generation_mode", "denoise", "fit_mode", "crop_position",
+            "width", "height", "state_snapshot", "change_fields", "image_warnings",
+            "reference_contract", "reference_scope", "image", "error")
+    return {key: job[key] for key in keys if key in job}
+
 @app.post("/api/translate")
 async def translate_prompt(req: Request, token: str = Depends(verify_token)):
     """只编译不排队: 中文构思 -> Anima Prompt，不计入 image 限额。
     返回 {concept, prompt_en, breakdown, prompt_ir, prompt_ir_meta}；completion_level 控制补全幅度，
     concept_override 可把用户编辑后的构思重新编译为 Prompt。
     body.reroll=true: LLM 高温重出一版不同画师补全方案 (抽卡再抽, 跳过缓存, 见 D19).
-    body.image: 可选, 参考图 base64 (data URI). 有图走视觉 LLM 提氛围, 不走文本 LLM (③, 见 D23)."""
+    reference_image/source_image 经 Vision 生成参考契约，再交 Composer；image 保留兼容。"""
     body = await req.json()
     prompt = (body.get("prompt") or "").strip()
-    image = (body.get("image") or "").strip()
+    source_image = _request_image(body, "source_image")
+    image = _request_image(body, "reference_image", legacy=not bool(source_image))
+    if source_image and image:
+        raise HTTPException(400, "reference_image 和 source_image 不能同时提供")
+    scope = normalize_reference_scope(body.get("reference_scope"))
+    if source_image:
+        image, scope = source_image, "full"
     if not prompt and not image:
         raise HTTPException(400, "提示词和参考图不能同时为空")
     if len(prompt) > MAX_USER_PROMPT_CHARS:
         raise HTTPException(400, f"提示词过长(>{MAX_USER_PROMPT_CHARS})")
-    if len(image) > 5_000_000:
-        raise HTTPException(400, "参考图过大(>5MB)")
+    if image:
+        _decode_image(image)
     if prompt:
         check_banned(prompt)
     reroll = bool(body.get("reroll"))
@@ -205,6 +308,7 @@ async def translate_prompt(req: Request, token: str = Depends(verify_token)):
         prompt, reroll=reroll, image_b64=(image or None),
         lora_selections=_extract_lora_selections(body), include_meta=True,
         completion_level=completion_level, concept_override=concept_override,
+        reference_scope=scope, source_image=bool(source_image),
     )
     check_banned(prompt_en)
     return {
@@ -216,6 +320,8 @@ async def translate_prompt(req: Request, token: str = Depends(verify_token)):
         "lora_bindings": prompt_ir_meta.get("lora_bindings", []),
         "lora_warnings": prompt_ir_meta.get("lora_warnings", []),
         "registry_revision": prompt_ir_meta.get("registry_revision"),
+        "reference_contract": prompt_ir_meta.get("reference_contract"),
+        "reference_scope": prompt_ir_meta.get("reference_scope"),
     }
 
 async def _enqueue(token: str, wf_name: str, prompt_en: str, prompt_raw: str,
@@ -225,11 +331,31 @@ async def _enqueue(token: str, wf_name: str, prompt_en: str, prompt_raw: str,
                    lora_bindings: list[dict] | None = None,
                    registry_revision: str | None = None,
                    concept: str | None = None,
-                   completion_level: str = DEFAULT_COMPLETION_LEVEL) -> str:
+                   completion_level: str = DEFAULT_COMPLETION_LEVEL,
+                   prompt_ir: dict | None = None, seed: int | None = None,
+                   fit_mode: str = "preserve", crop_position: str = "center",
+                   parent_job_id: str | None = None, generation_mode: str | None = None,
+                   change_fields: list[str] | None = None, prompt_edited: bool = False,
+                   reference_contract: dict | None = None, reference_scope: str | None = None,
+                   source_dimensions: tuple[int, int] | None = None) -> str:
     """校验并入队一次出图 (USAGE+1 / JOBS / QUEUE.put). create_job 与 /api/dialog/turn 共用. 返回 job_id.
     prompt_en/prompt_raw 的 banned 检查由调用方负责 (两处逻辑不同)."""
     completion_level = _normalize_completion_level(completion_level)
     concept = _normalize_optional_concept(concept, "concept")
+    prompt_ir = _request_ir(prompt_ir)
+    if reference_contract is not None:
+        if not isinstance(reference_contract, dict):
+            raise HTTPException(400, "reference_contract 必须是对象")
+        reference_scope = normalize_reference_scope(reference_scope or reference_contract.get("scope"))
+        reference_contract = {
+            "scope": reference_scope, "fields": _request_ir(reference_contract.get("fields")),
+            "source_model": str(reference_contract.get("source_model") or "")[:200],
+        }
+    seed = _normalize_seed(seed)
+    fit_mode, crop_position = normalize_image_fit(fit_mode, crop_position)
+    denoise = normalize_denoise(denoise, required=bool(image_filename))
+    if denoise is not None and not image_filename:
+        raise HTTPException(400, "denoise 只能用于 Img2Img")
     if wf_name not in WORKFLOWS:
         raise HTTPException(400, "未知工作流")
     wcfg = WORKFLOWS[wf_name]
@@ -266,6 +392,10 @@ async def _enqueue(token: str, wf_name: str, prompt_en: str, prompt_raw: str,
                     raise HTTPException(400, "LoRA 强度需为数字")
                 if not (0 <= sv <= 1):
                     raise HTTPException(400, "LoRA 强度需在 0~1 之间")
+        for binding in resolved_bindings:
+            override = strength_char if binding.get("type") == "character" else strength_style
+            if override is not None:
+                binding["strength_model"] = binding["strength_clip"] = float(override)
         prompt_en = compile_lora_bindings(prompt_en, resolved_bindings)
     else:
         strength_char = strength_style = None
@@ -278,7 +408,20 @@ async def _enqueue(token: str, wf_name: str, prompt_en: str, prompt_raw: str,
         if bad:
             raise HTTPException(400, f"未知精修类型: {bad}")
         detailer = {k: bool(v) for k, v in detailer.items() if k in allowed}
-    USAGE[token][1] += 1
+    image_warnings = []
+    if source_dimensions and width and height and all(source_dimensions):
+        ratio = source_dimensions[0] / source_dimensions[1]
+        if abs(ratio / (width / height) - 1) > 0.03:
+            sizes = wcfg.get("sizes") or []
+            nearest = min(sizes, key=lambda s: abs((int(s.split("x")[0]) / int(s.split("x")[1])) / ratio - 1)) if sizes else None
+            image_warnings.append(f"原图比例与 {width}×{height} 不同，将按{'裁切' if fit_mode == 'crop' else '保留全图并扩边'}处理；最近画幅为 {nearest}。尺寸未自动改变。")
+    today = time.strftime("%Y-%m-%d")
+    usage = USAGE.setdefault(token, [today, 0])
+    if usage[0] != today:
+        usage[:] = [today, 0]
+    if usage[1] >= DAILY_LIMIT:
+        raise HTTPException(429, f"今日已达 {DAILY_LIMIT} 张上限")
+    usage[1] += 1
     job_id = uuid.uuid4().hex[:10]
     JOBS[job_id] = {
         "id": job_id, "token": token, "workflow": wf_name,
@@ -292,8 +435,15 @@ async def _enqueue(token: str, wf_name: str, prompt_en: str, prompt_raw: str,
         "strength_char": strength_char, "strength_style": strength_style,
         "image_filename": image_filename, "denoise": denoise,
         "detailer": detailer,
+        "prompt_ir": prompt_ir, "prompt_edited": bool(prompt_edited), "seed": seed,
+        "parent_job_id": parent_job_id,
+        "generation_mode": generation_mode or ("img2img" if image_filename else "txt2img"),
+        "fit_mode": fit_mode, "crop_position": crop_position,
+        "change_fields": change_fields or [], "image_warnings": image_warnings,
+        "reference_contract": copy.deepcopy(reference_contract), "reference_scope": reference_scope,
         "status": "queued", "created": time.time(),
     }
+    JOBS[job_id]["state_snapshot"] = _state_snapshot(JOBS[job_id])
     await QUEUE.put(job_id)
     return job_id
 
@@ -316,15 +466,21 @@ async def create_job(req: Request, token: str = Depends(auth)):
     if prompt_raw != prompt_en:
         check_banned(prompt_raw)
     # img2img: 图 base64 -> 上传 ComfyUI -> 拿文件名 (见 D26)
-    image_b64 = (body.get("image") or "").strip()
-    denoise = body.get("denoise")
+    image_b64 = _request_image(body, "source_image", legacy=True)
+    denoise = normalize_denoise(body.get("denoise"), required=bool(image_b64))
+    if denoise is not None and not image_b64:
+        raise HTTPException(400, "denoise 只能用于 Img2Img")
+    fit_mode, crop_position = normalize_image_fit(body.get("fit_mode"), body.get("crop_position"))
+    seed = _normalize_seed(body.get("seed"))
+    prompt_ir = _request_ir(body.get("prompt_ir"))
     detailer = body.get("detailer")
     image_filename = None
+    source_dimensions = None
     if image_b64:
-        if "," in image_b64:
-            image_b64 = image_b64.split(",", 1)[1]
+        image_bytes = _decode_image(image_b64)
+        source_dimensions = _image_dimensions(image_bytes)
         try:
-            image_filename = await upload_image_to_comfy(base64.b64decode(image_b64))
+            image_filename = await upload_image_to_comfy(image_bytes)
         except Exception as e:
             raise HTTPException(502, f"图片上传失败 ({e})")
     job_id = await _enqueue(token, wf_name, prompt_en, prompt_raw,
@@ -333,25 +489,22 @@ async def create_job(req: Request, token: str = Depends(auth)):
                             image_filename, denoise, detailer,
                             lora_bindings=lora_bindings,
                             registry_revision=registry_revision,
-                            concept=concept, completion_level=completion_level)
+                            concept=concept, completion_level=completion_level,
+                            prompt_ir=prompt_ir, seed=seed, fit_mode=fit_mode,
+                            crop_position=crop_position, source_dimensions=source_dimensions,
+                            prompt_edited=bool(body.get("prompt_edited")),
+                            reference_contract=body.get("reference_contract"),
+                            reference_scope=body.get("reference_scope"))
     job = JOBS[job_id]
-    return {"id": job_id, "prompt_en": job["prompt_en"],
-            "lora_bindings": job.get("lora_bindings", []),
-            "lora_warnings": job.get("lora_warnings", []),
-            "registry_revision": job.get("registry_revision"),
-            "concept": job.get("concept"),
-            "completion_level": job.get("completion_level")}
+    return _public_job(job)
 
 @app.get("/api/jobs/{job_id}")
-async def job_status(job_id: str, token: str = Depends(auth)):
+async def job_status(job_id: str, token: str = Depends(verify_token)):
     job = JOBS.get(job_id)
-    if not job:
+    if not job or job["token"] != token:
         raise HTTPException(404, "任务不存在")
     queued_ids = list(QUEUE._queue)  # MVP 简单读取
-    resp = {k: job[k] for k in (
-        "id", "status", "prompt_raw", "prompt_en", "workflow",
-        "concept", "completion_level", "lora_bindings", "lora_warnings",
-        "registry_revision") if k in job}
+    resp = _public_job(job)
     if job["status"] == "queued":
         resp["position"] = queued_ids.index(job_id) + 1 if job_id in queued_ids else 1
     if job["status"] == "done":
@@ -360,221 +513,183 @@ async def job_status(job_id: str, token: str = Depends(auth)):
         resp["error"] = job.get("error", "未知错误")
     return resp
 
+def _session_source(session: dict, source_job_id: str | None, token: str) -> dict:
+    turn_ids = [turn["job_id"] for turn in session["turns"]]
+    if not source_job_id:
+        source_job_id = next((job_id for job_id in reversed(turn_ids)
+                              if JOBS.get(job_id, {}).get("status") == "done"), None)
+    if source_job_id not in turn_ids:
+        raise HTTPException(400, "source_job_id 必须属于当前会话")
+    source = JOBS.get(source_job_id)
+    if not source or source.get("token") != token:
+        raise HTTPException(404, "源任务不存在")
+    if source.get("status") != "done" or not source.get("image"):
+        raise HTTPException(400, "只能从已完成的图片继续")
+    return source
+
+
+def _new_session(token: str) -> dict:
+    return {"id": uuid.uuid4().hex[:10], "token": token, "created": time.time(), "turns": []}
+
+
+def _update_session(session: dict, job: dict):
+    session.update({
+        "raw": job["prompt_raw"], "current_en": job["prompt_en"],
+        "concept": job.get("concept"), "completion_level": job.get("completion_level"),
+        "lora_bindings": copy.deepcopy(job.get("lora_bindings", [])),
+        "lora_selections": _bindings_as_selections(job.get("lora_bindings", [])),
+        "lora_warnings": job.get("lora_warnings", []),
+        "registry_revision": job.get("registry_revision"),
+    })
+
+
 @app.post("/api/dialog/turn")
-async def dialog_turn(req: Request, token: str = Depends(auth)):
-    """⑤ 对话迭代: 每轮一次出图 (走 _enqueue/worker, 计入日限). action:
-    start=建会话+首图; redo(换一版)=delta 有则 raw+=delta 重翻译, 无则复用 current_en 换 seed;
-    vibe(保氛围)=上一张图走 iterate 视觉全量提取(锁主体+氛围)再变体. 显式路由不猜意图, 见 D25."""
+async def dialog_turn(req: Request, token: str = Depends(verify_token)):
+    """显式换一版/微调，从所选父任务快照增量修改，不拼接历史 raw。"""
     body = await req.json()
     action = (body.get("action") or "").strip()
     session_id = (body.get("session_id") or "").strip()
     delta = (body.get("delta") or "").strip()
     if len(delta) > MAX_DIALOG_DELTA_CHARS:
         raise HTTPException(400, f"改动描述过长(>{MAX_DIALOG_DELTA_CHARS})")
-    wf_name = body.get("workflow", "")
-    image_filename = None
-    denoise = None
-    requested_lora_selections = _extract_lora_selections(body)
+    if delta:
+        check_banned(delta)
+    if action == "start-image":
+        src_job_id = (body.get("job_id") or body.get("source_job_id") or "").strip()
+        src_job = JOBS.get(src_job_id)
+        if not src_job or src_job.get("token") != token:
+            raise HTTPException(404, "原图任务不存在")
+        if src_job.get("status") != "done" or not src_job.get("image"):
+            raise HTTPException(400, "原图还没生成完")
+        session = _new_session(token)
+        _update_session(session, src_job)
+        session["turns"].append({"job_id": src_job_id, "action": "start-image", "delta": ""})
+        SESSIONS[session["id"]] = session
+        return {"session_id": session["id"], "job_id": src_job_id, **_public_job(src_job)}
 
+    image_filename = None
+    source_dimensions = None
+    source = None
+    fit_mode, crop_position = normalize_image_fit(body.get("fit_mode"), body.get("crop_position"))
+    denoise = None
+    seed = body.get("seed")
+    prompt_edited = False
     if action == "start":
         prompt = (body.get("prompt") or "").strip()
         if not prompt or len(prompt) > MAX_USER_PROMPT_CHARS:
             raise HTTPException(400, f"提示词为空或过长(>{MAX_USER_PROMPT_CHARS})")
-        completion_level = _normalize_completion_level(body.get("completion_level"))
         check_banned(prompt)
-        try:
-            prompt_en, _, _, translate_meta = await translate(
-                prompt, lora_selections=requested_lora_selections, include_meta=True,
-                completion_level=completion_level)
-        except HTTPException:
-            raise
-        except Exception as e:
-            raise HTTPException(502, f"翻译失败, 请稍后重试 ({e})")
-        check_banned(prompt_en)
-        session_id = uuid.uuid4().hex[:10]
-        session_bindings = translate_meta.get("lora_bindings", [])
-        SESSIONS[session_id] = {
-            "id": session_id, "token": token, "raw": prompt,
-            "current_en": prompt_en, "created": time.time(), "turns": [],
-            "concept": translate_meta.get("concept"),
-            "completion_level": completion_level,
-            "lora_selections": _bindings_as_selections(session_bindings),
-            "lora_bindings": session_bindings,
-            "lora_warnings": translate_meta.get("lora_warnings", []),
-            "registry_revision": translate_meta.get("registry_revision"),
-        }
+        completion_level = _normalize_completion_level(body.get("completion_level"))
+        prompt_en, _, prompt_ir, meta = await translate(
+            prompt, lora_selections=_extract_lora_selections(body), include_meta=True,
+            completion_level=completion_level)
+        session = _new_session(token)
         raw = prompt
-    elif action == "start-image":
-        # 从已完成的 job 起步, 不重新生成 -- 原图当第一轮 (前端「继续迭代」直接进暗房)
-        src_job_id = (body.get("job_id") or "").strip()
-        src_job = JOBS.get(src_job_id)
-        if not src_job or src_job["token"] != token:
-            raise HTTPException(404, "原图任务不存在")
-        if src_job.get("status") != "done" or not src_job.get("image"):
-            raise HTTPException(400, "原图还没生成完")
-        session_id = uuid.uuid4().hex[:10]
-        SESSIONS[session_id] = {
-            "id": session_id, "token": token,
-            "raw": src_job.get("prompt_raw", ""),
-            "current_en": src_job.get("prompt_en", ""),
-            "created": time.time(),
-            "concept": src_job.get("concept"),
-            "completion_level": _normalize_completion_level(
-                src_job.get("completion_level")),
-            "lora_selections": _bindings_as_selections(src_job.get("lora_bindings")),
-            "lora_bindings": src_job.get("lora_bindings", []),
-            "lora_warnings": src_job.get("lora_warnings", []),
-            "registry_revision": src_job.get("registry_revision"),
-            "turns": [{"job_id": src_job_id, "action": "start-image", "delta": "",
-                       "prompt_en": src_job.get("prompt_en", ""),
-                       "concept": src_job.get("concept"),
-                       "completion_level": _normalize_completion_level(
-                           src_job.get("completion_level"))}],
-        }
-        return {"session_id": session_id, "job_id": src_job_id}
-    else:
+        wf_name = body.get("workflow") or next(iter(WORKFLOWS))
+        size = body.get("size")
+    elif action in {"redo", "tweak", "vibe"}:
         session = SESSIONS.get(session_id)
         if not session or session["token"] != token:
             raise HTTPException(404, "会话不存在")
-        if action == "redo":
-            if delta:
-                check_banned(delta)
-                # 替换意图: 从原 raw 删 char_dict 命中的旧角色名, 避免 char_dict 双命中
-                # (redo 累加重翻译时, "换成X"会让旧角色+新角色同时被 char_dict 命中,
-                #  LLM 全保留导致新旧角色并存+1boy乱入; 见 D31)
-                if any(kw in delta for kw in ("换成", "替换", "改成", "换为", "改为")):
-                    for name in _character_names():
-                        if name in session["raw"]:
-                            session["raw"] = session["raw"].replace(name, "")
-                    session["raw"] = re.sub(r"[,，\s]+", " ", session["raw"]).strip()
-                session["raw"] = (session["raw"] + "，" + delta) if session["raw"] else delta
-                try:
-                    prompt_en, _, _, translate_meta = await translate(
-                        session["raw"], lora_selections=session.get("lora_selections", []),
-                        include_meta=True,
-                        completion_level=session.get("completion_level", DEFAULT_COMPLETION_LEVEL))
-                    session["concept"] = translate_meta.get("concept")
-                    session["lora_bindings"] = translate_meta.get("lora_bindings", [])
-                    session["lora_warnings"] = translate_meta.get("lora_warnings", [])
-                    session["registry_revision"] = translate_meta.get("registry_revision")
-                    session["lora_selections"] = _bindings_as_selections(session["lora_bindings"])
-                except HTTPException:
-                    raise
-                except Exception as e:
-                    raise HTTPException(502, f"翻译失败, 请稍后重试 ({e})")
-            else:
-                prompt_en = session["current_en"]
-            session["current_en"] = prompt_en
-            raw = session["raw"]
-        elif action == "vibe":
-            if delta:
-                check_banned(delta)
-            # 图在 JOBS 里 (worker 完成后写 image), turn 记录里没有 -> 从 JOBS 按 job_id 找最新出图
-            last_img = next((JOBS.get(t["job_id"], {}).get("image")
-                             for t in reversed(session["turns"]) if JOBS.get(t["job_id"], {}).get("image")), None)
-            if not last_img:
-                raise HTTPException(400, "还没有已生成的图, 无法保氛围")
+        source = _session_source(session, body.get("source_job_id"), token)
+        state = copy.deepcopy(source.get("state_snapshot") or _state_snapshot(source))
+        bindings = source.get("lora_bindings", [])
+        selections = _bindings_as_selections(bindings)
+        if bindings:
+            resolve_lora_selections(selections, expected_revision=source.get("registry_revision"))
+        if any(key in body for key in ("lora_selections", "loras", "lora")):
+            requested, _, _ = resolve_lora_selections(_extract_lora_selections(body))
+            if _bindings_as_selections(requested) != selections:
+                raise HTTPException(409, "当前迭代链固定 LoRA；更换 LoRA 请回工坊开启新生成链")
+        completion_level = _normalize_completion_level(state.get("completion_level"))
+        wf_name = body.get("workflow") or source["workflow"]
+        size = body.get("size") or (f'{source["width"]}x{source["height"]}' if source.get("width") else None)
+        raw = state.get("prompt_raw") or source["prompt_en"]
+        prompt_en, prompt_ir = source["prompt_en"], state.get("prompt_ir")
+        prompt_edited = bool(state.get("prompt_edited"))
+        meta = {
+            "concept": state.get("concept"), "lora_bindings": bindings,
+            "lora_warnings": source.get("lora_warnings", []),
+            "registry_revision": source.get("registry_revision"), "change_fields": [],
+            "reference_contract": state.get("reference_contract"),
+            "reference_scope": state.get("reference_scope"),
+        }
+        seed_strategy = body.get("seed_strategy") or ("fixed" if seed is not None else
+                                                     "inherit" if action == "tweak" else "random")
+        if seed_strategy not in {"inherit", "random", "fixed"}:
+            raise HTTPException(400, "seed_strategy 必须是 inherit、random 或 fixed")
+        if seed_strategy == "inherit":
+            seed = source.get("seed")
+        elif seed_strategy == "random":
+            seed = None
+        elif seed is None:
+            raise HTTPException(400, "fixed 策略必须提供 seed")
+        seed = _normalize_seed(seed)
+        if action == "tweak":
+            denoise = normalize_denoise(body.get("denoise"), required=True)
+        if action == "vibe":
+            image_path = IMAGES / source["image"].rsplit("/", 1)[-1]
+            if not image_path.is_file():
+                raise HTTPException(400, "源图片文件不在了")
+            image_b64 = "data:image/png;base64," + base64.b64encode(image_path.read_bytes()).decode()
+            prompt_en, _, prompt_ir, meta = await translate(
+                delta or raw, image_b64=image_b64, reference_scope="composition_vibe",
+                lora_selections=selections, include_meta=True, completion_level=completion_level)
+            prompt_edited = False
+        elif delta:
+            prompt_en, _, prompt_ir, meta = await translate(
+                delta, prior_state=state, lora_selections=selections, include_meta=True,
+                completion_level=completion_level)
+            prompt_edited = False
+        if action == "tweak":
+            fit_mode, crop_position = normalize_image_fit(
+                body.get("fit_mode", source.get("fit_mode")), body.get("crop_position", source.get("crop_position")))
+            image_path = IMAGES / source["image"].rsplit("/", 1)[-1]
+            if not image_path.is_file():
+                raise HTTPException(400, "源图片文件不在了")
+            image_bytes = image_path.read_bytes()
+            source_dimensions = _image_dimensions(image_bytes)
             try:
-                image_b64 = "data:image/png;base64," + base64.b64encode(
-                    (IMAGES / last_img.rsplit("/", 1)[-1]).read_bytes()).decode()
-            except FileNotFoundError:
-                raise HTTPException(400, "上一张图文件不在了, 请重新生成")
-            try:
-                # ③ reference 路径: char_dict+dict 从 delta 预匹配(认角色名), VL 从图提氛围(vibe-only),
-                # 主体由 delta 文字给。不用 iterate(锁主体) -- 用户要"保氛围换主体"=reference, iterate 反而冲突(见 D25 修正)
-                prompt_en, _, _, translate_meta = await translate(
-                    delta, image_b64=image_b64,
-                    lora_selections=session.get("lora_selections", []), include_meta=True,
-                    completion_level=session.get("completion_level", DEFAULT_COMPLETION_LEVEL))
-                # 视觉路径没有 Composer CONCEPT；不要把上一轮构思错误归因给新 Prompt。
-                session["concept"] = translate_meta.get("concept")
-                session["lora_bindings"] = translate_meta.get("lora_bindings", [])
-                session["lora_warnings"] = translate_meta.get("lora_warnings", [])
-                session["registry_revision"] = translate_meta.get("registry_revision")
-                session["lora_selections"] = _bindings_as_selections(session["lora_bindings"])
-            except HTTPException:
-                raise
-            except Exception as e:
-                raise HTTPException(502, f"视觉理解失败, 请稍后重试 ({e})")
-            check_banned(prompt_en)
-            session["current_en"] = prompt_en
-            raw = f"[保氛围]{(' ' + delta) if delta else ''}"
-        elif action == "tweak":
-            # img2img 微调 (D26): 上一张图上传 ComfyUI -> anima-img2img 工作流 + 低 denoise
-            if delta:
-                check_banned(delta)
-            last_img = next((JOBS.get(t["job_id"], {}).get("image")
-                             for t in reversed(session["turns"]) if JOBS.get(t["job_id"], {}).get("image")), None)
-            if not last_img:
-                raise HTTPException(400, "还没有已生成的图, 无法微调")
-            try:
-                image_bytes = (IMAGES / last_img.rsplit("/", 1)[-1]).read_bytes()
                 image_filename = await upload_image_to_comfy(image_bytes)
-            except FileNotFoundError:
-                raise HTTPException(400, "上一张图文件不在了")
-            except Exception as e:
-                raise HTTPException(502, f"图片上传失败 ({e})")
-            # delta -> 翻译 (纯文本, 不走 VL); 无 delta 复用 current_en
-            if delta:
-                session["raw"] = (session["raw"] + "，" + delta) if session["raw"] else delta
-                try:
-                    prompt_en, _, _, translate_meta = await translate(
-                        session["raw"], lora_selections=session.get("lora_selections", []),
-                        include_meta=True,
-                        completion_level=session.get("completion_level", DEFAULT_COMPLETION_LEVEL))
-                    session["concept"] = translate_meta.get("concept")
-                    session["lora_bindings"] = translate_meta.get("lora_bindings", [])
-                    session["lora_warnings"] = translate_meta.get("lora_warnings", [])
-                    session["registry_revision"] = translate_meta.get("registry_revision")
-                    session["lora_selections"] = _bindings_as_selections(session["lora_bindings"])
-                except HTTPException:
-                    raise
-                except Exception as e:
-                    raise HTTPException(502, f"翻译失败 ({e})")
-            else:
-                prompt_en = session["current_en"]
-            session["current_en"] = prompt_en
-            wf_name = "anima"   # 合并版工作流 (img2img 由 image_filename 触发, 见 D32)
-            denoise = body.get("denoise", 0.4)
-            raw = f"[微调]{(' ' + delta) if delta else ''}"
-        else:
-            raise HTTPException(400, f"未知 action: {action}")
+            except Exception as exc:
+                raise HTTPException(502, f"图片上传失败 ({exc})")
+    else:
+        raise HTTPException(400, f"未知 action: {action}")
 
     check_banned(prompt_en)
-    session = SESSIONS[session_id]
-    job_id = await _enqueue(token, wf_name, prompt_en, raw,
-                            body.get("size"), session.get("lora_selections", []),
-                            body.get("strength_char"), body.get("strength_style"),
-                            image_filename, denoise, body.get("detailer"),
-                            lora_bindings=session.get("lora_bindings"),
-                            registry_revision=session.get("registry_revision"),
-                            concept=session.get("concept"),
-                            completion_level=session.get(
-                                "completion_level", DEFAULT_COMPLETION_LEVEL))
-    session["turns"].append({"job_id": job_id, "action": action, "delta": delta,
-                             "prompt_en": JOBS[job_id]["prompt_en"],
-                             "concept": JOBS[job_id].get("concept"),
-                             "completion_level": JOBS[job_id].get("completion_level")})
-    return {"session_id": session_id, "job_id": job_id}
+    if source and _bindings_as_selections(meta.get("lora_bindings", [])) != selections:
+        raise HTTPException(502, "增量修改改变了固定 LoRA binding，本次未入队；请重试或回工坊开启新链")
+    job_id = await _enqueue(
+        token, wf_name, prompt_en, raw, size, None,
+        None if source else body.get("strength_char"), None if source else body.get("strength_style"),
+        image_filename, denoise, body.get("detailer", source.get("detailer") if source else None),
+        lora_bindings=meta.get("lora_bindings"), registry_revision=meta.get("registry_revision"),
+        concept=meta.get("concept"), completion_level=completion_level, prompt_ir=prompt_ir,
+        seed=seed, fit_mode=fit_mode, crop_position=crop_position,
+        parent_job_id=source["id"] if source else None,
+        generation_mode=action if source else "txt2img",
+        change_fields=meta.get("change_fields"), prompt_edited=prompt_edited,
+        reference_contract=meta.get("reference_contract"), reference_scope=meta.get("reference_scope"),
+        source_dimensions=source_dimensions,
+    )
+    job = JOBS[job_id]
+    _update_session(session, job)
+    session["turns"].append({"job_id": job_id, "action": action, "delta": delta})
+    SESSIONS[session["id"]] = session
+    return {"session_id": session["id"], "job_id": job_id, **_public_job(job)}
+
 
 @app.get("/api/dialog/{session_id}")
-async def dialog_get(session_id: str, token: str = Depends(auth)):
-    """返回会话线程: turns 里每轮 join JOBS 拿 status/image (worker 完成后 image 才有值)."""
+async def dialog_get(session_id: str, token: str = Depends(verify_token)):
     session = SESSIONS.get(session_id)
     if not session or session["token"] != token:
         raise HTTPException(404, "会话不存在")
     turns = []
-    for t in session["turns"]:
-        job = JOBS.get(t["job_id"], {})
-        turns.append({
-            "action": t["action"], "delta": t["delta"], "prompt_en": t["prompt_en"],
-            "concept": t.get("concept"),
-            "completion_level": t.get("completion_level"),
-            "status": job.get("status", "?"), "image": job.get("image"), "error": job.get("error"),
-        })
-    return {"session_id": session_id, "raw": session["raw"], "current_en": session["current_en"],
-            "concept": session.get("concept"),
-            "completion_level": session.get("completion_level", DEFAULT_COMPLETION_LEVEL),
-            "lora_bindings": session.get("lora_bindings", []),
-            "lora_warnings": session.get("lora_warnings", []),
-            "registry_revision": session.get("registry_revision"), "turns": turns}
+    for turn in session["turns"]:
+        job = JOBS.get(turn["job_id"], {})
+        turns.append({**_public_job(job), "job_id": turn["job_id"],
+                      "action": turn["action"], "delta": turn["delta"]})
+    return {key: session.get(key) for key in (
+        "raw", "current_en", "concept", "completion_level", "lora_bindings",
+        "lora_warnings", "registry_revision"
+    )} | {"session_id": session_id, "turns": turns}

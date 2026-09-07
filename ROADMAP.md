@@ -18,9 +18,9 @@ Visual Composer、Character Knowledge、LoRA Context / Binding / Composition 工
 
 ## 条件触发方向
 
-### PromptState / 字段级增量编辑
+### 更细粒度的 PromptState / 图像约束
 
-只有暗房使用证明“只换衣服、保持动作/构图”等字段锁定需求高频，或字符串累积再次造成稳定错误时，才启动 PromptState 与 dialog 状态重构。
+本轮已按真实暗房需求实现任务快照、十二字段 IR 增量修改与历史分支，图片验收状态见 BUILDHANDOFF。下一步只有真实使用证明仍需要永久字段锁、区域约束或更强参考保真时，再独立评估；不把这些能力悄悄塞入本轮。
 
 ### Workflow Intelligence
 
@@ -37,7 +37,7 @@ Visual Composer、Character Knowledge、LoRA Context / Binding / Composition 工
 
 ## 明确不做
 
-- 不恢复无目标的大批量 Prompt 跑分。
+- 不恢复无目标的大批量 Prompt 跑分。本轮参考/Img2Img/迭代最多五张定向验收，不因结果不满意自动扩批。
 - 不用更长 Prompt、更满 IR 或单测通过代替图片人眼判断。
 - 不建设大规模 LoRA 推荐、marketplace、社交、用户画像或向量数据库。
 - 不让 LLM 决定 LoRA 文件名、节点 ID、强度或 exact trigger。

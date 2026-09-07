@@ -1,6 +1,6 @@
 # 架构
 
-> 当前状态反映 2026-08-30（前后端统一追踪、后端职责拆分后）。
+> 当前状态反映 2026-08-31（参考契约、Img2Img 与分支迭代实现；图片验收状态见 BUILDHANDOFF）。
 > 改动架构时同步本文件（见 `AGENTS.md`）。
 
 ## 部署拓扑
@@ -16,7 +16,7 @@ cloudflared 命名隧道 "airpaint" (永久固定, 重启不变)
    ▼
 FastAPI 后端  127.0.0.1:8000  (server/api.py，server/main.py 启动)
    ├─ 鉴权 / 日限流 / 内容过滤
-   ├─ Prompt Engine:  中文 → danbooru tag
+   ├─ Prompt Engine: 中文/参考契约/原状态 → Concept + IR + Anima Prompt
    ├─ Workflow Engine: 注入 prompt/seed/size/LoRA, detailer 删节点拼接, 清洗前端专属节点
    ├─ 单并发队列 (asyncio.Queue, GPU 串行)
    └─ 静态托管 / + /images + /lora-previews
@@ -62,16 +62,43 @@ ComfyUI  127.0.0.1:8188  (不对公网开放)
 `translate(text, reroll, image_b64, lora_selections, completion_level, concept_override)` 默认返回 `(prompt_en, breakdown, prompt_ir)`；`include_meta=True` 再返回 `prompt_ir_meta`，`/api/translate` 从中 additive 暴露 `concept`、补全/来源元数据与 LoRA binding snapshot。当前生产流程如下：
 
 1. **角色 canonical knowledge** (`match_characters`, `char_dict.yaml`)：子串扫描历史正式词典和 Danbooru exact 验证后的自动缓存，返回角色 tag 与移除角色名后的文本。正式 `char_dict.yaml` 优先是运行顺序，不表示其历史 AI 生成条目已逐一验证。只有纯角色名、无 active LoRA、无 `concept_override` 的 SiliconFlow 请求走确定性快路，返回 `角色tag, 1girl, solo` 与“模型补全：无”。
-2. **文本 Composer 路由**：SiliconFlow 普通文本把完整用户意图与角色 canonical tag 交给 Reasoning Model，ordinary `dict.yaml` 不再抢先删除词语，也不能因全命中绕过 LLM。`dict.yaml` 及 `match_dict_words()` 仍保留给参考图和 `google`/`none` legacy 降级路径；它没有被删除或宣布为无效知识。
+2. **Composer 路由**：SiliconFlow 文本与参考图把完整用户意图、角色 canonical tag 和可选参考契约交给 Reasoning Model，ordinary `dict.yaml` 不抢先删除词语或因全命中绕过 LLM。`dict.yaml` 仍保留给 `google`/`none` 普通文本降级路径；图像理解与增量修改不走这些降级路径。
 3. **Visual Composer** (`PAINTER_SYSTEM_PROMPT`)：补全程度由显式 `auto | faithful | free` 控制，不根据字数猜测。`auto` 按语义覆盖度补重要空位，`faithful` 只补成图必需项，`free` 在保留用户锁定后自由设计完整插画。稀疏输入会形成一个具体主视觉，详细输入保持用户决定，不强行加入年龄词、rating、质量前缀、负面词或 LoRA exact trigger。用户明确写出的服装状态、暴露程度、可见身体细节、行为与镜头属于硬锁，Composer 必须用直接可绘制的 Anima 表达保留，不得委婉、遮挡或裁出画面；未说明的服装/暴露仍是补全空间，不从性行为本身推导裸体或遮盖。用户明确覆盖 active LoRA 服装时只覆盖受影响部位，其余 LoRA 概念继续保留。
-4. **严格文本协议与定向语义修复**：SiliconFlow 文本必须输出 `CONCEPT`、精确 12 字段单行 `IR`、必填 `CHAR`、有 active LoRA 时的 `LORA` JSON、`PROMPT`，且没有其他行。无未知角色时使用 `CHAR: none`；否则只允许 `用户原文角色名 => 小写 canonical tag 候选`，必须位于 IR 之后。整句、代词、通用指令和风格名不得进入自动查询/缓存。解析器仍兼容旧的无 `CHAR` 三行响应，但生产 system prompt 不再把它定义为可选。`CONCEPT` 固定为 `用户锁定：…｜模型补全：…`；`concept_override` 必须保持该结构并作为用户编辑后的权威蓝图。协议错误、确定的画面容量冲突或角色 LoRA 发色/瞳色越权都只修复一次，第二次仍失败则 502 fail closed，绝不把错误响应直接当 Prompt。显式选择至少两个角色 Profile 时，Registry 的 `provides`/alias/trigger 还会形成稳定英文主体名并启用精简双角色协议；参考图 Vision 与非 SiliconFlow legacy 路径继续使用原有兼容协议。
+4. **严格协议与定向语义修复**：Composer 输出 `CONCEPT`、精确十二字段单行 `IR`、必填 `CHAR`、有 active LoRA 时的 `LORA` JSON、`PROMPT`。无未知角色时使用 `CHAR: none`；否则只允许 `用户原文角色名 → canonical 候选`，必须位于 IR 之后。整句、代词、通用指令和风格名不进入查询/缓存。解析器兼容旧无 CHAR 三行，但生产不再将其设为可选。构思固定为 `用户锁定：…｜模型补全：…`，编辑后作为权威蓝图。协议错误、画面容量冲突或 LoRA 发色/瞳色越权只修复一次，仍错则 502。显式至少两个角色 Profile 时启用精简双角色协议；参考图也进入同一 Composer。增量修订额外在开头输出 `CHANGE_FIELDS`。
 5. **自由 Anima 表达与双角色分流**：`PROMPT` 可以是 canonical tag、英文短句、自然语言或混合，不设固定 tag/句子/单词/字符数量。双角色以 tag-first 为基础：熟悉的动作、接触与空间关系优先使用 Anima tag；只有身份位置、特殊空间或道具归属确实需要时才追加一条具名短句。贴身高密度互动禁止逐部位长关系段，末尾位置绑定最多 12 个英文词。稀疏 `auto/free` 双人输入默认围绕一个共享画面瞬间、主要互动与单一构图重点补全，不把两人机械排成独立立绘；`faithful` 仍以用户锁定为准。5 个前端 breakdown 字段继续由 IR 的 scene/composition/mood/lighting/style 派生。
 6. **确定性 Compiler / 可画性护栏**：代码补主体计数、清理精确角色的裸名变体、折叠完整逗号序列的机械复读；用户明确写 `2girls/2boys` 或双人/两人时，多主体 count 会覆盖冲突的单主体 count，并从最终 Prompt 与公开 IR 移除 `solo/solo focus`。性别仍来自用户 exact count 或 Composer 自身语义，不从 LoRA Profile 名猜测。LoRA Prompt 以顶层逗号切分，保留括号内的逐角色属性簇。多人拒绝已复现会诱发分割/裁切的抽象措辞、下半身锁定与近景冲突，以及贴身场景的多句逐部位关系段；只修可确定问题，不以静态规则判定审美。用户明确写全身/完整可见时移除互斥近景。模型补全若同时发明多个手部/服装操作，或用 `upper body/close-up` 承诺裙摆、髋部、大腿等画外交互，会退回 Composer 改为牛仔镜头/四分之三身或删减动作。新文本路径仍不继承旧 `_prepare_painter_tags()` 的自动裸体、固定景别或画风删除。未知角色只由通过原文名字边界校验的显式 `CHAR` 发起 Danbooru exact 验证；`IR.subject` 候选不再自动查询或写 cache。
 7. **缓存与模型调用**：LRU 缓存上限 500，key 是完整 Composer 上下文，因此包含补全档、`concept_override`、LoRA selection 与 registry revision；reroll 跳过缓存并在同一补全档内换构思。Reasoning Model `max_tokens=1800`；普通温度为 faithful 0.35 / auto 0.7 / free 0.8，reroll 使用配置的高温。`/no_think` 与 `enable_thinking:false` 默认关闭思考，失败抛 502。
 
 正向 `quality_prefix` 由工作流代码统一提供 (`masterpiece, best quality, newest, absurdres`)；rating 只保留用户在英文 Prompt 中的明确输入。负面 Prompt 是 `AnimaFull.json` 节点 4 的固定常量，不随输入变化，包含 WAI-Anima 质量项、构图否定词，以及 `bad hands / missing fingers / extra fingers / fused fingers / extra arms / extra legs / bad feet / malformed feet` 的人体防御项。它只能降低部分常见失败概率，不代表人体问题已解决。见 D44/D46。
 
-Active LoRA 时，Reasoning/Vision Model 只看 Asset/Profile 的 `provides` 与允许选择的 ID，不看文件名、强度或 exact trigger。严格文本协议要求 `LORA` JSON 语义选择，代码再解析 Profile/optional ID 并确定性注入 exact binding；Binding Compiler 同时排除兄弟 Profile 的 exact trigger 与身份裸名复述。文本 Composer 把角色 LoRA 身份外观视为闭集：Profile 的 `black/white/swim` 只表示已登记形态，不能推断发色或瞳色；只有用户原文/权威构思明确锁定的发色、瞳色可以进入 IR/PROMPT，越权项触发一次语义修复。该规则不猜角色真实发色，Registry 未声明时让角色 LoRA 自身提供。翻译缓存 key 包含 selection 与 registry revision，避免不同 LoRA/Profile 共享 Prompt。
+Active LoRA 时，Reasoning Model 只看 Asset/Profile 的 `provides` 与允许选择的 ID，不看文件名、强度或 exact trigger；Vision 只观察图片，不接收 LoRA 或用户文字。严格文本协议要求 `LORA` JSON 语义选择，代码再解析 Profile/optional ID 并确定性注入 exact binding。Profile 的 `black/white/swim` 不用于猜发色、瞳色；只有用户显式外观覆盖及既有迭代状态中的外观锁可进入 Composer，越权项修复一次。缓存包含 selection 与 registry revision。
+
+### 参考契约与独立 Img2Img
+
+`Vision → 结构化参考契约 → Reasoning Composer → CONCEPT + 十二字段 IR + Prompt`。Vision 不再直接写最终 TAG/NL，也不跳过 Composer。图片文字是观察对象，不是可执行指令。
+
+| 范围 | 契约允许字段 | 用途 |
+|---|---|---|
+| `composition` | composition / interaction | 镜头、布局、比例与空间关系；匿名主体，不带具体动作或身份 |
+| `composition_vibe`（默认） | 上述 + lighting / mood / style | 再借光影、配色与渲染氛围，不复制具体场景、服装、角色 |
+| `full` | 除 constraints 外的现有字段 | 再参考可见外观、服装、动作与场景 |
+
+代码拒绝未知字段，规范被省略的空字段，并清空不在范围内的字段；语义上藏在空间描述里的具体物体不能靠字段白名单完全判定，Composer 还需按范围适配，实际保真度以图片为准。固定优先级：用户明确要求/编辑构思 > LoRA 身份/Profile > 所选参考范围 > 模型补全。
+
+参考缓存最多 128 项，按图片字节 SHA-256、scope、Vision 模型配置和契约版本隔离，返回深拷贝；不含用户文字，reroll 仅重构思，不重解释同一张图。Vision `max_tokens=1400`。完整 Composer 缓存仍为 500 项。
+
+前端一次上传产生两份 JPEG：最长边 768、质量 0.85 供 Vision；最长边 1536、质量 0.92 供 ComfyUI。独立 Img2Img 使用 full 观察作原图基线，将用户文字解释为修改项。重绘强度预设 0.35/0.55/0.75，高级范围 0.1–0.9；前后端均校验。比例不匹配时提示并推荐最近画幅，只有用户点击才更换尺寸；`preserve` 映射 `pad_edge`，`crop` 可选裁切位置。
+
+### 内存快照与分支迭代
+
+每个任务保存原始意图、Concept、十二字段 IR、最终 Prompt、手动编辑标记、LoRA Binding、尺寸/seed、参考契约、精修、父任务及生成方式的独立快照。`source_job_id` 选择本会话内任一已完成源图；`parent_job_id` 记录实际父节点。不会用会话最新状态覆盖历史源图。
+
+- 换一版：没有 delta 时不调用模型，复用 Prompt/IR 并换 seed；兼容旧客户端 delta 时改用同一增量修订协议。
+- 基于此图重绘（协议仍为 `tweak`）：从所选图像素进入 Img2Img，默认继承其尺寸、seed、适配方式；文字只作为 delta。语义字段的增量修改不等于图片局部锁定，人物、发型与构图均可能变化。
+- Composer 输出 `CHANGE_FIELDS` 后返回完整既有 IR；未声明字段必须逐字保持，违规则修复一次并 fail closed，不拼接历史中文。修订温度 0.3、`max_tokens=2400`，不缓存。
+- 手工编辑英文 Prompt 后，其权威性高于旧 IR；下一次修订重建 IR，不对旧 IR 强行执行未声明字段相等检查。这不是完整字段锁系统。
+- 同链固定 LoRA 选择/强度及 revision；更换 LoRA 回工坊开新链。校验/翻译失败不修改会话，不入队。
+- 旧 `vibe` 请求映射 `composition_vibe` 参考流程；旧 `image` 字段保留一兼容周期。内存态重启失去链关系，未引入数据库。
 
 ### LoRA Registry / Binding
 
@@ -91,12 +118,14 @@ Active LoRA 时，Reasoning/Vision Model 只看 Asset/Profile 的 `provides` 与
 `build_prompt(wf_name, prompt_en, w, h, lora_keys=None, ..., lora_bindings=None, registry_revision=None)`:
 1. 读 `workflows/<file>.json`。
 2. `sanitize_for_api(wf)`: 删 `WidgetToString` / `Image Saver Metadata` (依赖前端 `extra_pnginfo`, API 提交会崩); `Image Saver Simple` → 内置 `SaveImage`。
-3. **统一 seed**: 扫描所有 int 型 `seed`/`noise_seed` 输入, 全写成同一正整数 (跳过列表型的节点连接)。修复 Impact Pack `np.random.default_rng(-1)` 崩溃 → FaceDetailer 人脸修复能正常跑。
+3. **统一 seed**：入队前决定并保存实际 seed，传给 `build_prompt(..., seed=...)`；所有 int 型 seed/noise_seed 同步，列表型连接不覆盖。直接调用 build 时缺省仍随机，结果 `_seed` 可读。
 4. **LoRA binding 重解析**：有 snapshot 时只取 key/profile(s)/optional 与逐 Asset 强度，按同一 `registry_revision` 从当前 Registry 重建；旧 `lora_keys` 走 legacy adapter。随后由 Binding Compiler 补回被编辑删除的 required/default exact tags。
 5. **LoRA workflow 注入**：写 `lora_node.loras = {"__value__":[{name,strength,clipStrength,active:true}, ...]}`。逐 Asset 强度可在 0~2 覆盖 Registry 默认值；旧角色/风格分组字段仍以 0~1 兼容。同一 safetensors 最多生成一条 Loader 记录；若不同 binding 对同一文件给出冲突强度则 400 fail closed。LoraManager 的 `text` 字段执行时会被 `del`，不能依赖它加载权重。
 6. 注入 `prompt_node.text = quality_prefix + compiled prompt` 与尺寸；请求宽高会同步到工作流共享的 easy-int 节点 39/47，同时覆盖节点 56 EmptyLatent 的字面值，使 txt2img 与节点 31 的 img2img Resize 使用同一请求尺寸且不切断 Resize 原连接。`safe/sensitive/questionable/explicit` 等 rating tag 仅保留用户手动编辑结果，不自动推断。不再把 Civitai 全量 trainedWords 在生成阶段盲拼。负面继续使用工作流固化模板，并包含常见手指、手臂、腿脚畸形的紧凑防御词。
 7. **生成分支与 detailer**：每次构建都显式写 ImpactSwitch：txt2img=`input1`（节点 56 EmptyLatent），img2img=`input2`（节点 33 VAEEncode）并覆盖主 KSampler denoise。若有 `detailer:{face,hand,nsfw,eyes}`，删未选 detailer 节点并重连（删掉的节点不可达，不执行）。
 8. 返回 `{prompt, client_id, _seed}`。
+
+Img2Img 节点 31 的 `keep_proportion` 与 `crop_position` 依据本机 KJNodes `ImageResizeKJv2.INPUT_TYPES/resize` 核对后注入；width/height 继续连接 39/47，image 继续连接 LoadImage，不能写字面值切断上游。任务 seed 由 worker 显式传递，不能只在工作流内生成后丢弃。
 
 > 扩展其他节点注入 (ControlNet / 图生图 等) 前, 先看 `CLAUDE.md` 的「ComfyUI 节点注入准则」-- 必须查本机节点源码定 input 格式, 不靠猜; 实例见 D16 (LoRA)。
 
@@ -124,7 +153,7 @@ Active LoRA 时，Reasoning/Vision Model 只看 Asset/Profile 的 `provides` 与
 移动端按描述 → 图片 → Prompt/参数页签 → 历史纵向排列；暗房按图片 → 控制 → 脉络排列。视图过渡只动画 opacity/translate，`prefers-reduced-motion` 下直接切换，不动画表单或网格尺寸。
 出图两步走 (翻译与生成解耦, 见 D17/D46)：中文 + 补全模式 + `lora_selections` -> `/api/translate` 拿 concept/prompt_en/breakdown/prompt_ir + binding/revision -> 可选编辑中文构思或英文 Prompt -> `/api/jobs` 回传 concept/completion/binding/revision。中文构思编辑后以 `concept_override` 重新调用翻译，不能直接把中文送入工作流；原文、补全模式、构思或 LoRA/Profile 改变都会使当前翻译过期，确认生成前必须应用或重翻译，避免新意图配旧 Prompt。
 描述区提供 `自动 / 忠于描述 / 自由补全` 三档；Prompt 检查区在五项 breakdown 上方显示可编辑的 `用户锁定｜模型补全` 中文构思。成像设置栏保留当前工作流 / 文生图与图生图 / 精修 / 尺寸 / LoRA。LoRA 使用角色与风格/细节两个连续多选菜单和“当前叠加栈”：角色最多 3 个语义 Profile，风格/动作/表情不设硬上限；所有多 Profile Asset 都可多选，同一文件只加载一次。前端提示用户在画面描述中明确多个主体的形态、位置与互动关系，但不替用户禁止组合；每个 Asset 有独立 0~2 强度、provides/verified 展示与移除操作。角色菜单保持文字列表；风格/细节菜单使用两栏“人物印样”卡片，展示固定预览、名称和默认强度，选中栈同步显示小图，缺图时安全降级为文字占位。菜单根据右栏与视口可用空间上下翻转并限制高度。参考图入口保留在画面描述区。尺寸为点击展开的画幅选择器，标准档与高分辨率实验档分组；选择后自动收起。当前开放标准 `832x1216 / 896x1152 / 1024x1024 / 1344x768`，高分辨率 `1024x1536 / 1536x864`。
-轮询 `/api/jobs/{id}` 每 2s, 完成后展示图 + 入历史画廊(localStorage 缩略图, 最近 12 张)。出图后「继续迭代」进暗房: 换一版(txt2img 重抽, D31 替换意图) / 微调(img2img, 低 denoise)。
+轮询 `/api/jobs/{id}` 每 2s，完成后显示实际 seed 并入最近 12 张作品。参考图有三档范围，图生图显示低/中/高重绘强度、适配方式和比例提示。出图后「继续迭代」进入暗房；历史显示父节点与“从这里继续”，源图选择不会覆盖其他历史分支。换一版默认新 seed，「基于此图重绘」默认继承；暗房固定源链 LoRA，不读取工坊当前选择。工坊独立上传不自动继承原图 LoRA。教程、占位文字、进行中状态和历史标签统一描述整图重绘，不承诺指定修改生效或其他内容不变，文字留空也不是原图直出。现有纸本/暗房视觉结构与 DOM ID 保留。
 
 `web/index.html` 与后端、文档由根仓库 `air041001/airpaint` 统一追踪，保证一次 clone 能得到完整产品。旧 `air041001/air` 仓库只保留迁移前的前端历史，不再作为活跃真相源，也不再依赖 GitHub Pages。
 
@@ -138,7 +167,7 @@ Active LoRA 时，Reasoning/Vision Model 只看 Asset/Profile 的 `provides` 与
 
 ## 尚未实现 / 已知限制
 
-- **构思不是 PromptState**：Visual Composer 已有三档补全、12 字段 IR 与单轮可编辑 CONCEPT，但 session 仍保存编译后的字符串；它不能做到“只改 clothing、其余字段永久锁定”的结构化历史。字段级增量修改仍留给真实暗房使用触发的 Phase 4。
+- **快照不是完整字段锁系统**：已有源任务快照、IR 增量修改和分支历史，但没有永久 locked_fields、局部遮罩或图像区域约束。Prompt 不变也不保证像素不变；手动 Prompt 编辑后的旧 IR 直到下次修订才重新对齐。
 - **多角色构图限制**: 双角色已对 count、Registry 身份注入、tag-first/具名短句分流和已复现的分屏措辞建立窄护栏；受控同 seed 对比也证明部分分页/黑线来自 Prompt 写法而非必然的模型上限。但 LoRA 训练、复杂遮挡、手部接触与 seed 仍可能导致融合或归属漂移，不能把已通过的两个案例扩张成通用画质保证。三角色继续为 best-effort，不恢复区域提示词。
 - **LoRA composition 边界**：选择、binding、逐 Asset 强度、同文件去重和 workflow 注入已支持最多 3 个语义角色及不限风格/细节；结构/API/浏览器验证不等于多人画质验证。base Anima 的多人物空间关系、动作绑定和属性防串仍需固定条件出图与人眼判断。
 - 用量/任务状态全内存, 重启清零；持久化由真实规模触发。
