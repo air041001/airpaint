@@ -942,3 +942,17 @@ Remielle Dan 的多形态同框样图推翻了“同一身份不同形态默认�
 用户随后指出前端仍承诺「只写改动，其余保持」。本阶段文案收口：暗房「微调」改为「基于此图重绘」，同步教程、输入提示、强度预设、进行中状态和历史标签；明确整图重绘可能连带改变人物/发型/构图、低强度可能改不动、留空仍会重新生成，以及独立上传不自动恢复原图 LoRA。协议 `tweak`、参数、Prompt 与工作流逻辑不变；不以改名代替图片验收，也不借此恢复局部重绘或追加生图。前端检查加入旧承诺和按钮兼容标识回归。
 
 文案验证：前端两段脚本解析与新增文案/`tweak` 标识检查、Python compileall、diff 空白检查通过。使用仅返回模拟数据且不连接 ComfyUI/模型服务的本地预览，在真实浏览器核对工坊输入提示、低中高强度、暗房重绘按钮与历史标签、模式切换及教程；观察了纸本与暗色界面。未生成新图片，亮色适配下拉框的已有样式问题仍暂缓；本阶段图片验收和提交状态不变。
+
+## 第 68 条 2026-09-08 - 最终封版可靠性、界面与交付收尾
+
+封版前先保护 D59 未提交状态：外部保存本地 LoRA Registry 副本，记录 skip-worktree 与文件 hash，并以 Git stash 制作可恢复快照后原样恢复。D59 的 Prompt/参考/整图重绘工程实现作为基线 commit `54c7368` 单独推送，但继续保留“五张人眼结果未全部通过”的事实，不把封版改写成图片验收成功。Registry 明确排除同步、修改和暂存。
+
+任务、会话、历史与每日用量改由 SQLite 掌管，内存只保留缓存和单 worker 调度。任务/turn/配额同事务创建；每邀请码日限由 30 调到 90。owner 使用本机密钥 HMAC，浏览器登录迁移为签名 HttpOnly cookie，旧邀请码不再留在 localStorage。服务端提供分页历史、请求 ID 找回、任务恢复和图片 owner 校验，公开 `/images` 旁路移除。
+
+ComfyUI 提交前由 AirPaint 分配 prompt ID 并先落盘。本机 ComfyUI 源码确认 `/prompt` 接受该 UUID且 queue/history 保留 `extra_data`。连接失败可安全等待，响应丢失进入待核对并禁止盲目重发，等待超时不等于 GPU 失败，已出图但下载失败只重取结果。启动按“先核对、后排队”恢复，停止脚本优先触发 uvicorn 正常关闭。
+
+新增在线一致性备份/校验/离线恢复工具，将数据库、身份密钥及实际引用的源图/结果图组成带 SHA-256 manifest 的 zip；覆盖恢复前自动留 rollback，并删除旧数据库精确 WAL/SHM sidecar。依赖版本、无密钥配置、启停、状态/计数规则和恢复流程写入 README 与 operations。
+
+最终确定性验证为 `15 persistence/recovery tests passed`、`19 image iteration tests passed`、`58 prompt unit tests passed`、`6` 项 LoRA Composition 与 `18` 项 onboarding 回归通过；Python compileall/pyflakes、前端脚本/可靠性契约、PowerShell 语法和当前 workflow 检查通过。以临时本地 ComfyUI 协议替身启动真实 AirPaint 进程，验证 health、cookie 登录、90 次配额、服务端历史与正常 shutdown；实际空库完成 online backup、manifest/hash/schema/integrity 校验及隔离目录恢复，没有调用 GPU/外部模型或覆盖生产状态。
+
+浏览器在桌面与 390×844、纸本与石墨主题下验证结果恢复、Prompt/seed/配额、异常状态、设置、历史分支和迭代暗房，移动端无横向溢出；纸本 Img2Img 的近黑画幅适配下拉框已修为可读。README 保存真实前端截图，中央图片来自项目已有生成结果；任务状态明确来自本地演示夹具，不能冒充实时生成。浏览器仍有原有 Tailwind CDN 生产提示，作为外部依赖边界记录，不在封版时引入构建迁移。最终版本 tag 等用户完成视觉确认后创建；D59 图片验收事实不变。

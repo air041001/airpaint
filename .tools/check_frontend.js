@@ -29,3 +29,24 @@ if (!/<button id="dlg-img2img"[^>]*>基于此图重绘<\/button>/.test(html)
   throw new Error("Img2Img copy or legacy tweak button contract changed; review D59");
 }
 console.log("Img2Img capability copy and legacy tweak button contract checked");
+
+// Final-seal reliability contract: server history, cookie auth, stable client
+// request IDs, and honest recoverable states must remain visible in the UI.
+for (const marker of [
+  "/api/history",
+  "credentials = 'include'",
+  "client_request_id",
+  "waiting_for_comfy",
+  "reconcile_pending",
+  "result_ready",
+  "重新核对",
+  "const latest = historyItems.find(job => job.status === 'done' && job.image)",
+  "#image-fit,#image-crop,#reference-scope",
+  "用中文构思，保留 Prompt 与成像参数控制",
+]) {
+  if (!html.includes(marker)) throw new Error(`missing reliability UI contract: ${marker}`);
+}
+if (/localStorage\.setItem\(HIST_KEY/.test(html)) {
+  throw new Error("generation history must be server-authoritative, not written to localStorage");
+}
+console.log("Persistent history, idempotency, cookie auth, and recovery states checked");

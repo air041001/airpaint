@@ -174,6 +174,11 @@
   body[data-theme="paper"]::after { opacity:.12; mix-blend-mode:multiply; }
   html,body { min-height:100%; background-color:var(--ap-bg); }
   textarea,input[type=text],input[type=number],input[type=password],select { background:var(--ap-field); color:var(--ap-text); }
+  #image-fit,#image-crop,#reference-scope {
+    background-color:var(--ap-field)!important; color:var(--ap-text)!important;
+    border-color:var(--ap-line)!important; color-scheme:inherit;
+  }
+  #image-fit option,#image-crop option,#reference-scope option { background:var(--ap-field); color:var(--ap-text); }
   textarea::placeholder,input::placeholder { color:color-mix(in srgb,var(--ap-muted) 72%,transparent); }
   textarea:focus,input:focus,select:focus { border-color:var(--ap-focus)!important; box-shadow:0 0 0 2px color-mix(in srgb,var(--ap-focus) 14%,transparent)!important; }
   input[type=range] { accent-color:var(--ap-selection); }
@@ -316,7 +321,11 @@
   .size-option.active { border-color:var(--ap-selection)!important; color:var(--ap-selection-soft)!important; background:color-mix(in srgb,var(--ap-selection) 13%,var(--ap-field))!important; }
   #historyPanel { grid-area:history; padding:13px 14px!important; }
   #gallery { display:grid!important; grid-template-columns:repeat(12,minmax(62px,1fr)); gap:8px!important; }
-  #gallery .hist-thumb { width:100%!important; height:auto!important; aspect-ratio:1; border-color:var(--ap-line)!important; border-radius:7px!important; }
+  #gallery .history-card { width:100%; min-width:0; aspect-ratio:1; position:relative; overflow:hidden; border:1px solid var(--ap-line); border-radius:7px; background:var(--ap-field); color:var(--ap-muted); }
+  #gallery .hist-thumb { width:100%!important; height:100%!important; object-fit:cover; border:0!important; border-radius:0!important; }
+  .history-card:focus-visible { outline:2px solid var(--ap-selection); outline-offset:2px; }
+  .history-card .history-state { position:absolute; left:4px; right:4px; bottom:4px; padding:3px 5px; border-radius:5px; background:color-mix(in srgb,var(--ap-panel) 88%,transparent); backdrop-filter:blur(7px); font-size:10px; line-height:1.2; color:var(--ap-text); }
+  .history-card .history-empty { display:flex; width:100%; height:100%; align-items:center; justify-content:center; padding:7px; text-align:center; font-size:10px; line-height:1.3; }
   #mobileTabs { grid-area:mobile; display:none; }
   .bar { background:var(--ap-line-soft); }
   .bar i { background:linear-gradient(90deg,transparent,var(--ap-action),var(--ap-brand-soft),transparent); }
@@ -397,7 +406,7 @@
     #app[data-view="review"][data-mobile-panel="settings"] #paramsPanel,#app[data-view="result"][data-mobile-panel="settings"] #paramsPanel,#app[data-view="generating"][data-mobile-panel="settings"] #paramsPanel { display:flex!important; }
     #canvasMedia { height:min(68vh,620px); min-height:360px!important; }
     #gallery { display:flex!important; }
-    #gallery .hist-thumb { width:68px!important; height:82px!important; aspect-ratio:auto; }
+    #gallery .history-card { width:76px!important; min-width:76px; height:92px!important; aspect-ratio:auto; flex:0 0 auto; }
     #panel { top:64px; right:11px; width:calc(100% - 22px); }
     #darkroomWorkspace { display:flex!important; flex-direction:column; gap:10px!important; padding:11px!important; }
     #darkroomStage { order:1; width:100%; height:min(68vh,620px); min-height:390px; }
@@ -419,7 +428,7 @@
   <div class="w-full max-w-sm">
     <div class="text-center mb-8">
       <h1 class="text-3xl brand-title">air 的绘图小屋</h1>
-      <p class="text-sm text-white/45 mt-2">说中文，自动出图——不用学英文 Prompt</p>
+      <p class="text-sm text-white/45 mt-2">用中文构思，保留 Prompt 与成像参数控制</p>
     </div>
     <div class="surface rounded-xl border border-ink-700 bg-ink-800/60 p-6">
       <label class="mono text-xs tracking-wider text-white/45 block mb-2 uppercase">邀请码</label>
@@ -457,14 +466,9 @@
         <button class="tab-btn text-sm pb-2 text-white/50 border-b-2 border-transparent" data-tab="guide">教程</button>
       </div>
       <div id="pane-news" class="tab-pane active space-y-3 text-sm">
-        <div><span class="text-white/40 text-xs">2026-08-29</span><span class="text-xs px-1.5 py-0.5 rounded bg-accent-pink/20 text-accent-pink ml-1">新</span><b class="ml-1">LoRA 叠加栈</b><div class="text-white/55 text-xs mt-0.5">角色 LoRA 最多三个语义角色；所有多形态 LoRA 都可同时选择多个 Profile，同一权重文件只加载一次。请在画面描述中写清各主体的形态、位置与关系。风格与细节 LoRA 不设数量硬上限。</div></div>
-        <div><span class="text-white/40 text-xs">2026-08-23</span><span class="text-xs px-1.5 py-0.5 rounded bg-accent-pink/20 text-accent-pink ml-1">新</span><b class="ml-1">LoRA 与 Prompt 联动</b><div class="text-white/55 text-xs mt-0.5">选择 LoRA 后，AI 会先理解它提供的角色、服装或画风，再补场景与动作。多版本角色可自动判断，也可手动锁定；切换版本后会要求重新构思，避免旧 Prompt 串线。</div></div>
-        <div><span class="text-white/40 text-xs">2026-08-07</span><b class="ml-2">LoRA 分组 + 多选</b><div class="text-white/55 text-xs mt-0.5">LoRA 分成「角色」和「风格」两组，可以同时选一个角色 + 一个风格。新文件会自动扫描；信息不足时显示为「待注册」，不会带着猜测直接生成。</div></div>
-        <div><span class="text-white/40 text-xs">2026-08-03</span><span class="text-xs px-1.5 py-0.5 rounded bg-accent-pink/20 text-accent-pink ml-1">新</span><b class="ml-1">界面大改</b><div class="text-white/55 text-xs mt-0.5">工坊/暗房三屏重写：AI 理解常驻结果旁、工作流卡片选择、历史缩略图条、移动端竖排适配。出图后点「继续迭代」直接拿原图进暗房。</div></div>
-        <div><span class="text-white/40 text-xs">2026-08-02</span><span class="text-xs px-1.5 py-0.5 rounded bg-accent-pink/20 text-accent-pink ml-1">新</span><b class="ml-1">精修增强 NSFW + 图生图</b><div class="text-white/55 text-xs mt-0.5">精修版自动增强脸/手/NSFW 区域细节（自门控，普通图不受影响）。图生图以上传图片为起点整图重绘；暗房现名「基于此图重绘」，不属于局部精准编辑。</div></div>
-        <div><span class="text-white/40 text-xs">2026-07-31</span><span class="text-xs px-1.5 py-0.5 rounded bg-accent-pink/20 text-accent-pink ml-1">新</span><b class="ml-1">参考图理解</b><div class="text-white/55 text-xs mt-0.5">上传一张图，AI 自动提取氛围/配色/光影，画同氛围的图（不是复刻原图）。只丢图也行。</div></div>
-        <div><span class="text-white/40 text-xs">2026-07-30</span><b class="ml-2">快速 / 精修双工作流</b><div class="text-white/55 text-xs mt-0.5">「精修」出图后自动修脸/手/NSFW 约 90~120 秒；「快速」约 40 秒。</div></div>
-        <div><span class="text-white/40 text-xs">2026-07-29</span><b class="ml-2">再来一版</b><div class="text-white/55 text-xs mt-0.5">同一句话换一版不同解读（场景/光影/情绪），多抽挑最对的。</div></div>
+        <div><span class="text-white/40 text-xs">2026-09-08</span><span class="text-xs px-1.5 py-0.5 rounded bg-accent-pink/20 text-accent-pink ml-1">封版</span><b class="ml-1">历史与任务可恢复</b><div class="text-white/55 text-xs mt-0.5">任务、参数、种子和迭代分支由服务器保存。刷新或重新登录后仍能查看作品；连接中断时只恢复查询，不会悄悄重复提交。</div></div>
+        <div><span class="text-white/40 text-xs">2026-09-08</span><b class="ml-2">整图重绘边界</b><div class="text-white/55 text-xs mt-0.5">图生图和暗房重绘会重新采样整张图：低强度可能改不动，高强度可能连带改变人物、发型与构图，不属于局部精准编辑。</div></div>
+        <div><span class="text-white/40 text-xs">2026-08-29</span><b class="ml-2">LoRA 叠加栈</b><div class="text-white/55 text-xs mt-0.5">角色最多三个语义 Profile；多形态可同时选择，同一权重文件只加载一次。请写清多个主体的形态、位置与互动。风格与细节不设数量硬上限。</div></div>
       </div>
       <div id="pane-guide" class="tab-pane text-sm leading-relaxed space-y-4 text-white/75">
         <div><h3 class="text-white font-medium mb-1">基本用法</h3>
@@ -472,9 +476,9 @@
         <div><h3 class="text-white font-medium mb-1">快速 / 精修 / 图生图</h3>
           <p class="text-white/55 text-xs"><b class="text-white/75">文生图</b> 可选参考构图与氛围；<b class="text-white/75">图生图</b> 结合原图与 Prompt 整图重绘，适合允许细节变化的另一版。可写重绘方向，并在生成前检查 AI 构思和最终 Prompt。低强度通常更接近原图，也可能改不动；高强度可能连带改变人物、发型与构图。不保证指定改动成功或其他内容不变。上传图片不会自动继承原图 LoRA。</p></div>
         <div><h3 class="text-white font-medium mb-1">LoRA 是什么</h3>
-          <p class="text-white/55 text-xs">风格"插件"，叠在模型上改画风或固定某个人物。分<b class="text-white/75">角色</b>和<b class="text-white/75">风格</b>两类，可同时选一个角色 + 一个风格。标「未配置」的没有触发词，需等管理员配置。<b class="text-white/75">强度 0~1</b>：太高会变形崩坏，建议从 0.7–0.9 试；不选就是原生模型。</p></div>
+          <p class="text-white/55 text-xs">叠在模型上的角色或画风资产。角色最多三个语义 Profile；多形态可同时选择；风格与细节不设数量硬上限。每个 Asset 可在 <b class="text-white/75">0~2</b> 内调节强度，同一物理文件只加载一次。不选就是原生模型。</p></div>
         <div><h3 class="text-white font-medium mb-1">参考图（非图生图时）</h3>
-          <p class="text-white/55 text-xs">上传一张氛围参考图，AI 提取光影/配色/场景（<b class="text-white/75">不抄图里的人物</b>），配合文字出图。文字给主体、图给氛围效果最好。</p></div>
+          <p class="text-white/55 text-xs">可选择只借<b class="text-white/75">构图</b>、借<b class="text-white/75">构图＋氛围</b>，或参考<b class="text-white/75">完整可见信息</b>。文字中的明确要求与 LoRA 身份优先；参考范围是引导，不保证像素或语义完全复刻。</p></div>
         <div><h3 class="text-white font-medium mb-1">继续迭代</h3>
           <p class="text-white/55 text-xs">每张结果图上有「继续迭代」，进入暗房后可以：<b class="text-white/75">换一版</b>（按 Prompt 重新文生图，默认换种子，不以原图像素为起点）；<b class="text-white/75">基于此图重绘</b>（以所选历史图片为起点整图重绘，默认继承尺寸、种子与 LoRA）。文字留空也会重新生成，不是原图直出；指定改动可能不生效，人物与构图也可能变化。右侧能看到这张图的演化线。</p></div>
       </div>
@@ -611,9 +615,13 @@
       <div id="historyPanel" class="surface rounded-xl border border-ink-700 bg-ink-800/40 p-2.5 shrink-0">
         <div class="flex items-center justify-between mb-1.5">
           <div class="section-title">最近作品</div>
-          <span class="section-note">最近 12 张 · 点击放大</span>
+          <span id="quotaNote" class="section-note">用量读取中…</span>
         </div>
         <div id="gallery" class="flex gap-2 overflow-x-auto scroll-thin pb-0.5 min-h-20"></div>
+        <div class="flex items-center justify-between gap-3 mt-2">
+          <span id="historyNote" class="text-[11px] text-white/40">历史由服务器保存</span>
+          <button id="historyMore" type="button" class="chip hidden text-xs px-2.5 py-1 border border-ink-600">查看更多</button>
+        </div>
       </div>
     </main>
 
@@ -803,7 +811,8 @@ const $ = id => document.getElementById(id);
 const API = ['127.0.0.1', 'localhost'].includes(location.hostname)
   ? location.origin
   : 'https://api.airpaint.xyz';
-const HIST_KEY = 'airpaint_history_v1';
+const LEGACY_HIST_KEY = 'airpaint_history_v1';
+const PENDING_REQUEST_KEY = 'airpaint_pending_request_v1';
 const THEME_KEY = 'airpaint-theme-v2';
 const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
 
@@ -858,22 +867,24 @@ function swapPrimaryView(from, to) {
 }
 
 // ---------------- 登录 ----------------
-async function enterApp(token) {
-  $('token').value = token;
+async function enterApp(inviteCode = '', silent = false) {
+  $('token').value = inviteCode;
   try {
     await api('/api/auth/check');
-    localStorage.setItem('token', token);
+    $('token').value = '';
+    localStorage.removeItem('token');
     await loadWorkflows();
     await loadLoras();
-    loadHistory();
+    await recoverPendingRequest();
+    await loadHistory(true);
     $('login').style.display = 'none';
     $('app').style.display = 'flex';
     $('darkroom').style.display = 'none';
-    if ($('app').dataset.hasResult !== 'true') setWorkbenchView('compose', false);
+    if (!polling && $('app').dataset.hasResult !== 'true') setWorkbenchView('compose', false);
   } catch (e) {
     localStorage.removeItem('token');
     $('token').value = '';
-    showLogin(e.message || '邀请码无效');
+    showLogin(silent ? '' : (e.message || '邀请码无效'));
   }
 }
 function showLogin(err) {
@@ -892,8 +903,10 @@ $('loginBtn').onclick = async () => {
   $('loginBtn').disabled = false;
 };
 $('loginCode').addEventListener('keydown', e => { if (e.key === 'Enter') $('loginBtn').click(); });
-$('logoutBtn').onclick = () => {
-  localStorage.removeItem('token'); $('token').value = ''; $('loginCode').value = '';
+$('logoutBtn').onclick = async () => {
+  try { await api('/api/auth/logout', { method:'POST' }); } catch (e) {}
+  localStorage.removeItem('token'); localStorage.removeItem(PENDING_REQUEST_KEY);
+  $('token').value = ''; $('loginCode').value = '';
   showLogin('已退出，请重新输入邀请码');
 };
 
@@ -913,13 +926,20 @@ $('paramsToggle').onclick = () => setMobilePanel('settings');
 // ---------------- API ----------------
 let workflows = [];
 async function api(path, opts = {}) {
-  opts.headers = Object.assign({ 'Authorization': 'Bearer ' + $('token').value.trim() }, opts.headers);
+  opts.credentials = 'include';
+  opts.headers = Object.assign({}, opts.headers);
+  const inviteCode = $('token').value.trim();
+  if (inviteCode) opts.headers['Authorization'] = 'Bearer ' + inviteCode;
   if (opts.json) { opts.method = opts.method || 'POST'; opts.headers['Content-Type'] = 'application/json'; opts.body = JSON.stringify(opts.json); }
   let r;
   try { r = await fetch(API + path, opts); }
   catch (e) { throw new Error(`请求失败 (${e.message}) -- 可能网络问题或服务器响应超时`); }
   const data = await r.json().catch(() => ({}));
-  if (!r.ok) throw new Error(data.detail || `服务器错误 ${r.status}`);
+  if (!r.ok) {
+    const error = new Error(data.detail || `服务器错误 ${r.status}`);
+    error.status = r.status; error.detail = data.detail;
+    throw error;
+  }
   return data;
 }
 
@@ -1517,6 +1537,67 @@ function showReviewReady(result, fallback) {
   showTranslationReady(result, fallback);
 }
 
+function makeRequestId() {
+  if (window.crypto?.randomUUID) return window.crypto.randomUUID();
+  return 'req-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 14);
+}
+function readPendingRequest() {
+  try {
+    const value = JSON.parse(localStorage.getItem(PENDING_REQUEST_KEY) || 'null');
+    return value && value.id && value.kind ? value : null;
+  } catch (e) { return null; }
+}
+function clearPendingRequest(id) {
+  const current = readPendingRequest();
+  if (!id || current?.id === id) localStorage.removeItem(PENDING_REQUEST_KEY);
+}
+async function postGeneration(path, body, kind) {
+  const existing = readPendingRequest();
+  if (existing && existing.kind !== kind) {
+    throw new Error('上一次生成请求仍待核对，请刷新页面恢复后再提交新任务');
+  }
+  const marker = existing || { id:makeRequestId(), kind, started_at:Date.now() };
+  localStorage.setItem(PENDING_REQUEST_KEY, JSON.stringify(marker));
+  const requestBody = { ...body, client_request_id:marker.id };
+  try {
+    const result = await api(path, { json:requestBody });
+    clearPendingRequest(marker.id);
+    return result;
+  } catch (e) {
+    if (e.status && e.status < 500) clearPendingRequest(marker.id);
+    throw e;
+  }
+}
+async function recoverPendingRequest() {
+  const marker = readPendingRequest();
+  if (!marker) return;
+  try {
+    const job = await api('/api/requests/' + encodeURIComponent(marker.id));
+    clearPendingRequest(marker.id);
+    currentJobId = job.id;
+    currentHistorySessionId = job.session_id || null;
+    if (job.status === 'done' && job.image) {
+      const src = API + job.image;
+      $('dl').href = src; setCanvasImage(src);
+      setWorkbenchView('result', false);
+      $('status').textContent = '已恢复上次提交 · seed ' + job.seed;
+      $('status').className = 'text-green-400';
+    } else {
+      $('bar').style.display = 'block';
+      startPolling(job.id);
+      $('status').textContent = '已找到上次提交，正在恢复查询…';
+      $('status').className = 'text-amber-300';
+    }
+  } catch (e) {
+    if (e.status === 404) {
+      clearPendingRequest(marker.id);
+      $('historyNote').textContent = '上次请求未被服务器记录，可以重新提交';
+    } else {
+      $('historyNote').textContent = '连接中断，保留上次请求标识，稍后继续核对';
+    }
+  }
+}
+
 function jobsBody(promptEn, promptRaw, translation = null) {
   const body = { workflow: $('workflow').value, prompt_en: promptEn, prompt: promptRaw,
     size: $('size').value || undefined };
@@ -1628,11 +1709,12 @@ function setCanvasImage(src) {
 async function submitJob(promptEn, promptRaw, translation = null) {
   if (!workflows.length) await loadWorkflows();
   if (!workflows.length) throw new Error('未加载到工作流，请检查邀请码是否有效');
-  const job = await api('/api/jobs', { json: jobsBody(promptEn, promptRaw, translation) });
+  const job = await postGeneration('/api/jobs', jobsBody(promptEn, promptRaw, translation), 'workshop');
+  currentHistorySessionId = null;
   if ($('app').dataset.hasResult !== 'true') setCanvasImage(null);
   setWorkbenchView('generating', false);
   $('status').textContent = '已提交，排队中…'; $('status').className = '';
-  polling = setInterval(() => poll(job.id), 2000);
+  startPolling(job.id);
 }
 
 $('go').onclick = async () => {
@@ -1645,7 +1727,7 @@ $('go').onclick = async () => {
     setConceptDirty(false);
   }
   $('bar').style.display='block'; $('status').className=''; $('status').textContent='构思并编译 Prompt 中…';
-  clearInterval(polling); setBusy(true);
+  stopPolling(); setBusy(true);
   try {
     const r = await doTranslate();
     rememberTranslation(r);
@@ -1668,7 +1750,7 @@ $('preview').onclick = async () => {
   const prompt = $('prompt').value.trim();
   if (!prompt && !refImage) return;
   $('bar').style.display='block'; $('status').className=''; $('status').textContent='构思中…';
-  clearInterval(polling); setBusy(true);
+  stopPolling(); setBusy(true);
   try {
     const r = await doTranslate();
     rememberTranslation(r);
@@ -1735,7 +1817,7 @@ $('confirm').onclick = async () => {
   }
   $('editActions').classList.add('hidden');
   $('bar').style.display='block'; $('status').className=''; $('status').textContent='提交中…';
-  clearInterval(polling); setBusy(true);
+  stopPolling(); setBusy(true);
   try { await submitJob(en, prompt, lastTranslation); }
   catch (e) { done('⚠ ' + e.message, true); }
 };
@@ -1751,22 +1833,65 @@ $('editCancel').onclick = () => {
   setWorkbenchView($('app').dataset.hasResult === 'true' ? 'result' : 'compose');
 };
 
+let pollFailures = 0;
+function stopPolling() {
+  if (polling) clearInterval(polling);
+  polling = null;
+}
+function startPolling(id) {
+  stopPolling();
+  pollFailures = 0;
+  poll(id);
+  polling = setInterval(() => poll(id), 2000);
+}
+function generationStatusText(job) {
+  const labels = {
+    waiting_for_comfy:'等待 ComfyUI 启动或恢复连接…',
+    dispatching:'正在提交到 ComfyUI…',
+    submitted:'已提交，等待 GPU 开始…',
+    running:`生成中…（${generationTimeHint()}）`,
+    result_pending:'等待超时，GPU 可能仍在工作；继续核对结果…',
+    reconcile_pending:'任务状态待核对；不会自动重复生成',
+    result_ready:'图片已生成，但尚未成功取回',
+  };
+  return labels[job.status] || job.status;
+}
 async function poll(id) {
   try {
     const j = await api('/api/jobs/' + id);
+    pollFailures = 0;
     if (j.status === 'queued') { $('status').textContent = `排队中… 第 ${j.position} 位`; }
-    else if (j.status === 'running') { $('status').textContent = `生成中…（${generationTimeHint()}）`; }
+    else if (['waiting_for_comfy','dispatching','submitted','running','result_pending'].includes(j.status)) {
+      $('status').textContent = generationStatusText(j);
+      $('status').className = j.status === 'result_pending' ? 'text-amber-300' : '';
+    }
     else if (j.status === 'done') {
-      clearInterval(polling);
+      stopPolling();
       currentJobId = id;
       const src = API + j.image;
       $('dl').href = src;
       setCanvasImage(src);
-      addToGallery(src);
+      await loadHistory(true);
       setWorkbenchView('result');
       done('完成 · seed ' + j.seed, false);
-    } else if (j.status === 'failed') { clearInterval(polling); done('⚠ ' + (j.error || '生成失败'), true); }
-  } catch (e) {}
+    } else if (j.status === 'result_ready' || j.status === 'reconcile_pending') {
+      stopPolling();
+      $('status').textContent = generationStatusText(j) + '；可在最近作品中点按重新核对';
+      $('status').className = 'text-amber-300';
+      $('bar').style.display = 'none'; setBusy(false);
+      await loadHistory(true);
+    } else if (j.status === 'failed') {
+      stopPolling(); done('⚠ ' + (j.error_message || j.error || '生成失败'), true);
+      await loadHistory(true);
+    }
+  } catch (e) {
+    pollFailures += 1;
+    $('status').textContent = pollFailures === 1
+      ? '连接中断，正在恢复查询…'
+      : `连接仍未恢复（第 ${pollFailures} 次查询失败），任务不会因此重新提交`;
+    $('status').className = 'text-amber-300';
+    if (e.status === 401) { stopPolling(); showLogin('登录已过期，请重新输入邀请码'); }
+  }
 }
 function done(msg, err) {
   $('status').textContent = msg;
@@ -1776,33 +1901,127 @@ function done(msg, err) {
   $('bar').style.display = 'none'; setBusy(false);
 }
 
-// ---------------- 历史 (localStorage, 12 张) ----------------
-function loadHistory() {
-  let items = [];
-  try { items = JSON.parse(localStorage.getItem(HIST_KEY) || '[]'); } catch (e) {}
-  $('gallery').innerHTML = '';
-  items.forEach(src => addGalleryEl(src));
+// ---------------- 历史（服务器为权威，浏览器只留偏好与恢复标识） ----------------
+let historyItems = [];
+let historyCursor = null;
+let historyLoading = false;
+function legacyHistoryCount() {
+  try {
+    const old = JSON.parse(localStorage.getItem(LEGACY_HIST_KEY) || '[]');
+    localStorage.removeItem(LEGACY_HIST_KEY);
+    return Array.isArray(old) ? old.length : 0;
+  } catch (e) { localStorage.removeItem(LEGACY_HIST_KEY); return 0; }
 }
-function addGalleryEl(src) {
-  const img = document.createElement('img');
-  img.src = src; img.className = 'hist-thumb w-16 h-20 object-cover rounded-md border border-ink-600 shrink-0';
-  img.onclick = () => window.open(src, '_blank');
-  $('gallery').prepend(img);
+function historyStateLabel(job) {
+  if (job.status === 'done') return `seed ${job.seed}`;
+  if (job.status === 'failed') return '生成失败';
+  if (job.status === 'result_ready') return '图片待取回 · 点此重试';
+  if (job.status === 'reconcile_pending') return '状态待核对 · 点此查询';
+  if (job.status === 'waiting_for_comfy') return '等待 ComfyUI';
+  if (job.status === 'result_pending') return 'GPU 可能仍在工作';
+  return '生成中';
 }
-function addToGallery(src) {
-  addGalleryEl(src);
-  let items = [];
-  try { items = JSON.parse(localStorage.getItem(HIST_KEY) || '[]'); } catch (e) {}
-  items.unshift(src);
-  items = items.slice(0, 12);
-  localStorage.setItem(HIST_KEY, JSON.stringify(items));
-  while ($('gallery').children.length > 12) $('gallery').lastChild.remove();
+function restoreHistoryJob(job) {
+  currentJobId = job.id;
+  currentHistorySessionId = (job.session_ids || [])[0] || job.session_id || null;
+  if (job.prompt_raw) $('prompt').value = job.prompt_raw;
+  if (job.prompt_en) $('promptEnEdit').value = job.prompt_en;
+  const recordedSize = job.width && job.height ? `${job.width}x${job.height}` : '';
+  if (recordedSize && Array.from($('size').options).some(option => option.value === recordedSize)) selectSize(recordedSize);
+  if (job.concept) {
+    $('conceptEdit').value = job.concept;
+    $('conceptEdit').dataset.compiledValue = job.concept;
+    $('conceptBlock').classList.remove('hidden');
+    setConceptDirty(false);
+  }
+  if (job.image) {
+    const src = API + job.image;
+    const bindingLabel = (job.lora_bindings || []).map(binding =>
+      binding.key + (binding.profile ? ':' + binding.profile : '')).join(', ') || '无 LoRA';
+    $('dl').href = src; setCanvasImage(src); setWorkbenchView('result');
+    $('status').textContent = `历史作品 · ${job.generation_mode || 'txt2img'} · ${job.width || '?'}×${job.height || '?'} · seed ${job.seed} · ${bindingLabel}`;
+    $('status').className = '';
+  }
 }
+async function recoverHistoryJob(job) {
+  $('historyNote').textContent = '正在按 ComfyUI 任务编号核对，不会重新提交…';
+  try {
+    const updated = await api('/api/jobs/' + job.id + '/recover', { method:'POST' });
+    if (updated.status === 'done') restoreHistoryJob(updated);
+    else startPolling(updated.id);
+    await loadHistory(true);
+  } catch (e) { $('historyNote').textContent = '核对失败：' + e.message; }
+}
+function renderHistory() {
+  const gallery = $('gallery'); gallery.innerHTML = '';
+  if (!historyItems.length) {
+    gallery.innerHTML = '<div class="text-xs text-white/40 py-6">还没有作品。第一张提交后会出现在这里，刷新页面也不会丢失。</div>';
+    return;
+  }
+  historyItems.forEach(job => {
+    const card = document.createElement('button');
+    card.type = 'button'; card.className = 'history-card';
+    card.setAttribute('aria-label', historyStateLabel(job));
+    if (job.image) {
+      const img = document.createElement('img');
+      img.src = API + job.image; img.className = 'hist-thumb'; img.alt = '';
+      card.appendChild(img);
+    } else {
+      const empty = document.createElement('span');
+      empty.className = 'history-empty'; empty.textContent = generationStatusText(job);
+      card.appendChild(empty);
+    }
+    const state = document.createElement('span');
+    state.className = 'history-state'; state.textContent = historyStateLabel(job);
+    card.appendChild(state);
+    card.onclick = () => job.status === 'done' ? restoreHistoryJob(job)
+      : ['result_ready','reconcile_pending','result_pending','submitted','running','waiting_for_comfy'].includes(job.status)
+        ? recoverHistoryJob(job) : undefined;
+    gallery.appendChild(card);
+  });
+}
+async function loadHistory(reset = false) {
+  if (historyLoading) return;
+  historyLoading = true;
+  try {
+    if (reset) { historyCursor = null; historyItems = []; }
+    const query = '/api/history?limit=12' + (historyCursor ? '&cursor=' + encodeURIComponent(historyCursor) : '');
+    const page = await api(query);
+    historyItems = reset ? page.items : historyItems.concat(page.items);
+    historyCursor = page.next_cursor;
+    $('quotaNote').textContent = `今日 ${page.daily_used} / ${page.daily_limit}`;
+    $('quota').textContent = `${page.daily_used} / ${page.daily_limit}`;
+    $('historyMore').classList.toggle('hidden', !historyCursor);
+    const legacy = reset ? legacyHistoryCount() : 0;
+    $('historyNote').textContent = legacy
+      ? `已移除 ${legacy} 条无归属、无参数的旧浏览器记录；服务端历史可恢复`
+      : '任务、参数和分支由服务器保存';
+    renderHistory();
+    if (reset && !polling) {
+      const active = historyItems.find(job => ['queued','waiting_for_comfy','dispatching','submitted','running','result_pending'].includes(job.status));
+      if (active) {
+        currentJobId = active.id;
+        if ($('app').dataset.hasResult !== 'true') setCanvasImage(null);
+        setWorkbenchView('generating', false);
+        $('bar').style.display = 'block';
+        $('status').textContent = generationStatusText(active);
+        startPolling(active.id);
+      } else if ($('app').dataset.hasResult !== 'true') {
+        const latest = historyItems.find(job => job.status === 'done' && job.image);
+        if (latest) restoreHistoryJob(latest);
+      }
+    }
+  } catch (e) {
+    $('historyNote').textContent = '历史读取失败：' + e.message;
+  } finally { historyLoading = false; }
+}
+$('historyMore').onclick = () => loadHistory(false);
 
 // ---------------- 暗房 (对话迭代) ----------------
 let sessionId = null;
 let dlgMode = 'tweak';
 let currentJobId = null;
+let currentHistorySessionId = null;
 let dlgSourceJobId = null;
 let dlgTurns = [];
 let dlgIsBusy = false;
@@ -1826,8 +2045,20 @@ function showWorkshop() {
 $('toDarkroom').onclick = async () => {
   if (!currentJobId) { showDarkroom($('prompt').value.trim()); return; }
   try {
+    if (currentHistorySessionId) {
+      const session = await api('/api/dialog/' + currentHistorySessionId);
+      sessionId = currentHistorySessionId;
+      dlgSourceJobId = currentJobId;
+      dlgTurns = session.turns || [];
+      $('dr-start').classList.add('hidden'); $('drControls').classList.remove('hidden');
+      $('dlg-delta').value = ''; $('dlg-status').textContent = '';
+      swapPrimaryView($('app'), $('darkroom')); window.scrollTo(0,0);
+      renderDialog(dlgTurns); pollDialog();
+      return;
+    }
     const r = await dlgTurn({ action: 'start-image', job_id: currentJobId });
     sessionId = r.session_id; dlgSourceJobId = r.job_id; dlgTurns = [];
+    currentHistorySessionId = sessionId;
     $('dr-start').classList.add('hidden'); $('drControls').classList.remove('hidden');
     $('dlg-thumbs').innerHTML = ''; $('dlg-delta').value = ''; $('dlg-status').textContent = '';
     swapPrimaryView($('app'), $('darkroom')); window.scrollTo(0,0);
@@ -1876,7 +2107,8 @@ async function dlgTurn(body) {
     if (selections.length) body.lora_selections = selections;
   }
   if (body.action !== 'start-image') body.detailer = drDetailerOn ? { ...detailerState } : {};
-  return await api('/api/dialog/turn', { json: body });
+  if (body.action === 'start-image') return await api('/api/dialog/turn', { json: body });
+  return await postGeneration('/api/dialog/turn', body, 'darkroom');
 }
 function dlgBusy(on, msg) {
   dlgIsBusy = on;
@@ -1918,11 +2150,21 @@ function pollDialog() {
     try {
       const session = await api('/api/dialog/' + sessionId);
       renderDialog(session.turns);
-      const allDone = session.turns.every(t => t.status === 'done' || t.status === 'failed');
+      const settled = ['done','failed','result_ready','reconcile_pending'];
+      const allDone = session.turns.every(t => settled.includes(t.status));
       const latest = session.turns[session.turns.length - 1];
-      dlgBusy(!allDone, allDone ? (latest?.status === 'failed' ? '⚠ ' + latest.error : '') : '生成中…');
+      const finishedMessage = latest?.status === 'failed'
+        ? '⚠ ' + (latest.error_message || latest.error || '生成失败')
+        : ['result_ready','reconcile_pending'].includes(latest?.status)
+          ? generationStatusText(latest) + '，可在右侧重新核对'
+          : '';
+      dlgBusy(!allDone, allDone ? finishedMessage : generationStatusText(latest || {}));
       if (allDone) clearInterval(dlgPolling);
-    } catch (e) { clearInterval(dlgPolling); dlgBusy(false, '⚠ ' + e.message); }
+    } catch (e) {
+      dlgBusy(true, '连接中断，正在恢复查询；任务不会因此重新提交…');
+      $('dlg-status').className = 'text-amber-300';
+      if (e.status === 401) { clearInterval(dlgPolling); showLogin('登录已过期，请重新输入邀请码'); }
+    }
   };
   dlgPolling = setInterval(refresh, 2000);
   refresh();
@@ -1959,26 +2201,37 @@ function renderDialog(turns) {
       escapeHtml(selected.status === 'done' ? selected.prompt_en : selected.status === 'failed' ? selected.error : '生成中，暂时展示源图');
   } else {
     $('dr-cur-img').classList.add('hidden'); $('drAmbient').style.backgroundImage = '';
-    $('dlg-cur-info').textContent = selected.status === 'failed' ? '⚠ ' + selected.error : '生成中…';
+    $('dlg-cur-info').textContent = selected.status === 'failed'
+      ? '⚠ ' + (selected.error_message || selected.error || '生成失败')
+      : generationStatusText(selected);
   }
   $('dlg-thumbs').innerHTML = turns.map((turn, index) => {
     const parentIndex = turns.findIndex(t => t.job_id === turn.parent_job_id);
     const active = turn.job_id === dlgSourceJobId;
     return '<div class="lineage w-28 lg:w-auto shrink-0">' +
       '<div class="relative aspect-[3/4] rounded-lg overflow-hidden border ' + (active ? 'border-accent-pink' : 'border-ink-600') + '">' +
-      (turn.image ? '<img src="' + API + escapeHtml(turn.image) + '" class="w-full h-full object-cover" alt="第 ' + (index+1) + ' 版">' : '<div class="p-3 text-xs">' + (turn.status === 'failed' ? '生成失败' : '生成中') + '</div>') +
+      (turn.image ? '<img src="' + API + escapeHtml(turn.image) + '" class="w-full h-full object-cover" alt="第 ' + (index+1) + ' 版">' : '<div class="p-3 text-xs">' + escapeHtml(turn.status === 'failed' ? '生成失败' : generationStatusText(turn)) + '</div>') +
       '<span class="absolute top-1 left-1 glass text-xs px-1.5 py-0.5 rounded">' + (index+1) + ' · ' + actionLabel(turn.action) + '</span></div>' +
       '<div class="text-[11px] text-white/50 mt-1">' + (parentIndex >= 0 ? '源自第 ' + (parentIndex+1) + ' 版 · ' : '') + escapeHtml(turn.delta || '初始描述') + '</div>' +
-      (turn.status === 'done' ? '<button type="button" data-continue-job="' + escapeHtml(turn.job_id) + '" class="chip border border-ink-600 text-xs mt-1 w-full ' + (active ? 'active' : '') + '">' + (active ? '当前源图' : '从这里继续') + '</button>' : '') + '</div>';
+      (turn.status === 'done' ? '<button type="button" data-continue-job="' + escapeHtml(turn.job_id) + '" class="chip border border-ink-600 text-xs mt-1 w-full ' + (active ? 'active' : '') + '">' + (active ? '当前源图' : '从这里继续') + '</button>' :
+       ['result_ready','reconcile_pending'].includes(turn.status) ? '<button type="button" data-recover-job="' + escapeHtml(turn.job_id) + '" class="chip border border-ink-600 text-xs mt-1 w-full">重新核对</button>' : '') + '</div>';
   }).join('');
   $('dlg-thumbs').querySelectorAll('[data-continue-job]').forEach(button => {
     button.onclick = () => selectDialogSource(button.dataset.continueJob);
   });
+  $('dlg-thumbs').querySelectorAll('[data-recover-job]').forEach(button => {
+    button.onclick = async () => {
+      try {
+        await api('/api/jobs/' + button.dataset.recoverJob + '/recover', { method:'POST' });
+        pollDialog();
+      } catch (e) { dlgBusy(false, '⚠ ' + e.message); }
+    };
+  });
 }
 
 // ---------------- 启动 ----------------
-if (localStorage.getItem('token')) enterApp(localStorage.getItem('token'));
-else showLogin();
+const legacyInvite = localStorage.getItem('token') || '';
+enterApp(legacyInvite, !legacyInvite);
 </script>
 </body>
 </html>

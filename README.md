@@ -1,89 +1,110 @@
 # AirPaint
 
-AirPaint 是面向 ComfyUI 用户的 Prompt / Intent / Knowledge Intelligence Layer：把用户的画面意图编译成适合当前 Anima 模型与工作流的生成请求。它不替代 ComfyUI，也不隐藏 Prompt、LoRA 或 Workflow 的控制权。
+AirPaint 是面向 ComfyUI 用户的 Prompt / Intent / Knowledge Intelligence Layer。它把中文画面意图、参考范围、LoRA 选择和生成参数编译成当前 Anima 工作流可执行的请求，同时保留可检查、可编辑的 Concept、Prompt、LoRA Binding 与 seed。
 
-## 项目入口
+AirPaint 不替代 ComfyUI，也不是局部修图工具。当前版本进入封版维护：继续保留已经可用的 Prompt、参考图、整图重绘和历史分支能力，主动功能开发停止。
 
-- `docs/BUILDHANDOFF.md`：一份文件了解当前能力、验证状态、边界和下一步。
-- `AGENTS.md`：项目开发规约。
-- `docs/architecture.md`：当前系统结构。
-- `docs/api.md`：HTTP API 契约。
-- `docs/decisions.md`：设计取舍与修订关系。
-- `docs/DEVLOG.md`：开发演进记录。
-- `ROADMAP.md`：仍有效的未来事项。
-- `docs/workflow-anatomy.md`：当前 `AnimaFull.json` 节点与注入依据。
+![AirPaint 石墨暗房界面](docs/assets/airpaint-workshop.png)
 
-## 运行结构
+> 封版界面实拍。中央图片是本项目已有生成结果；为在 GPU 与外部 API 不可用时仍可复核界面，任务和历史状态由本地演示夹具提供，不冒充本次实时生成。完整演示路径与证据边界见 [演示记录](docs/demo.md)。
 
-```text
-浏览器 https://airpaint.xyz
-  -> cloudflared 命名隧道
-  -> FastAPI 127.0.0.1:8000
-     - 静态托管 web/index.html
-     - Prompt / LoRA / Workflow 编译
-     - 单并发任务队列
-  -> ComfyUI 127.0.0.1:8188
-     - server/workflows/AnimaFull.json
-```
+## 能做什么
 
-前端现在与后端、文档一起由本仓库追踪；不再依赖原 `air041001/air` GitHub Pages 仓库。
+- 用 `auto / faithful / free` 三档把中文构思编译成 Anima Prompt。
+- 在生成前检查和编辑中文 Concept、十二字段 IR 与最终英文 Prompt。
+- 选择角色/风格 LoRA Profile，由后端按 Registry 确定性绑定真实文件和 trigger。
+- 用参考图借构图、构图＋氛围或完整可见信息。
+- 用 Img2Img 对整张图片重新采样，选择 0.35/0.55/0.75 重绘强度和保留/裁切适配。
+- 从历史图片换一版或建立重绘分支，并查看真实 seed、尺寸、Prompt、LoRA 与父任务。
+- 在后端重启、浏览器刷新或短暂断线后恢复排队、核对已提交任务及重新取回已有结果。
 
 ## 快速启动
 
-1. 启动本机 ComfyUI，监听 `127.0.0.1:8188`。
-2. 双击 `.tools/start_airpaint.bat`，启动 FastAPI 与 cloudflared 命名隧道。
-3. 访问 `https://airpaint.xyz`，输入邀请码。
+当前保存环境为 Windows、Python 3.10.10、ComfyUI `127.0.0.1:8188`。
 
-后端或配置已经运行时，只补隧道可使用 `.tools/start_tunnel.bat`。
+1. 安装 [requirements.txt](requirements.txt) 中固定的 Python 依赖。
+2. 复制 `server/config.example.yaml` 为 `server/config.yaml`，填写本机路径、邀请码和 API key。该文件已被 Git 忽略。
+3. 启动 ComfyUI。
+4. 双击 `.tools/start_airpaint.bat`。只在本机使用时运行 `powershell -File .tools/start_airpaint.ps1 -NoTunnel`。
+5. 打开 `http://127.0.0.1:8000` 或已配置的 `https://airpaint.xyz`。
+6. 结束时双击 `.tools/stop_airpaint.bat`。它先请求后端正常关闭并写回数据库，超时才强制终止；不会关闭 ComfyUI。
 
-## 配置
+缺少配置、workflow、LoRA Registry、ComfyUI 或 cloudflared 时，启动脚本会指出具体缺项。完整启动、停止、状态解释和备份恢复见 [运维说明](docs/operations.md)。
 
-复制 `server/config.example.yaml` 为 `server/config.yaml` 后填写本地路径、token 与 API key。`config.yaml` 已被 Git 忽略，敏感值不得写入代码或文档。
-
-当前关键配置：
+## 配置边界
 
 ```yaml
 comfy_url: http://127.0.0.1:8188
 comfy_dir: "E:/ComfyUI_windows_portable/ComfyUI"
 host: 127.0.0.1
 port: 8000
-allow_origins: ["https://airpaint.xyz"]
+allow_origins: ["https://airpaint.xyz", "http://127.0.0.1:8000"]
 tokens: ["friend-xxxx"]
-daily_limit: 30
+daily_limit: 90
 translate: siliconflow
 siliconflow_model: "deepseek-ai/DeepSeek-V4-Flash"
 siliconflow_vision_model: "Qwen/Qwen3-VL-8B-Instruct"
-workflows:
-  anima:
-    file: workflows/AnimaFull.json
 ```
 
-人工维护的 LoRA 真相源是 `server/lora_registry.yaml`。新增 LoRA 使用 `.tools/start_lora_onboard_agent.bat` 或：
+原始邀请码和 API key 只应出现在 `server/config.yaml`。业务数据库只保存由本机身份密钥生成的匿名 owner ID，请求快照会剔除鉴权字段。
+
+人工维护的 LoRA 真相源是 `server/lora_registry.yaml`。新增资产继续使用 `.tools/start_lora_onboard_agent.bat`；服务启动不会扫描并自动收录全部 LoRA。
+
+## 数据与恢复
+
+- `server/state/airpaint.db` 是任务、会话、历史和每日用量的权威来源。
+- `server/images/` 保存输出图，`server/state/source_images/` 保存迭代所需输入图。
+- 浏览器只保存主题和短暂请求恢复标识，不再保存业务历史或原始邀请码。
+- 生成图通过带归属校验的 `/api/images/{filename}` 读取，不存在公开 `/images` 目录旁路。
+- 每个邀请码每天默认可创建 90 个生成任务。任务一旦与配额在同一事务中创建就计一次；参数校验失败不计；失败任务不退次数；刷新、同请求重试、状态核对和重新下载不重复计数。
+
+在线一致性备份：
 
 ```text
-python .tools/register_lora.py --agent
+python -m server.maintenance backup
+python -m server.maintenance verify server/backups/<备份文件>.zip
 ```
 
-服务启动时不会自动扫描 LoRA 目录，也不会把 Civitai trainedWords 自动写入正式 Registry。
+恢复必须先停止 AirPaint：
 
-## 常用验证
+```text
+python -m server.maintenance restore server/backups/<备份文件>.zip --replace
+```
+
+备份同时包含 SQLite、身份密钥以及数据库实际引用的输入/输出图片；恢复覆盖前自动再做一份回滚备份。
+
+## 验证
 
 ```text
 python -m compileall -q server
 node .tools/check_frontend.js
 python .tools/test_prompt_unit.py
+python .tools/test_image_iteration.py
+python .tools/test_persistence_recovery.py
 python .tools/test_lora_composition.py
 python .tools/test_lora_onboard_agent.py
 python .tools/register_lora.py --validate
 python .tools/inspect_wf.py
-python .tools/test_e2e.py
 ```
 
-确定性测试验证协议、解析、Binding 与 Workflow 结构；生成图片质量仍需固定条件出图和人眼判断。
+这些检查证明协议、持久化、恢复、Binding 和 workflow 注入没有已知结构退化，不能证明每张图片的审美或 Img2Img 改动都会成功。
 
-## 当前边界
+## 已知限制
 
-- 用量、任务与对话状态仍是内存态，后端重启后清零。
-- 单卡任务队列并发为 1。
-- PromptState、字段级增量编辑和 Workflow Intelligence 只有在真实使用数据证明需要时才启动。
-- 多 Profile/多 LoRA 的选择、Binding、强度与单文件去重已经可用，但多人关系和属性绑定仍是 best-effort，结构测试不等于画质验证。
+- Img2Img 是整图重绘。低强度可能几乎不改，高强度可能连带改变人物、发型、服装和构图；它不保证“只改指定区域”。
+- D59 的参考图/Img2Img 五张定向样本已完成工程核对，但图片人眼验收没有全部通过，不能写成画质完成。
+- 双角色有确定性数量和 Prompt 语法护栏，复杂互动与属性归属仍受 Anima、LoRA 和 seed 影响；三角色只 best-effort。
+- 单 worker、单机 SQLite、HTTP 轮询；不提供分布式调度、WebSocket、数据库集群或多 GPU 并发。
+- 旧浏览器历史没有可验证的归属和参数，不能伪装成完整可恢复任务；原文件仍可作为普通旧图片保留。
+- 当前单页界面的 Tailwind、GSAP 与字体仍从固定外部 CDN 加载；断网时业务数据不丢失，但样式或动效可能降级。离线查看项目可使用仓库内截图与演示记录。
+
+## 文档入口
+
+- [BUILDHANDOFF](docs/BUILDHANDOFF.md)：当前能力、证据、边界和接手路线。
+- [架构](docs/architecture.md) / [API](docs/api.md) / [运维](docs/operations.md) / [演示记录](docs/demo.md)。
+- [设计决定](docs/decisions.md) / [开发日志](docs/DEVLOG.md) / [Roadmap](ROADMAP.md)。
+- [AGENTS.md](AGENTS.md)：仓库开发规约。
+
+## 维护状态
+
+封版后只接受阻止正常使用的数据丢失、兼容或安全修复。Prompt 新方案、新模型、RAG、微调、多 Agent、自动改图、新 workflow、微服务和前端框架迁移都不属于当前维护范围。
