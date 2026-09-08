@@ -8,6 +8,13 @@ AirPaint 不替代 ComfyUI，也不是局部修图工具。当前版本进入封
 
 > 封版界面实拍。中央图片是本项目已有生成结果；为在 GPU 与外部 API 不可用时仍可复核界面，任务和历史状态由本地演示夹具提供，不冒充本次实时生成。完整演示路径与证据边界见 [演示记录](docs/demo.md)。
 
+## 使用流程
+
+1. 用中文写清主体、画面重点和必须保留的条件，按需要选择补全程度、尺寸与 LoRA。
+2. 先检查并编辑 Concept 和最终英文 Prompt，再把确认后的请求交给当前 Anima 工作流。
+3. 在结果页保留真实 seed、尺寸、Prompt 与 LoRA Binding；刷新或重新登录后从服务端历史继续。
+4. 想重新抽取构图时选“换一版”；允许整张图重新采样时选“基于此图重绘”，不要把它当作局部修图。
+
 ## 能做什么
 
 - 用 `auto / faithful / free` 三档把中文构思编译成 Anima Prompt。
@@ -17,6 +24,17 @@ AirPaint 不替代 ComfyUI，也不是局部修图工具。当前版本进入封
 - 用 Img2Img 对整张图片重新采样，选择 0.35/0.55/0.75 重绘强度和保留/裁切适配。
 - 从历史图片换一版或建立重绘分支，并查看真实 seed、尺寸、Prompt、LoRA 与父任务。
 - 在后端重启、浏览器刷新或短暂断线后恢复排队、核对已提交任务及重新取回已有结果。
+
+## 项目贡献
+
+AirPaint 的工作不在于替代底层生成器，而是把 ComfyUI 上方几个容易失真的环节连接成一条可检查、可恢复的链：
+
+- 用 Concept、十二字段 IR、TAG/NL 分工和知识解析，把中文意图编译成 Anima 可执行 Prompt，同时保留人工编辑权。
+- 将 LoRA Profile 的语义选择与真实文件、trigger、强度和单 Loader 注入分开，避免让语言模型猜工作流资源。
+- 把参考观察、Prompt 编译、ComfyUI 提交、seed、历史分支和故障核对保存为同一个可追溯任务，而不是只留下最终图片。
+- 用 SQLite、幂等请求、预分配 ComfyUI prompt ID、受控图片访问和一致性备份，让个人单机生成在刷新、断线和重启后仍能解释发生了什么。
+
+两张由当前项目真实生成、并从 PNG 内嵌 workflow 核对参数的封版案例见 [真实案例与参数](docs/showcase.md)。其中也保留了没有完全实现参考范围的失败事实，案例不是画质宣传样板。
 
 ## 快速启动
 
@@ -101,10 +119,10 @@ python .tools/inspect_wf.py
 ## 文档入口
 
 - [BUILDHANDOFF](docs/BUILDHANDOFF.md)：当前能力、证据、边界和接手路线。
-- [架构](docs/architecture.md) / [API](docs/api.md) / [运维](docs/operations.md) / [演示记录](docs/demo.md)。
+- [架构](docs/architecture.md) / [API](docs/api.md) / [运维](docs/operations.md) / [演示记录](docs/demo.md) / [真实案例](docs/showcase.md)。
 - [设计决定](docs/decisions.md) / [开发日志](docs/DEVLOG.md) / [Roadmap](ROADMAP.md)。
 - [AGENTS.md](AGENTS.md)：仓库开发规约。
 
 ## 维护状态
 
-封版后只接受阻止正常使用的数据丢失、兼容或安全修复。Prompt 新方案、新模型、RAG、微调、多 Agent、自动改图、新 workflow、微服务和前端框架迁移都不属于当前维护范围。
+`v1.0.0` 为最终封版基线。之后只接受阻止正常使用的数据丢失、兼容或安全修复。Prompt 新方案、新模型、RAG、微调、多 Agent、自动改图、新 workflow、微服务和前端框架迁移都不属于当前维护范围。
