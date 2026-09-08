@@ -5,6 +5,7 @@
 workflow_engine/api；保留本模块导出，避免现有维护脚本一次性失效。
 """
 from pathlib import Path
+import asyncio
 import sys
 
 
@@ -38,6 +39,40 @@ for _module in _IMPLEMENTATION_MODULES:
 app = api_module.app
 
 
+async def _serve_until_stopped() -> None:
+    """Run uvicorn and honor the local stop marker used by the Windows script."""
+    import uvicorn
+
+    stop_marker = settings_module.STATE_DIR / "run" / "stop.request"
+    stop_marker.parent.mkdir(parents=True, exist_ok=True)
+    stop_marker.unlink(missing_ok=True)
+    config = uvicorn.Config(
+        app,
+        host=settings_module.CFG.get("host", "127.0.0.1"),
+        port=int(settings_module.CFG.get("port", 8000)),
+    )
+    server = uvicorn.Server(config)
+
+    async def watch_stop_marker() -> None:
+        while not server.should_exit:
+            if stop_marker.exists():
+                stop_marker.unlink(missing_ok=True)
+                server.should_exit = True
+                return
+            await asyncio.sleep(0.5)
+
+    watcher = asyncio.create_task(watch_stop_marker(), name="airpaint-stop-monitor")
+    try:
+        await server.serve()
+    finally:
+        watcher.cancel()
+        try:
+            await watcher
+        except asyncio.CancelledError:
+            pass
+        stop_marker.unlink(missing_ok=True)
+
+
 async def siliconflow_translate(*args, **kwargs):
     """兼容旧实验脚本对 main 中 Prompt 覆盖项的临时 monkeypatch。"""
     prompt_module.PAINTER_SYSTEM_PROMPT = globals()["PAINTER_SYSTEM_PROMPT"]
@@ -48,10 +83,4 @@ async def siliconflow_translate(*args, **kwargs):
 
 
 if __name__ == "__main__":
-    import uvicorn
-
-    uvicorn.run(
-        app,
-        host=settings_module.CFG.get("host", "127.0.0.1"),
-        port=int(settings_module.CFG.get("port", 8000)),
-    )
+    asyncio.run(_serve_until_stopped())

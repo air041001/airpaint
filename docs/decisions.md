@@ -984,3 +984,30 @@ LoRA 用户可见名称以 versioned `server/lora_registry.yaml` 为单一真相
 **修订关系**：supersedes D23 的 Vision 直接编写最终 Prompt；revises D26 的共用压缩图、D31 的 raw 累积替换和旧 dialog 最新图逻辑。保留 D46/D56 Composer、十二字段边界、单 Loader/共享强度与固定负面词。
 
 **相关文件**：`server/settings.py`、`server/prompt_engine.py`、`server/workflow_engine.py`、`server/api.py`、`web/index.html`、`.tools/test_image_iteration.py`、`.tools/test_prompt_unit.py`、当前架构/API/交接文档。
+
+## D60. 最终封版以 SQLite 恢复链收口，图像缓存仍留文件系统
+
+**背景**：D59 已打通参考、整图 Img2Img 与历史分支，但任务、会话和用量仍由进程字典掌管。浏览器历史无法在重新登录后可靠恢复，POST 响应丢失可能诱发重复点击；ComfyUI 等待超时也被压成普通失败。项目决定停止主动能力扩展，最后一阶段只解决长期保存、故障表达和可演示性。
+
+**问题**：只把任务写入数据库而不重做提交边界，仍会在重启时盲目重发；只保存数据库而不保存身份密钥和引用图片，备份无法恢复 owner 和作品；继续公开挂载 `/images` 会绕过新增归属检查。另一方面，建设分布式队列、数据库服务或持久化模型缓存超出单机封版需要。
+
+**决定**：
+
+1. 本地 SQLite 成为 jobs、sessions、session turns、usage 的唯一权威来源；图片继续存文件。数据库使用 schema version/migration、WAL、foreign keys 与 `synchronous=FULL`，内存只保留 HTTP client、LRU cache 和单 worker 调度结构。
+2. owner 由本机 `identity.key` 对邀请码做 HMAC。登录签发 HttpOnly cookie，数据库和请求快照不得保存原始邀请码/API key。输出图只通过 `/api/images/{filename}` 读取并校验 owner；LoRA preview 仍是公开受控资产。
+3. 任务、一次用量和可选会话 turn 同事务创建。默认上限提高到每邀请码本地自然日 90 张；任务落盘即计一次，校验失败不计，失败不退款，幂等重试、恢复核对和结果重取不重复扣次。
+4. 浏览器每次用户生成动作带稳定 `client_request_id`。相同 owner/key/请求返回原任务；同 key 换请求返回 409；主动换版使用新 key。
+5. AirPaint 在 POST ComfyUI 前分配 canonical UUID prompt ID，把它和 AirPaint job ID 写入提交体并先落盘。连接失败是确定未送达；响应超时/断开是可能送达，进入 `reconcile_pending` 并只查询现有编号。等待到期是 `result_pending`，不声称 GPU 停止；结果已存在但下载失败是 `result_ready`，只重取图片。
+6. 启动时先核对可能已提交的任务，再恢复确定未提交的队列。Windows 停止脚本用本地 marker 请求 uvicorn 正常 shutdown，超时才强杀；异常退出依赖 WAL 与相同恢复流程。
+7. 备份使用 SQLite online backup，并将数据库、`identity.key` 和数据库引用的源图/结果图组成带 SHA-256 manifest 的 zip。覆盖恢复要求服务停止，自动生成 rollback 包并清理精确 WAL/SHM sidecar。
+8. 旧内存任务、localStorage 列表和孤立图片没有可信 owner/参数，不伪造迁移记录。历史改为服务端分页；浏览器只保留主题和短暂请求恢复标识。
+
+**原因**：单机 SQLite 足以给单 worker 提供事务、恢复和可审计状态，不增加运维平台。预分配 Comfy prompt ID 把“响应丢了”从无法判断的 POST 变成可查询事实；数据库与图片/身份密钥成套备份才是真正可恢复的项目状态。
+
+**代价与风险**：任务落盘后的生成失败不退额度，是为了避免并发和重启中的重复扣次/回滚歧义；需要在界面和运维文档中明确。数据库不是多实例协调器，同一状态目录只能运行一个 AirPaint worker。旧图片不会自动出现在新历史。Img2Img 画质与参考保真没有因持久化而提升，D59 的未通过人眼结论保持不变。
+
+**验证**：模拟 ComfyUI 覆盖排队重启只执行一次、运行中重启核对已有结果、响应丢失不盲目重发、结果下载重试不扣量；SQLite 覆盖幂等/配额同事务、cookie 重启、历史/会话/图片 owner、在线 DB 备份、整包恢复和旧 sidecar 清理。最终数量和浏览器/真实启停证据见 BUILDHANDOFF 与 DEVLOG，不能外推为图像质量证明。
+
+**修订关系**：revises D6/D25/D58/D59 中任务、会话、用量和历史仍为内存态的现状；保留 D59 的整图重绘能力边界和未完成人眼验收结论。
+
+**相关文件**：`server/persistence.py`、`server/runtime.py`、`server/workflow_engine.py`、`server/api.py`、`server/main.py`、`server/maintenance.py`、`web/index.html`、`.tools/test_persistence_recovery.py`、`.tools/start_airpaint.ps1`、`.tools/stop_airpaint.ps1`、`requirements.txt`、`docs/operations.md`。

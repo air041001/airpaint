@@ -15,6 +15,7 @@ from server import api as api_module
 from server import knowledge as knowledge_module
 from server import lora as lora_module
 from server import prompt_engine as prompt_module
+from server.persistence import AirPaintStore
 
 
 def test_character_match():
@@ -1227,11 +1228,17 @@ def test_build_prompt_re_resolves_binding_and_deduplicates_trigger():
 
 def test_enqueue_rebuilds_client_binding_from_registry_snapshot():
     old_jobs, old_queue, old_usage = api_module.JOBS, api_module.QUEUE, api_module.USAGE
+    old_store, old_sources, old_queued = api_module.STORE, api_module.SOURCE_IMAGES, api_module._queued_for_worker
     _, revision = main.LORA_REGISTRY.snapshot()
+    temp = tempfile.TemporaryDirectory()
     try:
         api_module.JOBS = {}
         api_module.QUEUE = asyncio.Queue()
         api_module.USAGE = {"test-token": ["2099-01-01", 0]}
+        api_module.STORE = AirPaintStore(Path(temp.name) / "state.db")
+        api_module.SOURCE_IMAGES = Path(temp.name) / "sources"
+        api_module.SOURCE_IMAGES.mkdir()
+        api_module._queued_for_worker = set()
         job_id = asyncio.run(main._enqueue(
             "test-token", "anima", "1girl, beach", "测试", "832x1216",
             [], None, None,
@@ -1251,14 +1258,20 @@ def test_enqueue_rebuilds_client_binding_from_registry_snapshot():
         assert job["completion_level"] == "free"
         assert asyncio.run(api_module.QUEUE.get()) == job_id
     finally:
+        api_module.STORE.close()
+        temp.cleanup()
         api_module.JOBS, api_module.QUEUE, api_module.USAGE = old_jobs, old_queue, old_usage
+        api_module.STORE, api_module.SOURCE_IMAGES = old_store, old_sources
+        api_module._queued_for_worker = old_queued
 
 
 def test_dialog_start_carries_binding_snapshot_into_job():
     old_translate = api_module.translate
     old_jobs, old_sessions = api_module.JOBS, api_module.SESSIONS
     old_queue, old_usage = api_module.QUEUE, api_module.USAGE
+    old_store, old_sources, old_queued = api_module.STORE, api_module.SOURCE_IMAGES, api_module._queued_for_worker
     bindings, _, revision = main.resolve_lora_selections(["denia_white"])
+    temp = tempfile.TemporaryDirectory()
 
     class FakeRequest:
         async def json(self):
@@ -1281,7 +1294,11 @@ def test_dialog_start_carries_binding_snapshot_into_job():
         api_module.SESSIONS = {}
         api_module.QUEUE = asyncio.Queue()
         api_module.USAGE = {"dialog-token": ["2099-01-01", 0]}
-        response = asyncio.run(main.dialog_turn(FakeRequest(), token="dialog-token"))
+        api_module.STORE = AirPaintStore(Path(temp.name) / "state.db")
+        api_module.SOURCE_IMAGES = Path(temp.name) / "sources"
+        api_module.SOURCE_IMAGES.mkdir()
+        api_module._queued_for_worker = set()
+        response = asyncio.run(main.dialog_turn(FakeRequest(), owner_id="dialog-token"))
         session = api_module.SESSIONS[response["session_id"]]
         job = api_module.JOBS[response["job_id"]]
         assert session["registry_revision"] == revision
@@ -1291,9 +1308,13 @@ def test_dialog_start_carries_binding_snapshot_into_job():
         assert job["lora_bindings"][0]["profile"] == "white"
         assert job["completion_level"] == "free"
     finally:
+        api_module.STORE.close()
+        temp.cleanup()
         api_module.translate = old_translate
         api_module.JOBS, api_module.SESSIONS = old_jobs, old_sessions
         api_module.QUEUE, api_module.USAGE = old_queue, old_usage
+        api_module.STORE, api_module.SOURCE_IMAGES = old_store, old_sources
+        api_module._queued_for_worker = old_queued
 
 
 def test_api_routes_are_registered_after_module_split():

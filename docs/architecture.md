@@ -1,6 +1,6 @@
 # 架构
 
-> 当前状态反映 2026-08-31（参考契约、Img2Img 与分支迭代实现；图片验收状态见 BUILDHANDOFF）。
+> 当前状态反映 2026-09-08（最终封版可靠性收尾；参考/Img2Img 图片验收状态见 BUILDHANDOFF）。
 > 改动架构时同步本文件（见 `AGENTS.md`）。
 
 ## 部署拓扑
@@ -9,17 +9,17 @@
 访客浏览器
    │  https://airpaint.xyz            → 前端网页 (FastAPI 托管 index.html)
    │  https://api.airpaint.xyz/...     → 后端 API
-   │  https://api.airpaint.xyz/images/ → 生成图片
+   │  https://api.airpaint.xyz/api/images/ → 鉴权后的生成图片
    ▼
 cloudflared 命名隧道 "airpaint" (永久固定, 重启不变)
    │  ~/.cloudflared/config.yml 路由两域名 → 127.0.0.1:8000
    ▼
 FastAPI 后端  127.0.0.1:8000  (server/api.py，server/main.py 启动)
-   ├─ 鉴权 / 日限流 / 内容过滤
+   ├─ cookie 鉴权 / SQLite 日限流 / 内容过滤
    ├─ Prompt Engine: 中文/参考契约/原状态 → Concept + IR + Anima Prompt
    ├─ Workflow Engine: 注入 prompt/seed/size/LoRA, detailer 删节点拼接, 清洗前端专属节点
-   ├─ 单并发队列 (asyncio.Queue, GPU 串行)
-   └─ 静态托管 / + /images + /lora-previews
+   ├─ SQLite 任务/会话/历史/用量 + 单 worker 恢复
+   └─ 托管 / 与 /lora-previews；输出图走归属校验 API
    ▼
 ComfyUI  127.0.0.1:8188  (不对公网开放)
    └─ AnimaFull 合并工作流 (txt2img/img2img/精修, 后端删节点拼接, D32)
@@ -28,9 +28,7 @@ ComfyUI  127.0.0.1:8188  (不对公网开放)
 > 前端与 API 同域不同子域: 网页在 `airpaint.xyz`, API 在 `api.airpaint.xyz`。
 > 跨子域算跨域, 故 `config.yaml` 的 `allow_origins` 仍需显式列 `https://airpaint.xyz`。
 
-> **启动**: ComfyUI 用 `run_nvidia_gpu_fast_fp16_accumulation.bat`; 后端+隧道用 `.tools/start_airpaint.bat` (双窗口);
-> 隧道单独挂了用 `.tools/start_tunnel.bat` 补起 (不碰后端, 避免 8000 端口冲突)。
-> bat 必须存 GBK+CRLF, 否则 cmd 解析错乱 cloudflared 行不执行 (见 decisions.md D14)。
+> **启动**：ComfyUI 仍单独启动；`.tools/start_airpaint.bat` 调用 PowerShell，在隐藏窗口启动后端和可选隧道并记录 PID/日志。`.tools/stop_airpaint.bat` 触发后端正常 shutdown；完整说明见 `docs/operations.md`。
 
 ## 后端模块
 
@@ -39,20 +37,23 @@ ComfyUI  127.0.0.1:8188  (不对公网开放)
 | 文件 | 职责 |
 |---|---|
 | `settings.py` | 读取本地配置，集中路径、限制与稳定协议常量 |
-| `runtime.py` | 共享 HTTP client、队列、任务、会话和用量内存态 |
+| `runtime.py` | 共享 HTTP client、单 worker 队列和热缓存；数据库才是业务真相 |
+| `persistence.py` | SQLite schema/migration、任务/会话/用量事务、owner 身份与历史查询 |
 | `knowledge.py` | 词典热加载、角色匹配、Danbooru 候选与本地缓存 |
 | `lora.py` | Registry 热加载、selection/context、binding 编译与预览解析 |
 | `prompt_engine.py` | Reasoning/Vision 调用、Composer 协议、IR 与 Prompt compiler |
 | `workflow_engine.py` | Workflow 清洗/注入、ComfyUI 上传、提交、轮询与取图 |
 | `api.py` | FastAPI app、中间件、鉴权、路由、worker 与静态托管 |
-| `main.py` | 启动 `api.app`；迁移期兼容维护脚本对旧符号的读取 |
+| `main.py` | 启动 `api.app`、监听本地正常停止信号；迁移期兼容旧符号读取 |
+| `maintenance.py` | SQLite 在线一致性备份、manifest 校验和离线恢复 |
 
-依赖方向为 `settings/runtime → knowledge/lora → prompt/workflow → api → main`。业务实现不应再写回启动入口；跨模块共享可变状态集中在 `runtime.py`，避免复制队列或 HTTP client。
+依赖方向为 `settings/runtime/persistence → knowledge/lora → prompt/workflow → api → main`。业务实现不应再写回启动入口；`runtime.py` 中的字典只作进程热缓存，任务/会话/用量的权威状态在 SQLite。
 
 ### 鉴权 & 限流
-- `auth(req)` 依赖: 取 `Authorization: Bearer <token>`, 校验是否在 `TOKENS` 集合。
-- 日限流: `USAGE` 字典 `token -> [date, count]`, 跨天归零, 超 `daily_limit`(30) 抛 429。
-- **内存态**, 后端重启清零 (已知限制, 见 decisions.md)。
+- 首次邀请码验证后签发 HMAC 签名、HttpOnly、SameSite=Lax cookie；反向代理为 HTTPS 时附加 Secure。旧 API 客户端仍可用 Bearer header。
+- 数据库只保存由本机 `identity.key` 对邀请码计算的 owner ID，不保存邀请码原文。删除邀请码会使对应 cookie 在下一次请求失效。
+- 日限流由 `usage_daily` 记录，默认每 owner/本地自然日 90 张。任务、可选会话轮次与一次扣量同事务；失败不退款，幂等重试、恢复和重新下载不重复扣量。
+- 翻译、历史、状态、会话与图片读取不受额度耗尽阻挡。
 
 ### 内容过滤
 - `check_banned(text)`: `banned_words` 小写子串匹配, 命中抛 400。
@@ -89,7 +90,7 @@ Active LoRA 时，Reasoning Model 只看 Asset/Profile 的 `provides` 与允许�
 
 前端一次上传产生两份 JPEG：最长边 768、质量 0.85 供 Vision；最长边 1536、质量 0.92 供 ComfyUI。独立 Img2Img 使用 full 观察作原图基线，将用户文字解释为修改项。重绘强度预设 0.35/0.55/0.75，高级范围 0.1–0.9；前后端均校验。比例不匹配时提示并推荐最近画幅，只有用户点击才更换尺寸；`preserve` 映射 `pad_edge`，`crop` 可选裁切位置。
 
-### 内存快照与分支迭代
+### 持久化快照与分支迭代
 
 每个任务保存原始意图、Concept、十二字段 IR、最终 Prompt、手动编辑标记、LoRA Binding、尺寸/seed、参考契约、精修、父任务及生成方式的独立快照。`source_job_id` 选择本会话内任一已完成源图；`parent_job_id` 记录实际父节点。不会用会话最新状态覆盖历史源图。
 
@@ -98,7 +99,7 @@ Active LoRA 时，Reasoning Model 只看 Asset/Profile 的 `provides` 与允许�
 - Composer 输出 `CHANGE_FIELDS` 后返回完整既有 IR；未声明字段必须逐字保持，违规则修复一次并 fail closed，不拼接历史中文。修订温度 0.3、`max_tokens=2400`，不缓存。
 - 手工编辑英文 Prompt 后，其权威性高于旧 IR；下一次修订重建 IR，不对旧 IR 强行执行未声明字段相等检查。这不是完整字段锁系统。
 - 同链固定 LoRA 选择/强度及 revision；更换 LoRA 回工坊开新链。校验/翻译失败不修改会话，不入队。
-- 旧 `vibe` 请求映射 `composition_vibe` 参考流程；旧 `image` 字段保留一兼容周期。内存态重启失去链关系，未引入数据库。
+- 旧 `vibe` 请求映射 `composition_vibe` 参考流程；旧 `image` 字段保留一兼容周期。任务、会话、turn、配额和图片引用写入 SQLite，重启后仍可查历史与继续有效分支；Vision/Composer 结果缓存仍为进程内 LRU。
 
 ### LoRA Registry / Binding
 
@@ -130,30 +131,44 @@ Img2Img 节点 31 的 `keep_proportion` 与 `crop_position` 依据本机 KJNodes
 > 扩展其他节点注入 (ControlNet / 图生图 等) 前, 先看 `CLAUDE.md` 的「ComfyUI 节点注入准则」-- 必须查本机节点源码定 input 格式, 不靠猜; 实例见 D16 (LoRA)。
 
 ### ComfyUI 客户端
-`submit_and_wait(...)`:
-- POST `/prompt` 提交 → 拿 `prompt_id`。
-- 轮询 `/history/{id}` (每 2s, 超时 `timeout_seconds`=300)。
-- 完成后 GET `/view` 取图, 存 `images/<uuid>.png`, 返回文件名。
+
+生成前由 AirPaint 分配 UUID `prompt_id`，并把它和 `extra_data.airpaint_job_id` 写入提交体。任务先以 `dispatching` 和该编号落盘，再 POST `/prompt`；本机 ComfyUI 源码已经核对会接受客户端 prompt ID，并在 queue/history 保留 extra data。
+
+- Connect failure 表示尚未送达，可进入 `waiting_for_comfy` 后安全继续。
+- Read timeout/响应断开表示“可能送达”，进入 `reconcile_pending`，不得自动再 POST。
+- 已提交任务只查询 `/history/{id}` 和 `/queue`。AirPaint 等待超时进入 `result_pending`，不声称 GPU 已停止。
+- 结果存在但 `/view` 下载失败进入 `result_ready`；恢复操作只重新下载并原子写入 `images/<job_id>.png`，不重新生成。
+- ComfyUI 明确拒绝或 history 明确执行失败才标记 `failed`。
 
 ### 队列
-- `asyncio.Queue` + 单 `worker()` 协程, **并发 = 1** (单卡串行)。
-- 任务状态: `queued`(带 position) → `running` → `done`(image) / `failed`(error)。
-- `JOBS` 字典存全部任务, **内存态** (重启丢失)。
+- `asyncio.Queue` + 单 `worker()` 协程，**并发 = 1**（单卡串行）。
+- 入队前先将源图和任务写入 SQLite；`JOBS/SESSIONS/USAGE` 只保留兼容热缓存。
+- 启动时先恢复 `dispatching/submitted/running/result_pending/result_ready/reconcile_pending` 的核对，再恢复确定未提交的 `queued/waiting_for_comfy`，同一进程集合避免重复排队。
+- 浏览器用 `client_request_id` 抵抗重复点击和 POST 响应丢失；同 key 不重复创建/扣次，主动换版仍使用新 key。
+- shutdown 取消 worker、checkpoint SQLite、关闭 HTTP client；Windows 停止脚本优先通过本地 marker 触发 uvicorn 正常退出。异常进程终止仍依赖 WAL 和启动恢复。
+
+### SQLite 与备份
+
+`server/state/airpaint.db` 使用 WAL、foreign keys、`synchronous=FULL` 和版本化 migration。`jobs/sessions/session_turns/usage_daily` 保存业务状态；内存只保留 Vision/Composer 缓存、连接和调度结构。请求快照经递归去敏，不含 Authorization、token 或 API key。
+
+`server.maintenance` 使用 SQLite online backup API，把一致数据库、`identity.key` 及数据库引用的源图/结果图打成带 SHA-256 manifest 的 zip。离线覆盖恢复先制作 rollback 包、删除目标 DB 的精确 `-wal/-shm` sidecar、原子替换并检查 integrity/counts。详见 `docs/operations.md`。
 
 ### 静态托管
 - `GET /` → `web/index.html` (FileResponse)。
-- `/images` → StaticFiles 挂载 `server/images/`。
+- `/api/images/{filename}` → 先查 SQLite owner 和引用，再返回 `server/images/` 对应文件；没有公开 `/images` 挂载。
 - `/lora-previews` → StaticFiles 挂载 `server/lora_previews/`；仅保存经人眼选定的前端缩略样片，生成原图与 manifest 继续留在 gitignored 实验输出目录。
 
 ## 前端 (web/index.html)
 
-单文件 SPA，无框架。localStorage 存邀请码与主题；线上使用 `https://api.airpaint.xyz`，localhost/127.0.0.1 自动使用当前 origin 便于本机 smoke。
+单文件 SPA，无框架。浏览器只在 localStorage 保存主题和短暂的 `client_request_id` 恢复标识；旧邀请码会在一次 cookie 迁移后删除，业务历史从服务端读取。线上使用 `https://api.airpaint.xyz`，localhost/127.0.0.1 自动使用当前 origin便于本机 smoke。
 三屏：登录（邀请码）/ 工坊（主界面）/ 暗房（对话迭代）。同一功能层提供两套材质：纸本画室（日间，暖纸底 + 墨绿操作色）与石墨暗房（夜间，暖黑底 + 安灯橙），工坊和暗房同步切换。
 桌面工坊使用固定三栏骨架：画面描述跨左/中两栏，结果态为 `Prompt 检查 324px / 图片 flexible / 成像设置 360px`，最近作品位于左/中两栏下方。首次进入只显示画面描述与成像设置；首次翻译显示跨两栏 Prompt 检查；已有图片后重翻译不移走图片。图片操作位于独立工具栏，媒体余量使用当前图的模糊背景，不覆盖成图。暗房对应为控制左 / 当前图中 / 迭代脉络右。
 移动端按描述 → 图片 → Prompt/参数页签 → 历史纵向排列；暗房按图片 → 控制 → 脉络排列。视图过渡只动画 opacity/translate，`prefers-reduced-motion` 下直接切换，不动画表单或网格尺寸。
 出图两步走 (翻译与生成解耦, 见 D17/D46)：中文 + 补全模式 + `lora_selections` -> `/api/translate` 拿 concept/prompt_en/breakdown/prompt_ir + binding/revision -> 可选编辑中文构思或英文 Prompt -> `/api/jobs` 回传 concept/completion/binding/revision。中文构思编辑后以 `concept_override` 重新调用翻译，不能直接把中文送入工作流；原文、补全模式、构思或 LoRA/Profile 改变都会使当前翻译过期，确认生成前必须应用或重翻译，避免新意图配旧 Prompt。
 描述区提供 `自动 / 忠于描述 / 自由补全` 三档；Prompt 检查区在五项 breakdown 上方显示可编辑的 `用户锁定｜模型补全` 中文构思。成像设置栏保留当前工作流 / 文生图与图生图 / 精修 / 尺寸 / LoRA。LoRA 使用角色与风格/细节两个连续多选菜单和“当前叠加栈”：角色最多 3 个语义 Profile，风格/动作/表情不设硬上限；所有多 Profile Asset 都可多选，同一文件只加载一次。前端提示用户在画面描述中明确多个主体的形态、位置与互动关系，但不替用户禁止组合；每个 Asset 有独立 0~2 强度、provides/verified 展示与移除操作。角色菜单保持文字列表；风格/细节菜单使用两栏“人物印样”卡片，展示固定预览、名称和默认强度，选中栈同步显示小图，缺图时安全降级为文字占位。菜单根据右栏与视口可用空间上下翻转并限制高度。参考图入口保留在画面描述区。尺寸为点击展开的画幅选择器，标准档与高分辨率实验档分组；选择后自动收起。当前开放标准 `832x1216 / 896x1152 / 1024x1024 / 1344x768`，高分辨率 `1024x1536 / 1536x864`。
-轮询 `/api/jobs/{id}` 每 2s，完成后显示实际 seed 并入最近 12 张作品。参考图有三档范围，图生图显示低/中/高重绘强度、适配方式和比例提示。出图后「继续迭代」进入暗房；历史显示父节点与“从这里继续”，源图选择不会覆盖其他历史分支。换一版默认新 seed，「基于此图重绘」默认继承；暗房固定源链 LoRA，不读取工坊当前选择。工坊独立上传不自动继承原图 LoRA。教程、占位文字、进行中状态和历史标签统一描述整图重绘，不承诺指定修改生效或其他内容不变，文字留空也不是原图直出。现有纸本/暗房视觉结构与 DOM ID 保留。
+轮询 `/api/jobs/{id}` 每 2s，连接异常会显示“恢复查询”且继续查询原 ID，不吞错或重复 POST；界面只使用不确定进度条，不展示虚假百分比。刷新后先由 `/api/requests/{client_request_id}` 恢复响应丢失的点击，再从分页 `/api/history` 找到进行中任务。完成后显示实际 seed、参数和父节点；已有 `session_ids` 可重新打开暗房分支。`result_ready/reconcile_pending` 提供“重新核对”，只调用 recover。
+
+参考图有三档范围，图生图显示低/中/高重绘强度、适配方式和比例提示。出图后「继续迭代」进入暗房；源图选择不会覆盖其他历史分支。换一版默认新 seed，「基于此图重绘」默认继承；暗房固定源链 LoRA，不读取工坊当前选择。工坊独立上传不自动继承原图 LoRA。教程、占位文字、进行中状态和历史标签统一描述整图重绘，不承诺指定修改生效或其他内容不变，文字留空也不是原图直出。现有纸本/暗房视觉结构与 DOM ID 保留。
 
 `web/index.html` 与后端、文档由根仓库 `air041001/airpaint` 统一追踪，保证一次 clone 能得到完整产品。旧 `air041001/air` 仓库只保留迁移前的前端历史，不再作为活跃真相源，也不再依赖 GitHub Pages。
 
@@ -162,7 +177,7 @@ Img2Img 节点 31 的 `keep_proportion` 与 `crop_position` 依据本机 KJNodes
 关键字段: `comfy_url` `comfy_dir` `host/port` `allow_origins` `tokens` `daily_limit`
 `timeout_seconds` `banned_words` `translate` `siliconflow_api_key` `siliconflow_model` `siliconflow_vision_model` `reroll_temperature`
 `workflows.anima.{file,prompt_node,seed_node,size_node,lora_node,image_node,switch_node,denoise_node,detailer_nodes,sizes,quality_prefix}`;
-`submit_and_wait()` 统一使用 `timeout_seconds` 作为单次 ComfyUI deadline。当前 1024×1536 无 detailer 实测约 82 秒；此前 300 秒并非高分辨率正常开销，而是 txt2img 误走占位图 VAE 分支，已由显式 switch 路由修复（D43）。
+worker 使用 `timeout_seconds` 作为单次前台等待 deadline；到期只进入 `result_pending` 并继续根据 `comfy_prompt_id` 核对，不把等待到期改写为执行失败。当前 1024×1536 无 detailer 的既有实测约 82 秒；此前 300 秒异常由显式 switch 路由修复（D43）。
 人工 LoRA 真相在 `server/lora_registry.yaml`；`config.yaml` 顶层 `loras` 只作未迁移 legacy 兼容。旧 gitignored `server/lora_cache.json` 已不再读取；未注册文件只在 onboarding 工具中枚举，本地 `.civitai.info` 只作维护者候选证据，不直接决定正式 trigger/Profile。
 
 ## 尚未实现 / 已知限制
@@ -170,6 +185,6 @@ Img2Img 节点 31 的 `keep_proportion` 与 `crop_position` 依据本机 KJNodes
 - **快照不是完整字段锁系统**：已有源任务快照、IR 增量修改和分支历史，但没有永久 locked_fields、局部遮罩或图像区域约束。Prompt 不变也不保证像素不变；手动 Prompt 编辑后的旧 IR 直到下次修订才重新对齐。
 - **多角色构图限制**: 双角色已对 count、Registry 身份注入、tag-first/具名短句分流和已复现的分屏措辞建立窄护栏；受控同 seed 对比也证明部分分页/黑线来自 Prompt 写法而非必然的模型上限。但 LoRA 训练、复杂遮挡、手部接触与 seed 仍可能导致融合或归属漂移，不能把已通过的两个案例扩张成通用画质保证。三角色继续为 best-effort，不恢复区域提示词。
 - **LoRA composition 边界**：选择、binding、逐 Asset 强度、同文件去重和 workflow 注入已支持最多 3 个语义角色及不限风格/细节；结构/API/浏览器验证不等于多人画质验证。base Anima 的多人物空间关系、动作绑定和属性防串仍需固定条件出图与人眼判断。
-- 用量/任务状态全内存, 重启清零；持久化由真实规模触发。
+- 单机 SQLite 是当前权威状态，但不是多实例数据库；不得同时启动多个 AirPaint worker 指向同一图库。
 - 单份合并工作流 AnimaFull; 加功能分支 = 改 AnimaFull.json + config 声明节点 + build_prompt 拼接逻辑 (D32)。
 - 当前轮询取状态；WebSocket 由真实并发和延迟需求触发。

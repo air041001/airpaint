@@ -16,7 +16,7 @@ tokens:
   - "friend-xxxx"
   - "friend-yyyy"
 
-daily_limit: 30          # 每个 token 每天最多生成张数
+daily_limit: 90          # 每个 token 每天最多生成张数
 timeout_seconds: 300     # 单张图超时 (工作流带人脸修复, 偏慢)
 
 # 翻译后端: siliconflow (国内直连, LLM 直出 danbooru tag, 推荐) | google (需翻墙) | none

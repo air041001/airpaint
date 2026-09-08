@@ -1,10 +1,12 @@
 """ComfyUI workflow 清洗、注入、提交与结果获取。"""
 import asyncio
 import json
+import os
 import random
 import time
 import uuid
 
+import httpx
 from fastapi import HTTPException
 
 from server.lora import (
@@ -210,15 +212,162 @@ def build_prompt(wf_name: str, prompt_en: str, width: int | None, height: int | 
             set_input("denoise_node", "denoise", float(denoise))
     return {"prompt": wf, "client_id": CLIENT_ID, "_seed": seed}
 
-async def upload_image_to_comfy(image_bytes: bytes) -> str:
+class ComfyUnavailable(RuntimeError):
+    pass
+
+
+class ComfySubmissionUncertain(RuntimeError):
+    pass
+
+
+class ComfyRejected(RuntimeError):
+    pass
+
+
+class ComfyExecutionFailed(RuntimeError):
+    pass
+
+
+class ComfyResultUnavailable(RuntimeError):
+    pass
+
+
+async def upload_image_to_comfy(image_bytes: bytes, filename: str | None = None) -> str:
     """上传图到 ComfyUI input 目录 (POST /upload/image), 返回文件名 (给 LoadImage set_input 用, 见 D26)."""
-    fname = f"{uuid.uuid4().hex[:12]}.png"
-    r = await CLIENT.post(f"{COMFY}/upload/image",
-                          files={"image": (fname, image_bytes, "image/png")},
-                          data={"type": "input", "overwrite": "true"}, timeout=30)
+    fname = filename or f"{uuid.uuid4().hex[:12]}.png"
+    try:
+        r = await CLIENT.post(
+            f"{COMFY}/upload/image",
+            files={"image": (fname, image_bytes, "image/png")},
+            data={"type": "input", "overwrite": "true"},
+            timeout=30,
+        )
+    except httpx.RequestError as exc:
+        raise ComfyUnavailable(f"无法连接 ComfyUI 上传图片: {exc}") from exc
     if r.status_code != 200:
-        raise RuntimeError(f"ComfyUI 上传图片失败: {r.status_code} {r.text[:200]}")
+        raise ComfyRejected(f"ComfyUI 上传图片失败: {r.status_code} {r.text[:200]}")
     return r.json()["name"]
+
+
+def submission_payload(payload: dict, prompt_id: str, airpaint_job_id: str) -> dict:
+    """Attach stable reconciliation identifiers to a sanitized Comfy request."""
+    request = json.loads(json.dumps(payload))
+    request.pop("_seed", None)
+    request["prompt_id"] = str(prompt_id)
+    extra = request.setdefault("extra_data", {})
+    extra["airpaint_job_id"] = str(airpaint_job_id)
+    return request
+
+
+async def submit_to_comfy(payload: dict) -> str:
+    """Submit once. A transport failure is ambiguous and must not be retried blindly."""
+    expected = str(payload.get("prompt_id") or "")
+    if not expected:
+        raise ValueError("ComfyUI 请求缺少预分配 prompt_id")
+    try:
+        response = await CLIENT.post(f"{COMFY}/prompt", json=payload)
+    except (httpx.ConnectError, httpx.ConnectTimeout) as exc:
+        raise ComfyUnavailable(f"无法连接 ComfyUI 提交任务: {exc}") from exc
+    except httpx.RequestError as exc:
+        raise ComfySubmissionUncertain(f"提交响应丢失，任务是否送达需要核对: {exc}") from exc
+    if response.status_code != 200:
+        raise ComfyRejected(f"ComfyUI 拒绝: {response.status_code} {response.text[:300]}")
+    try:
+        returned = str(response.json()["prompt_id"])
+    except (KeyError, TypeError, ValueError) as exc:
+        raise ComfySubmissionUncertain("ComfyUI 已响应但没有返回有效 prompt_id") from exc
+    if returned != expected:
+        raise ComfySubmissionUncertain(
+            f"ComfyUI 返回了不同的 prompt_id ({returned})，需要人工核对"
+        )
+    return returned
+
+
+def _history_error(entry: dict) -> str:
+    messages = (entry.get("status") or {}).get("messages") or []
+    for item in reversed(messages):
+        if isinstance(item, (list, tuple)) and len(item) > 1 and isinstance(item[1], dict):
+            detail = item[1].get("exception_message") or item[1].get("exception_type")
+            if detail:
+                return f"ComfyUI 执行出错: {str(detail)[:300]}"
+    return "ComfyUI 执行出错"
+
+
+async def inspect_comfy_prompt(prompt_id: str) -> dict:
+    """Return an evidence-based state for one known Comfy prompt id."""
+    try:
+        history_response = await CLIENT.get(f"{COMFY}/history/{prompt_id}", timeout=10)
+        history_response.raise_for_status()
+        history = history_response.json()
+        entry = history.get(prompt_id)
+        if entry:
+            status = entry.get("status") or {}
+            if status.get("status_str") == "error":
+                return {"state": "failed", "entry": entry, "error": _history_error(entry)}
+            if status.get("completed") or "outputs" in entry:
+                return {"state": "result_ready", "entry": entry}
+
+        queue_response = await CLIENT.get(f"{COMFY}/queue", timeout=10)
+        queue_response.raise_for_status()
+        queue = queue_response.json()
+    except (httpx.RequestError, httpx.HTTPStatusError, ValueError, TypeError) as exc:
+        raise ComfyUnavailable(f"无法核对 ComfyUI 任务: {exc}") from exc
+
+    for key, state in (("queue_running", "running"), ("queue_pending", "submitted")):
+        for item in queue.get(key) or []:
+            if isinstance(item, list) and len(item) > 1 and str(item[1]) == prompt_id:
+                return {"state": state, "queue_item": item}
+    return {"state": "missing"}
+
+
+def find_comfy_output(entry: dict) -> dict:
+    for node_id, node_out in (entry.get("outputs") or {}).items():
+        for image in node_out.get("images", []):
+            if image.get("type") in ("output", "temp") and image.get("filename"):
+                return {
+                    "node_id": str(node_id),
+                    "filename": str(image["filename"]),
+                    "subfolder": str(image.get("subfolder") or ""),
+                    "type": str(image.get("type") or "output"),
+                }
+    raise ComfyResultUnavailable("ComfyUI 已结束，但历史中没有输出图片")
+
+
+async def retrieve_comfy_result(prompt_id: str, destination_name: str) -> tuple[str, dict]:
+    """Download an existing Comfy result atomically without resubmitting generation."""
+    state = await inspect_comfy_prompt(prompt_id)
+    if state["state"] == "failed":
+        raise ComfyExecutionFailed(state["error"])
+    if state["state"] != "result_ready":
+        raise ComfyResultUnavailable(f"ComfyUI 结果尚未就绪 ({state['state']})")
+    output = find_comfy_output(state["entry"])
+    try:
+        response = await CLIENT.get(
+            f"{COMFY}/view",
+            params={
+                "filename": output["filename"],
+                "subfolder": output["subfolder"],
+                "type": output["type"],
+            },
+            timeout=60,
+        )
+        response.raise_for_status()
+    except (httpx.RequestError, httpx.HTTPStatusError) as exc:
+        raise ComfyResultUnavailable(f"图片已生成，但取回失败: {exc}") from exc
+    data = response.content
+    if not data or not (
+        data.startswith(b"\x89PNG\r\n\x1a\n")
+        or data.startswith(b"\xff\xd8")
+        or (data.startswith(b"RIFF") and data[8:12] == b"WEBP")
+    ):
+        raise ComfyResultUnavailable("ComfyUI 返回的结果不是有效图片")
+    safe_name = os.path.basename(destination_name)
+    if safe_name != destination_name or not safe_name:
+        raise ValueError("输出文件名无效")
+    temporary = IMAGES / f".{safe_name}.{uuid.uuid4().hex}.tmp"
+    temporary.write_bytes(data)
+    os.replace(temporary, IMAGES / safe_name)
+    return safe_name, output
 
 async def submit_and_wait(wf_name: str, prompt_en: str, width, height, lora_keys: list[str] | None = None,
                           strength_char: float | None = None, strength_style: float | None = None,
@@ -237,34 +386,20 @@ async def submit_and_wait(wf_name: str, prompt_en: str, width, height, lora_keys
         registry_revision=registry_revision, seed=seed,
         fit_mode=fit_mode, crop_position=crop_position,
     )
-    payload.pop("_seed")
-    r = await CLIENT.post(f"{COMFY}/prompt", json=payload)
-    if r.status_code != 200:
-        raise RuntimeError(f"ComfyUI 拒绝: {r.text[:200]}")
-    pid = r.json()["prompt_id"]
+    pid = str(uuid.uuid4())
+    payload = submission_payload(payload, pid, f"compat-{pid}")
+    await submit_to_comfy(payload)
 
     deadline = time.time() + int(CFG.get("timeout_seconds", 300))
     while time.time() < deadline:
         await asyncio.sleep(2)
-        h = (await CLIENT.get(f"{COMFY}/history/{pid}")).json()
-        if pid not in h:
+        state = await inspect_comfy_prompt(pid)
+        if state["state"] in {"submitted", "running", "missing"}:
             continue
-        entry = h[pid]
-        status = entry.get("status", {})
-        if status.get("status_str") == "error":
-            raise RuntimeError("ComfyUI 执行出错")
-        if not status.get("completed", False) and "outputs" not in entry:
-            continue
-        for node_out in entry.get("outputs", {}).values():
-            for img in node_out.get("images", []):
-                if img.get("type") in ("output", "temp"):
-                    data = (await CLIENT.get(f"{COMFY}/view", params={
-                        "filename": img["filename"],
-                        "subfolder": img.get("subfolder", ""),
-                        "type": img.get("type", "output"),
-                    })).content
-                    fname = f"{uuid.uuid4().hex[:12]}.png"
-                    (IMAGES / fname).write_bytes(data)
-                    return fname
-        raise RuntimeError("未找到输出图片")
+        if state["state"] == "failed":
+            raise ComfyExecutionFailed(state["error"])
+        if state["state"] == "result_ready":
+            fname = f"{uuid.uuid4().hex[:12]}.png"
+            saved, _ = await retrieve_comfy_result(pid, fname)
+            return saved
     raise TimeoutError("生成超时")

@@ -6,14 +6,17 @@ Base URL: `https://api.airpaint.xyz` (公网) / `http://127.0.0.1:8000` (本机)
 
 ## 鉴权
 
-除 `/api/health` 和静态资源外, 所有接口要求请求头:
+首次登录可向 `/api/auth/check` 发送请求头：
 
 ```
 Authorization: Bearer <token>
 ```
 
-`token` 即 `config.yaml` 里的 `tokens` 之一 (邀请码)。无效 → `401 {"detail":"无效 token"}`。
-日限流超 `daily_limit` → `429 {"detail":"今日已达 N 张上限"}`。
+`token` 是 `config.yaml` 里的邀请码之一。验证成功后服务端设置签名的 HttpOnly `airpaint_session` cookie；浏览器随后的请求使用 cookie，不把原始邀请码保存在 localStorage。旧客户端仍可持续使用 Authorization header。
+
+业务表只保存由本机 `identity.key` 计算的 HMAC owner ID，不保存原始邀请码。cookie 失效或邀请码被移除 → `401 {"detail":"邀请码无效或登录已过期"}`。
+
+日限流只在创建新任务时由 SQLite 事务检查；超 `daily_limit` → `429 {"detail":"今日已达 N 张上限"}`。翻译、历史、状态、会话、图片读取与结果恢复不受已满配额阻挡。
 
 ---
 
@@ -24,14 +27,18 @@ Authorization: Bearer <token>
 
 响应 `200`:
 ```json
-{ "ok": true, "comfy": true }
+{ "ok": true, "comfy": true, "database": true, "schema_version": 1 }
 ```
 `comfy` = 本机 ComfyUI (127.0.0.1:8188) 是否可达。
 
 ### GET /api/auth/check
-只验证邀请码有效性 (需鉴权, 用 `verify_token`: **不查日限、不耗 GPU 配额**)。给前端登录门禁用, 避免用 `/api/workflows`(`auth`, 查日限)验证导致达日限的朋友登不进来。
+验证邀请码/header 或既有 cookie 并刷新 HttpOnly cookie，**不查日限、不耗 GPU 配额**。
 
-响应 `200`: `{ "ok": true }`; 邀请码无效: `401 {"detail":"无效 token"}`。
+响应 `200`: `{ "ok": true, "daily_used": 12, "daily_limit": 90 }`。
+
+### POST /api/auth/logout
+
+清除浏览器登录 cookie；不删除作品、任务或用量记录。
 
 ### GET /api/workflows
 列出可用工作流 (需鉴权)。
@@ -175,6 +182,7 @@ Composer 必须返回 `CONCEPT + 精确 12 字段 IR + CHAR + [LORA] + PROMPT`�
 ```json
 {
   "workflow": "anima",
+  "client_request_id": "浏览器为本次点击生成的稳定 UUID",
   "prompt_en": "1girl, white hair, blue eyes, cat ears, smile",
   "prompt": "白发蓝眼睛的猫耳少女, 微笑, 站在樱花树下",
   "concept": "用户锁定：白发蓝眼猫耳少女、微笑｜模型补全：樱花树下的站姿与柔和日光",
@@ -197,6 +205,7 @@ Composer 必须返回 `CONCEPT + 精确 12 字段 IR + CHAR + [LORA] + PROMPT`�
 }
 ```
 - `prompt_en`: 必填，已编译英文 Prompt（可经用户编辑），≤6000 字符，经内容过滤。LoRA required/default tags 由后端重新绑定后，最终编译 Prompt 上限为 8000 字符。
+- `client_request_id`: 可选 8～128 位安全标识；也可放在 `Idempotency-Key` header。省略时服务端生成。相同 owner、相同 key、相同请求返回原任务且不重复扣次；相同 key 用于不同请求返回 409。
 - `prompt`: 可选，原始中文（仅存档展示），≤4000 字符；不传则 `prompt_raw` 同 `prompt_en`。
 - `concept`: 可选，≤4000 字符，保持 `用户锁定：…｜模型补全：…` 结构；用于在 job、状态与暗房之间追踪本次生成蓝图，不直接写入 ComfyUI 正向 Prompt。
 - `completion_level`: 可选，`auto | faithful | free`，默认 `auto`；与 `concept` 一起保存，供后续暗房迭代沿用。
@@ -219,7 +228,7 @@ Composer 必须返回 `CONCEPT + 精确 12 字段 IR + CHAR + [LORA] + PROMPT`�
 
 响应 `200`:
 ```json
-{ "id": "cbf274b7e5", "prompt_en": "...", "concept": "用户锁定：…｜模型补全：…", "completion_level": "auto", "lora_bindings": [], "lora_warnings": [], "registry_revision": null }
+{ "id": "cbf274b7e5", "status": "queued", "prompt_en": "...", "concept": "用户锁定：…｜模型补全：…", "completion_level": "auto", "lora_bindings": [], "lora_warnings": [], "registry_revision": null, "seed": 12345 }
 ```
 
 任务创建、查询与 dialog 响应还包含 `seed`、`width/height`、`prompt_ir`、`parent_job_id`、`generation_mode`、`denoise`、`fit_mode/crop_position`、`change_fields`、`reference_contract/reference_scope`、`state_snapshot`。`generation_mode` 为 `txt2img/img2img/redo/tweak/vibe`。快照深拷贝本轮原始意图、构思、IR、可编辑 Prompt、LoRA、尺寸/seed 与完成方式；不会随后续分支修改。
@@ -243,21 +252,37 @@ running (生成中):
 ```
 done (完成):
 ```json
-{ "id": "...", "status": "done", "prompt_raw": "...", "prompt_en": "...", "concept": "用户锁定：…｜模型补全：…", "completion_level": "auto", "workflow": "anima", "image": "/images/4f2fdd03f1e5.png" }
+{ "id": "...", "status": "done", "prompt_raw": "...", "prompt_en": "...", "concept": "用户锁定：…｜模型补全：…", "completion_level": "auto", "workflow": "anima", "image": "/api/images/4f2fdd03f1e5.png" }
 ```
 failed (失败):
 ```json
 { "id": "...", "status": "failed", "prompt_raw": "...", "prompt_en": "...", "concept": "用户锁定：…｜模型补全：…", "completion_level": "auto", "workflow": "anima", "error": "生成超时" }
 ```
 
-`image` 是相对路径, 拼接 Base URL 取图。任务状态同时返回 `concept/completion_level/lora_bindings/lora_warnings/registry_revision`，便于诊断构思、Prompt 与实际权重。
+除四个基础状态外还会返回 `waiting_for_comfy / dispatching / submitted / result_pending / reconcile_pending / result_ready`，语义见下方状态机与 `docs/operations.md`。等待超时不等于 GPU 失败；`reconcile_pending` 不会盲目重发；`result_ready` 只需重新取图。
+
+`image` 是受归属保护的相对路径，浏览器必须携带登录 cookie。任务状态还返回 `concept/completion_level/lora_bindings/lora_warnings/registry_revision`、生命周期时间、`comfy_prompt_id`、`error_kind/error_message`，便于区分连接、执行和取图错误。
+
+### POST /api/jobs/{job_id}/recover
+
+重新核对现有 ComfyUI prompt ID，或重新下载已经生成的结果。需校验任务归属，不创建任务、不重复扣次。`done` 幂等返回；没有可恢复状态的明确失败任务返回 409。
+
+### GET /api/history
+
+服务端历史（需鉴权），按任务创建时间倒序并校验 owner。参数：`limit` 为 1～50，`cursor` 使用响应的 opaque `next_cursor`。
+
+响应含 `items`、`next_cursor`、`daily_used`、`daily_limit`。每项是公开任务快照并附带 `session_ids`，前端可在刷新/重新登录后继续有效历史分支。
+
+### GET /api/requests/{client_request_id}
+
+浏览器在 POST 响应丢失后按稳定请求 ID 找回任务。服务器没有落盘该请求返回 404，此时才可安全按原点击重新创建；找到则继续查询原任务。
 
 ### POST /api/dialog/turn
 ⑤ 对话迭代: 每轮一次出图 (需鉴权, 计入日限)。显式路由不猜意图: `action` 由前端按钮决定 (见 D25)。
 
 请求体:
 ```json
-{ "session_id": "可选, 首轮省略", "action": "start|start-image|redo|vibe|tweak", "prompt": "首轮中文描述", "delta": "可选改动", "completion_level": "auto", "workflow": "anima", "size": "832x1216", "lora_selections": [{"key":"denia","mode":"auto","strength_model":0.8,"strength_clip":0.8}] }
+{ "session_id": "可选, 首轮省略", "client_request_id": "稳定 UUID", "action": "start|start-image|redo|vibe|tweak", "prompt": "首轮中文描述", "delta": "可选改动", "completion_level": "auto", "workflow": "anima", "size": "832x1216", "lora_selections": [{"key":"denia","mode":"auto","strength_model":0.8,"strength_clip":0.8}] }
 ```
 - `start`: 建会话 + 首图。`prompt` 必填且 ≤4000 字符；`completion_level` 可选并沿用到后续重翻译。
 - `delta`: 可选改动，≤2000 字符。
@@ -269,7 +294,8 @@ failed (失败):
 - `vibe`: 只保留旧接口兼容，不再提供独立前端按钮；源图经 `composition_vibe` 观察后交 Composer，默认新 seed、txt2img。
 - 同一迭代链固定 LoRA Asset/Profile/optional/强度；传入不同选择返回 409，必须回工坊开启新链。原有 Registry revision 校验不变。
 - `start-image`: 用 `job_id`（兼容 `source_job_id`）将已完成图片纳入新会话，不重新生成首图、不扣配额。
-- 每次生成成功入队才增加用量、写入会话；翻译/校验失败不会污染原状态。每轮 delta 单独保存，`prompt_raw/raw` 保留原始意图，不再拼接历史中文。
+- `client_request_id` 与 jobs 相同；网络重试返回原轮次，不重复追加 turn 或扣次。主动换一版必须使用新 ID。
+- 每次生成任务与一次用量、可选会话 turn 在同一事务写入；翻译/校验失败不会污染原状态。每轮 delta 单独保存，`prompt_raw/raw` 保留原始意图，不再拼接历史中文。
 
 响应 `200`:
 ```json
@@ -283,15 +309,16 @@ failed (失败):
 ```json
 { "session_id": "...", "raw": "原始中文描述", "current_en": "最新 prompt_en", "concept": "用户锁定：…｜模型补全：…", "completion_level": "auto",
   "lora_bindings": [], "lora_warnings": [], "registry_revision": null,
-  "turns": [ { "action": "start", "delta": "", "prompt_en": "...", "concept": "用户锁定：…｜模型补全：…", "completion_level": "auto", "status": "done", "image": "/images/x.png", "error": null } ] }
+  "turns": [ { "action": "start", "delta": "", "prompt_en": "...", "concept": "用户锁定：…｜模型补全：…", "completion_level": "auto", "status": "done", "image": "/api/images/x.png", "error": null } ] }
 ```
 `image` 在对应 job 完成后才有值 (worker 写回)。
 
-`turns` 的每项含 `job_id`、`parent_job_id`、`action/delta` 和完整公开任务字段/快照；显示历史时以各节点状态为准，不用顶层 `current_en` 覆盖旧图。任务、会话与参考缓存均为内存态，重启后不能继续旧链；图片文件不因此自动删除。
+`turns` 的每项含 `job_id`、`parent_job_id`、`action/delta` 和完整公开任务字段/快照；显示历史时以各节点状态为准，不用顶层 `current_en` 覆盖旧图。任务与会话从 SQLite 读取，重启后仍可继续有效分支；仅 Vision/Composer 缓存留在内存。
 
-### 静态资源 (无需鉴权)
+### 资源
 - `GET /` → 前端网页 `index.html`
-- `GET /images/{filename}` → 生成的 PNG
+- `GET /api/images/{filename}` → 需鉴权并校验图片属于当前 owner 的输出图
+- `GET /lora-previews/{filename}` → 无需鉴权的受控 LoRA 预览资源
 
 ---
 
@@ -301,26 +328,33 @@ failed (失败):
         POST /api/jobs
               │
               ▼
-          queued ──(轮询带 position)──┐
-              │                        │
-              ▼                        │
-           running                     │
-           │        │                  │
-         done    failed ◄──────────────┘
-         │        │
-    返回 image  返回 error
+ queued / waiting_for_comfy
+              │
+              ▼
+         dispatching ── 请求证据不确定 ──► reconcile_pending
+              │                                  │
+              ▼                                  └─ recover: 只核对 prompt_id
+      submitted / running
+          │             │
+          │             └─ 等待超时 ──► result_pending
+          ▼
+     result_ready ── 下载成功 ──► done
+          │
+          └─ 下载失败后 recover: 只重新取图
+
+ ComfyUI 明确拒绝/执行失败或输入丢失 ──► failed
 ```
 
-前端每 2s 轮询 `GET /api/jobs/{id}` 直到 `done`/`failed`。
+前端每 2s 查询 `GET /api/jobs/{id}`。连接中断会显示恢复查询，不制造虚假百分比，也不把任务重新 POST。
 
 ## 错误码汇总
 
 | 码 | 含义 |
 |---|---|
 | 400 | 参数校验 (未知工作流 / 提示词空或过长 / 非法尺寸 / 命中禁词) |
-| 401 | 无效 token |
+| 401 | 邀请码无效或登录 cookie 过期 |
 | 404 | 任务不存在 |
-| 409 | LoRA Registry revision 已变化，需重新翻译 |
+| 409 | 幂等 key 与请求冲突 / LoRA revision 变化 / 任务状态不可恢复 |
 | 429 | 当日已达上限 |
 | 500 | 服务器内部错误 / 未知 translate 后端 |
 | 502 | 翻译失败 (LLM/Google 返回异常或超时) |

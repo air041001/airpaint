@@ -12,6 +12,7 @@ from unittest.mock import AsyncMock, patch
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from fastapi import HTTPException
 from server import api, prompt_engine as prompt, settings, workflow_engine as workflow
+from server.persistence import AirPaintStore
 
 
 PNG = base64.b64decode("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/a9sAAAAASUVORK5CYII=")
@@ -158,9 +159,14 @@ class WorkflowTests(unittest.TestCase):
 class ApiTests(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self):
         self.temp = tempfile.TemporaryDirectory()
+        root = Path(self.temp.name)
+        self.store = AirPaintStore(root / "state.db")
+        self.sources = root / "source_images"
+        self.sources.mkdir()
         self.patches = [patch.object(api, name, value) for name, value in {
             "JOBS": {}, "SESSIONS": {}, "QUEUE": asyncio.Queue(), "USAGE": {},
-            "IMAGES": Path(self.temp.name), "DAILY_LIMIT": 30,
+            "STORE": self.store, "SOURCE_IMAGES": self.sources,
+            "_queued_for_worker": set(), "IMAGES": root, "DAILY_LIMIT": 30,
         }.items()]
         for item in self.patches:
             item.start()
@@ -173,6 +179,7 @@ class ApiTests(unittest.IsolatedAsyncioTestCase):
         self.upload_patch.stop()
         for item in reversed(self.patches):
             item.stop()
+        self.store.close()
         self.temp.cleanup()
 
     async def root(self):
@@ -180,7 +187,10 @@ class ApiTests(unittest.IsolatedAsyncioTestCase):
                                     "832x1216", [], None, None, seed=456,
                                     prompt_ir=ir(subject=["1girl"], scene=["beach"], lighting=["sunset"]),
                                     concept="用户锁定：海边少女｜模型补全：夕阳")
-        api.JOBS[job_id].update(status="done", image="/images/source.png")
+        job = api.STORE.update_job(
+            job_id, status="done", output_image_ref="source.png", completed_at=1.0
+        )
+        api.JOBS[job_id] = job
         session = await api.dialog_turn(Request(action="start-image", job_id=job_id), "owner")
         return job_id, session["session_id"]
 
@@ -195,7 +205,8 @@ class ApiTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result["state_snapshot"]["prompt_ir"]["subject"], ["1girl"])
         result["state_snapshot"]["prompt_ir"]["subject"].append("changed")
         self.assertEqual(api.JOBS[result["id"]]["prompt_ir"]["subject"], ["1girl"])
-        self.upload.assert_awaited_once_with(PNG)
+        self.upload.assert_not_awaited()
+        self.assertTrue((self.sources / api.JOBS[result["id"]]["source_image_ref"]).is_file())
 
     async def test_translate_image_fields_and_conflict_validation(self):
         result = model_result()
@@ -232,8 +243,11 @@ class ApiTests(unittest.IsolatedAsyncioTestCase):
     async def test_branch_delta_uses_selected_parent_and_does_not_append_raw(self):
         root, session = await self.root()
         first = await api.dialog_turn(Request(action="redo", session_id=session), "owner")
-        api.JOBS[first["id"]].update(status="done", image="/images/source.png")
-        api.JOBS[first["id"]]["state_snapshot"]["prompt_ir"]["scene"] = ["forest"]
+        first_job = api.STORE.update_job(
+            first["id"], status="done", output_image_ref="source.png", completed_at=2.0
+        )
+        first_job["state_snapshot"]["prompt_ir"]["scene"] = ["forest"]
+        api.JOBS[first["id"]] = api.STORE.save_job(first_job)
         new_ir = ir(subject=["1girl"], scene=["beach"], lighting=["morning light"])
         fake = AsyncMock(return_value=("1girl, beach, morning light", {}, new_ir,
                                       {"concept": "用户锁定：海边清晨｜模型补全：无", "change_fields": ["lighting"]}))
@@ -248,13 +262,16 @@ class ApiTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_tweak_inherits_seed_size_and_uses_source_pixels(self):
         root, session = await self.root()
-        api.JOBS[root]["detailer"] = {"face": True}
+        root_job = api.STORE.get_job(root)
+        root_job["detailer"] = {"face": True}
+        api.JOBS[root] = api.STORE.save_job(root_job)
         result = await api.dialog_turn(Request(action="tweak", session_id=session, source_job_id=root), "owner")
         self.assertEqual((result["seed"], result["width"], result["height"]), (456, 832, 1216))
         self.assertEqual(result["denoise"], 0.35)
         self.assertEqual(result["parent_job_id"], root)
         self.assertEqual(result["state_snapshot"]["detailer"], {"face": True})
-        self.upload.assert_awaited_once_with(PNG)
+        self.upload.assert_not_awaited()
+        self.assertTrue((self.sources / api.JOBS[result["id"]]["source_image_ref"]).is_file())
 
     async def test_invalid_tweak_parameters_rejected_before_model_call(self):
         root, session = await self.root()
@@ -283,7 +300,7 @@ class ApiTests(unittest.IsolatedAsyncioTestCase):
             await api.dialog_turn(Request(action="redo", session_id=session, source_job_id="unknown"), "owner")
         with self.assertRaises(HTTPException):
             await api.job_status(root, "other-user")
-        api.JOBS[root]["status"] = "failed"
+        api.JOBS[root] = api.STORE.update_job(root, status="failed")
         with self.assertRaises(HTTPException):
             await api.dialog_turn(Request(action="tweak", session_id=session, source_job_id=root), "owner")
 
@@ -298,11 +315,11 @@ class ApiTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_last_quota_job_can_still_be_read(self):
         root, session = await self.root()
-        api.USAGE["owner"][1] = api.DAILY_LIMIT
         self.assertEqual((await api.job_status(root, "owner"))["status"], "done")
         self.assertEqual((await api.dialog_get(session, "owner"))["turns"][0]["job_id"], root)
-        with self.assertRaises(HTTPException):
-            await api.dialog_turn(Request(action="redo", session_id=session), "owner")
+        with patch.object(api, "DAILY_LIMIT", 1):
+            with self.assertRaises(HTTPException):
+                await api.dialog_turn(Request(action="redo", session_id=session), "owner")
 
 
 if __name__ == "__main__":

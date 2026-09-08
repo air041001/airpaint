@@ -6,7 +6,17 @@ from fastapi import HTTPException
 
 
 BASE = Path(__file__).parent
-CFG = yaml.safe_load((BASE / "config.yaml").read_text(encoding="utf-8"))
+CONFIG_PATH = BASE / "config.yaml"
+if not CONFIG_PATH.is_file():
+    raise RuntimeError(
+        f"缺少配置文件 {CONFIG_PATH}；请复制 server/config.example.yaml 并填写本机值"
+    )
+try:
+    CFG = yaml.safe_load(CONFIG_PATH.read_text(encoding="utf-8"))
+except yaml.YAMLError as exc:
+    raise RuntimeError(f"配置文件 YAML 无法解析: {CONFIG_PATH}: {exc}") from exc
+if not isinstance(CFG, dict):
+    raise RuntimeError(f"配置文件必须是 YAML 对象: {CONFIG_PATH}")
 
 DICT_PATH = BASE / "dict.yaml"
 CHAR_DICT_PATH = BASE / "char_dict.yaml"
@@ -15,14 +25,46 @@ CHAR_AUTO_PATH = KNOWLEDGE_CACHE_DIR / "characters_auto.yaml"
 CHAR_LOOKUP_PATH = KNOWLEDGE_CACHE_DIR / "characters_lookup.json"
 LORA_REGISTRY_PATH = BASE / "lora_registry.yaml"
 LORA_PREVIEWS = BASE / "lora_previews"
+STATE_DIR = BASE / "state"
+DATABASE_PATH = STATE_DIR / "airpaint.db"
+IDENTITY_KEY_PATH = STATE_DIR / "identity.key"
+SOURCE_IMAGES = STATE_DIR / "source_images"
 # 生产后端不扫描此目录；LoRA onboarding 工具仍用它定位待登记资产。
 LORA_DIR = Path(CFG.get("comfy_dir", ".")) / "models" / "loras"
 
-COMFY = CFG["comfy_url"].rstrip("/")
+COMFY = str(CFG.get("comfy_url") or "").rstrip("/")
 TOKENS = set(CFG.get("tokens", []))
-DAILY_LIMIT = int(CFG.get("daily_limit", 30))
+try:
+    DAILY_LIMIT = int(CFG.get("daily_limit", 90))
+except (TypeError, ValueError) as exc:
+    raise RuntimeError("daily_limit 必须是正整数") from exc
+if DAILY_LIMIT < 1:
+    raise RuntimeError("daily_limit 必须是正整数")
 BANNED = [word.lower() for word in CFG.get("banned_words", [])]
 WORKFLOWS = CFG.get("workflows", {})
+
+
+def validate_local_configuration() -> None:
+    missing: list[str] = []
+    if not CFG.get("comfy_url"):
+        missing.append("comfy_url")
+    if not isinstance(WORKFLOWS, dict) or not WORKFLOWS:
+        missing.append("workflows")
+    else:
+        for name, workflow in WORKFLOWS.items():
+            if not isinstance(workflow, dict) or not workflow.get("file"):
+                missing.append(f"workflows.{name}.file")
+                continue
+            path = BASE / str(workflow["file"])
+            if not path.is_file():
+                missing.append(f"工作流文件 {path}")
+    if not LORA_REGISTRY_PATH.is_file():
+        missing.append(f"LoRA Registry {LORA_REGISTRY_PATH}")
+    if missing:
+        raise RuntimeError("AirPaint 启动资源缺失: " + "；".join(missing))
+
+
+validate_local_configuration()
 
 MAX_USER_PROMPT_CHARS = 4_000
 MAX_CONCEPT_CHARS = 4_000
