@@ -4,9 +4,9 @@ AirPaint 是面向 ComfyUI 用户的 Prompt / Intent / Knowledge Intelligence La
 
 AirPaint 不替代 ComfyUI，也不是局部修图工具。当前版本进入封版维护：继续保留已经可用的 Prompt、参考图、整图重绘和历史分支能力，主动功能开发停止。
 
-![AirPaint 石墨暗房界面](docs/assets/airpaint-workshop.png)
+![AirPaint 沉浸展台界面](docs/assets/airpaint-workshop.png)
 
-> 封版界面实拍。中央图片是本项目已有生成结果；为在 GPU 与外部 API 不可用时仍可复核界面，任务和历史状态由本地演示夹具提供，不冒充本次实时生成。完整演示路径与证据边界见 [演示记录](docs/demo.md)。
+> 最后一次前端收尾后的界面实拍。中央图片是本项目已有生成结果；为在 GPU 与外部 API 不可用时仍可复核界面，任务和历史状态由本地演示夹具提供，不冒充本次实时生成。完整演示路径与证据边界见 [演示记录](docs/demo.md)。
 
 ## 使用流程
 
@@ -114,7 +114,7 @@ python .tools/inspect_wf.py
 - 双角色有确定性数量和 Prompt 语法护栏，复杂互动与属性归属仍受 Anima、LoRA 和 seed 影响；三角色只 best-effort。
 - 单 worker、单机 SQLite、HTTP 轮询；不提供分布式调度、WebSocket、数据库集群或多 GPU 并发。
 - 旧浏览器历史没有可验证的归属和参数，不能伪装成完整可恢复任务；原文件仍可作为普通旧图片保留。
-- 当前单页界面的 Tailwind、GSAP 与字体仍从固定外部 CDN 加载；断网时业务数据不丢失，但样式或动效可能降级。离线查看项目可使用仓库内截图与演示记录。
+- 当前单页界面的 Tailwind 与 GSAP 仍从外部 CDN 加载，字体使用本机系统字体；断网时业务数据不丢失，但样式或动效可能降级。离线查看项目可使用仓库内截图与演示记录。
 
 ## 文档入口
 
@@ -125,4 +125,4 @@ python .tools/inspect_wf.py
 
 ## 维护状态
 
-`v1.0.0` 为最终封版基线。之后只接受阻止正常使用的数据丢失、兼容或安全修复。Prompt 新方案、新模型、RAG、微调、多 Agent、自动改图、新 workflow、微服务和前端框架迁移都不属于当前维护范围。
+`v1.0.0`（`9af5604`）为最终封版基线，旧 tag 保持不变。2026-09-09 按用户授权完成沉浸展台前端收尾，功能范围不扩展。此后只接受阻止正常使用的数据丢失、兼容或安全修复。Prompt 新方案、新模型、RAG、微调、多 Agent、自动改图、新 workflow、微服务和前端框架迁移都不属于当前维护范围。

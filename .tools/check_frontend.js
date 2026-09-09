@@ -2,7 +2,7 @@ const fs = require("fs");
 const path = require("path");
 
 const root = path.resolve(__dirname, "..");
-const htmlPath = path.join(root, "web", "index.html");
+const htmlPath = process.argv[2] ? path.resolve(process.argv[2]) : path.join(root, "web", "index.html");
 const html = fs.readFileSync(htmlPath, "utf8");
 const scripts = [...html.matchAll(/<script(?:\s[^>]*)?>([\s\S]*?)<\/script>/gi)]
   .map((match) => match[1])
@@ -22,7 +22,7 @@ console.log(`${scripts.length} inline scripts parsed: ${path.relative(root, html
 for (const claim of ["只写改动即可，其余内容从原图理解", "留空则保留原图内容", "直接在这张图上改、保留构图"]) {
   if (html.includes(claim)) throw new Error(`unsupported Img2Img claim: ${claim}`);
 }
-if (!/<button id="dlg-img2img"[^>]*>基于此图重绘<\/button>/.test(html)
+if (!/<button\b[^>]*\bid="dlg-img2img"[^>]*>基于此图重绘<\/button>/.test(html)
     || !html.includes("不保证只改指定内容")
     || !html.includes("高强度可能连带改变人物、发型与构图")
     || !html.includes("$('dlg-img2img').onclick = () => setDlgMode('tweak')")) {

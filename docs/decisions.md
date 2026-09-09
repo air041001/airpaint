@@ -1011,3 +1011,20 @@ LoRA 用户可见名称以 versioned `server/lora_registry.yaml` 为单一真相
 **修订关系**：revises D6/D25/D58/D59 中任务、会话、用量和历史仍为内存态的现状；保留 D59 的整图重绘能力边界和未完成人眼验收结论。
 
 **相关文件**：`server/persistence.py`、`server/runtime.py`、`server/workflow_engine.py`、`server/api.py`、`server/main.py`、`server/maintenance.py`、`web/index.html`、`.tools/test_persistence_recovery.py`、`.tools/start_airpaint.ps1`、`.tools/stop_airpaint.ps1`、`requirements.txt`、`docs/operations.md`。
+
+
+## D61. 以竖图为主的沉浸展台与草稿、作品分离
+
+**背景**：后端 v1.0.0 封版后，用户授权最后一次前端收尾。在两个独立预览中选择「沉浸展台」，要求隐藏常驻输入、加宽桌面编辑器，并减少一眼看到的信息量；主要使用竖图。
+
+**决定**：图片优先分配可用高度，完整展示原始比例。编辑器默认收起，桌面宽 520px，分构思、Prompt、成像设置三个页签，手机独立适配。全局历史移入「所有作品」；真实 session 才显示「本次迭代」。保留原生成、编译、LoRA、恢复和分支请求路径，继续使用单文件前端。
+
+**状态边界**：浏览历史不再覆盖未提交草稿。作品详情读取所选记录，草稿设置只服务下一次生成；参数页提供显式复用中文描述入口。当前显示的作品 ID 不随后台活动任务改变。迭代等待时如果临时显示源图，图片参数也指向该源图。
+
+**代价**：设置与 Prompt 需要主动展开；复杂参数仍会滚动。原生 dialog 在编辑时约束焦点，收起后恢复完整看图空间。没有新增图片质量承诺，也没有替换后端状态机。
+
+**验证**：前端语法、D59/可靠性文案契约和草稿/作品状态回归；浏览器在隔离 API 夹具中检查横竖图、编辑、历史、分支、恢复、桌面/手机和双主题，证据范围见 `docs/demo.md`。未调用真实模型或 GPU。
+
+**修订关系**：修订旧三栏与暗房材质布局；保留 D59 整图重绘边界、D60 持久化和幂等契约。旧 `v1.0.0` tag 不变。
+
+**相关文件**：`web/index.html`、`.tools/check_frontend.js`、`.tools/test_frontend_state.cjs`、`docs/architecture.md`、`docs/BUILDHANDOFF.md`、`docs/demo.md`。

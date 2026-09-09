@@ -1,6 +1,6 @@
 # AirPaint Build Handoff
 
-> 更新：2026-09-08
+> 更新：2026-09-09
 > 用途：新 Agent 只读本文件即可了解当前产品、验证状态、边界和接手路线。开发规约仍以根目录 `AGENTS.md` 为准；代码和本地配置优先于本文。
 
 ## 一句话定位
@@ -41,7 +41,8 @@ AirPaint 是 ComfyUI 上层的 Prompt / Intent / Knowledge Intelligence Layer。
 
 ### UI / 运行
 
-- `web/index.html` 是无框架单页应用：纸本工坊/石墨暗房双主题，桌面三栏、移动端重排，保留现有 DOM/API 契约。
+- `web/index.html` 是无框架单页应用：沉浸展台、日间/夜间双主题，竖图按剩余高度完整展示；桌面 520px 编辑器默认收起，构思/Prompt/设置分页，手机独立适配。保留现有功能 DOM/API 契约。
+- 「所有作品」为全局历史；「本次迭代」仅在进入真实 session 后显示。选择历史不覆盖当前草稿；图片参数与下一次生成设置分开。
 - 历史来自服务端并可分页；卡片显示实际状态、seed、参数与父节点。`result_ready/reconcile_pending` 可“重新核对”。
 - 轮询异常不再静默吞掉；显示连接中断和恢复查询，不用虚假百分比表达生成进度。
 - 浏览器只保留主题和短暂的 request ID 恢复标识。POST 响应丢失时先查 `/api/requests/{id}`，不会自动重复创建。
@@ -78,7 +79,7 @@ docs/DEVLOG.md                开发演进
 
 ## 验证状态
 
-当前确定性封版基线：
+`v1.0.0` 确定性封版基线（2026-09-08）：
 
 - `15 persistence/recovery tests passed`：事务配额、幂等冲突、cookie 重启、排队/运行中重启、响应丢失不重发、结果重取、历史/会话/图片归属、在线备份、整包恢复、SQLite sidecar 清理和假 ComfyUI 协议。
 - `19 image iteration tests passed`。
@@ -91,7 +92,7 @@ docs/DEVLOG.md                开发演进
 - README 已保存当前真实界面截图与演示记录；中央图片为项目已有生成结果，任务状态明确标记为本地演示夹具，不冒充实时生成。
 - `docs/showcase.md` 另存两张 D59 真实 SFW 原图，并从 PNG 内嵌 workflow 核对 Prompt、seed、尺寸、模型与采样参数；未把演示夹具字段当作真实参数。
 
-用户已确认封版界面。完成本次交付补充的显式提交/push 后，创建 `v1.0.0` tag 作为最终封版基线。
+`v1.0.0` 已封存于 `9af5604`。用户随后明确授权最后一次前端改版，选择「沉浸展台」并要求竖图优先、加宽编辑器、降低信息密度；这次是已授权的界面收尾，不重开 Prompt/模型/workflow 开发，也不移动旧 tag。当前前端验证与证据见 `docs/demo.md`。
 
 结构性检查不能替代图片质量。不得把上述数字写成参考图或 Img2Img 画质通过。
 
@@ -116,7 +117,7 @@ docs/DEVLOG.md                开发演进
 - 旧内存任务、localStorage 历史和孤立图片没有可信 owner/参数，不能凭空写入 SQLite；文件可作为旧图另存。
 - `identity.key` 必须和数据库一起备份；丢失它会破坏旧 owner 映射。
 - 单 worker、单机 SQLite、HTTP 轮询；不支持多实例共享图库、分布式调度或多 GPU。
-- 当前单页界面的 Tailwind、GSAP 与字体由外部 CDN 提供；断网时状态数据不丢失，但样式或动效可能降级。仓库内 README 截图与 `docs/demo.md` 可离线说明项目。
+- 当前单页界面的 Tailwind 与 GSAP 由外部 CDN 提供，字体使用本机字体；断网时状态数据不丢失，但样式或动效可能降级。仓库内 README 截图与 `docs/demo.md` 可离线说明项目。
 - Img2Img 不是局部重绘；参考字段白名单也不能保证语义完全隔离。
 - 双角色复杂遮挡、接触、身份和属性绑定仍会受模型/LoRA/seed 影响；三角色不承诺。
 - 人体负面词只能降低常见失败概率，不能解决模型人体能力。

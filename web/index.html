@@ -1,812 +1,353 @@
 <!DOCTYPE html>
+
 <html lang="zh-CN">
 <head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>air 的绘图小屋</title>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<title>AirPaint · 我的画室</title>
 <script src="https://cdn.tailwindcss.com"></script>
 <script src="https://cdn.jsdelivr.net/npm/gsap@3.13.0/dist/gsap.min.js"></script>
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=Space+Mono:wght@400;700&display=swap" rel="stylesheet">
+
+
+
 <script>
   tailwind.config = {
     theme: { extend: {
       colors: {
-        // 暖调暗房炭黑 (琥珀底调的近黑, 替代冷紫黑)
-        ink: { 950:'#100c0a', 900:'#15100d', 800:'#1c1612', 700:'#271e18', 600:'#33271f' },
-        // 安灯琥珀 (替代粉/紫渐变); 保留 pink/purple 键名以免破坏既有 class
-        accent: { pink:'#e8893b', purple:'#c8632a' },
+        ink: { 950:'#171c24', 900:'#202631', 800:'#252c38', 700:'#343e4e', 600:'#465269' },
+        accent: { pink:'#4662d6', purple:'#4662d6' },
       },
-      borderColor: () => ({ DEFAULT: '#271e18' }),
-      fontFamily: {
-        display: ['"Space Grotesk"', 'system-ui', 'sans-serif'],
-        mono: ['"Space Mono"', 'ui-monospace', 'monospace'],
-      },
+      borderColor: () => ({ DEFAULT:'#343e4e' }),
+      fontFamily: { display:['system-ui','sans-serif'], mono:['Consolas','monospace'] },
     }}
   }
 </script>
-<style>
-  :root { color-scheme: dark; }
-  html, body {
-    background:#100c0a;
-    color:#e8e2d8;
-    font-family: "Noto Sans SC", "PingFang SC", "Microsoft YaHei", "Space Grotesk", system-ui, sans-serif;
-  }
-  body > * { position: relative; z-index: 1; }
 
-  /* 安灯环境光 + 暗角 */
-  body::before {
-    content:""; position:fixed; inset:0; z-index:0; pointer-events:none;
-    background:
-      radial-gradient(120% 80% at 16% -12%, rgba(232,137,59,.11), transparent 55%),
-      radial-gradient(90% 70% at 104% 112%, rgba(200,99,42,.07), transparent 60%),
-      radial-gradient(150% 130% at 50% 50%, transparent 58%, rgba(0,0,0,.50));
-  }
-  /* 胶片颗粒 */
-  body::after {
-    content:""; position:fixed; inset:0; z-index:50; pointer-events:none; opacity:.045;
-    mix-blend-mode:overlay;
-    background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='220' height='220'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
-  }
 
-  textarea, input[type=text], input[type=number], input[type=password], select { background:#15100d; color:#e8e2d8; }
-  textarea::placeholder, input::placeholder { color:rgba(232,226,216,.28); }
-  textarea:focus, input:focus, select:focus { outline:none; border-color:#e8893b; box-shadow:0 0 0 1px rgba(232,137,59,.35); }
-  input[type=range] { accent-color:#e8893b; }
-
-  .mono { font-family:"Space Mono", ui-monospace, monospace; }
-
-  /* 安灯琥珀标题 (替代粉紫渐变) */
-  .grad-text {
-    font-family:"Space Grotesk", system-ui, sans-serif; font-weight:700; letter-spacing:-0.01em;
-    background:linear-gradient(120deg,#f3a65a,#e8893b 45%,#c8632a);
-    -webkit-background-clip:text; background-clip:text; color:transparent;
-  }
-  /* 主按钮: 安灯琥珀 + 暖黑字 */
-  .grad-btn {
-    background:linear-gradient(135deg,#f3a65a,#e8893b 55%,#d97a2e);
-    color:#1a120c; font-weight:600;
-    transition:filter .15s, transform .15s, box-shadow .15s;
-    box-shadow:0 0 0 1px rgba(232,137,59,.20), 0 6px 22px -10px rgba(232,137,59,.55);
-  }
-  .grad-btn:hover:not(:disabled){ filter:brightness(1.06); transform:translateY(-1px); }
-  .grad-btn:active:not(:disabled){ transform:translateY(0); }
-  .grad-btn:disabled{ opacity:.42; cursor:not-allowed; transform:none; box-shadow:none; }
-
-  .glass { background:rgba(28,22,18,.62); backdrop-filter:blur(10px); -webkit-backdrop-filter:blur(10px); }
-  .scroll-thin::-webkit-scrollbar { width:6px; height:6px; }
-  .scroll-thin::-webkit-scrollbar-thumb { background:#33271f; border-radius:3px; }
-  .scroll-thin::-webkit-scrollbar-thumb:hover { background:#4a3829; }
-
-  .chip { transition:all .15s; cursor:pointer; }
-  .chip:hover:not(:disabled){ border-color:#e8893b; color:#f3e9d8; }
-  .chip.active { border-color:#e8893b; box-shadow:0 0 0 1px #e8893b; background:rgba(232,137,59,.10); color:#f3a65a; }
-  .seg { transition:all .15s; cursor:pointer; }
-  .seg.active { background:linear-gradient(135deg,#f3a65a,#e8893b 55%,#d97a2e); color:#1a120c; border-color:transparent; font-weight:600; }
-  .wf-card { transition:all .15s; cursor:pointer; }
-  .wf-card:hover { border-color:#e8893b; }
-  .wf-card.active { border-color:#e8893b; background:rgba(232,137,59,.10); box-shadow:0 0 0 1px #e8893b; }
-
-  /* 工作台的主次关系：画布负责成像，控制区只占必要空间 */
-  .canvas-stage { background:linear-gradient(145deg,rgba(21,16,13,.82),rgba(16,12,10,.96)); }
-  .prompt-composer { box-shadow:0 -10px 34px -32px rgba(232,137,59,.45); }
-  .format-frame { display:inline-block; border:1px solid rgba(232,226,216,.46); background:rgba(232,137,59,.08); border-radius:2px; flex:0 0 auto; }
-  .size-option { min-height:48px; }
-  .size-option.active .format-frame { border-color:#e8893b; background:rgba(232,137,59,.22); }
-  #sizeMenu { box-shadow:0 18px 45px -20px rgba(0,0,0,.85); }
-
-  button:focus-visible, a:focus-visible, label[tabindex]:focus-visible {
-    outline:2px solid #f3a65a; outline-offset:2px;
-  }
-
-  @media (min-width:1024px) {
-    #app { height:100vh; min-height:0; overflow:hidden; }
-    #workspace, #workbenchMain, #stageRow { min-height:0; }
-    #workspace { overflow:hidden; }
-    #workbenchMain { height:100%; }
-    #stageRow { flex:1 1 0%; }
-    .canvas-stage { min-height:0; }
-  }
-
-  @media (prefers-reduced-motion:reduce) {
-    *, *::before, *::after { animation-duration:.01ms !important; animation-iteration-count:1 !important; transition-duration:.01ms !important; }
-  }
-
-  .bar { height:2px; background:#271e18; border-radius:2px; overflow:hidden; margin-top:12px; display:none; }
-  .bar i { display:block; height:100%; width:38%; background:linear-gradient(90deg,transparent,#e8893b,#f3a65a,transparent); border-radius:2px; animation:slide 1.5s ease-in-out infinite; }
-  @keyframes slide { 0%{margin-left:-38%;} 100%{margin-left:100%;} }
-
-  .panel { max-height:0; overflow:hidden; transition:max-height .3s ease; }
-  .panel.open { max-height:70vh; overflow-y:auto; }
-  .tab-btn { transition:color .15s, border-color .15s; }
-  .tab-btn.active { color:#f3a65a; border-color:#f3a65a !important; }
-  .tab-pane { display:none; }
-  .tab-pane.active { display:block; }
-
-  .ref-preview img { width:100%; height:100%; object-fit:cover; display:block; }
-  /* 有参考图时隐藏投放区, 避免重复入口; ref-preview 在 DOM 中排在 ref-dropzone 之前 */
-  #ref-preview:not(.hidden) ~ #ref-dropzone { display: none; }
-  .hist-thumb { transition:transform .15s, box-shadow .2s, border-color .15s; border-radius:3px; }
-  .hist-thumb:hover { transform:translateY(-2px); box-shadow:0 6px 18px -6px rgba(0,0,0,.6); border-color:#e8893b; }
-  .lineage-thumb { transition:border-color .15s; cursor:pointer; }
-  .lineage-thumb:hover { border-color:#e8893b; }
-
-  /* 安灯呼吸点 (品牌 motif) */
-  .safelight-dot { width:9px; height:9px; border-radius:50%; background:#e8893b; box-shadow:0 0 10px 2px rgba(232,137,59,.55); animation:pulse 2.4s ease-in-out infinite; flex-shrink:0; }
-  @keyframes pulse { 0%,100%{opacity:.5;} 50%{opacity:1;} }
-
-  /* 画布空状态: 安灯光晕 + 相纸隐喻 */
-  #canvasPlaceholder { font-family:"Space Mono", ui-monospace, monospace; font-size:13px; letter-spacing:.14em; text-transform:uppercase; color:rgba(232,226,216,.30); position:relative; padding-top:30px; }
-  #canvasPlaceholder::before { content:""; position:absolute; left:50%; top:-26px; transform:translateX(-50%); width:64px; height:64px; border-radius:50%; background:radial-gradient(circle,rgba(232,137,59,.20),transparent 70%); filter:blur(1px); }
-
-  /* 元数据标签 mono 化 (胶卷标注感) */
-  #breakdownRows > div:nth-child(odd) { font-family:"Space Mono", ui-monospace, monospace; font-size:10px; text-transform:uppercase; letter-spacing:.09em; }
-  #badgeWf, #badgeSize { font-family:"Space Mono", ui-monospace, monospace; font-size:10px; letter-spacing:.04em; }
-  .wf-card .text-xs { font-family:"Space Mono", ui-monospace, monospace; font-size:10px; letter-spacing:.02em; }
-</style>
-<style id="airpaint-studio-v2">
-  body {
-    --ap-bg:#0b0908; --ap-surface:#15110e; --ap-raised:#1d1713; --ap-field:#0c0a09;
-    --ap-line:#3a2c22; --ap-line-soft:#282019; --ap-text:#f0e9df; --ap-muted:#a09286;
-    --ap-brand:#ee8a3c; --ap-brand-soft:#ffb36d; --ap-action:#ee8a3c; --ap-action-hover:#f59a50;
-    --ap-action-text:#211006; --ap-selection:#ee8a3c; --ap-selection-soft:#ffb36d;
-    --ap-selection-text:#211006; --ap-focus:#ee8a3c; --ap-green:#55d492; --ap-danger:#e66f64;
-    background:
-      radial-gradient(900px 460px at 12% -8%,rgba(164,76,24,.12),transparent 62%),
-      radial-gradient(720px 520px at 74% 42%,rgba(64,42,30,.08),transparent 72%),var(--ap-bg);
-    color:var(--ap-text); color-scheme:dark;
-  }
-  body[data-theme="paper"] {
-    --ap-bg:#ded3c5; --ap-surface:#f5eee4; --ap-raised:#fff9f1; --ap-field:#fbf6ee;
-    --ap-line:#b9a893; --ap-line-soft:#d4c6b5; --ap-text:#29231f; --ap-muted:#75695d;
-    --ap-brand:#334b51; --ap-brand-soft:#334b51; --ap-action:#334b51; --ap-action-hover:#44636a;
-    --ap-action-text:#f8f3eb; --ap-selection:#334b51; --ap-selection-soft:#44636a;
-    --ap-selection-text:#f8f3eb; --ap-focus:#334b51; --ap-green:#2f765b; --ap-danger:#9d443d;
-    background:
-      radial-gradient(920px 520px at 10% -8%,rgba(255,255,255,.48),transparent 64%),
-      repeating-linear-gradient(7deg,rgba(91,69,49,.025) 0,rgba(91,69,49,.025) 1px,transparent 1px,transparent 7px),var(--ap-bg);
-    color-scheme:light;
-  }
-  body::before { background:radial-gradient(120% 90% at 14% -10%,color-mix(in srgb,var(--ap-brand) 11%,transparent),transparent 58%),radial-gradient(150% 130% at 50% 50%,transparent 60%,rgba(0,0,0,.34)); }
-  body[data-theme="paper"]::before { background:radial-gradient(100% 70% at 10% -8%,rgba(255,255,255,.42),transparent 62%); }
-  body::after { opacity:.035; mix-blend-mode:soft-light; }
-  body[data-theme="paper"]::after { opacity:.12; mix-blend-mode:multiply; }
-  html,body { min-height:100%; background-color:var(--ap-bg); }
-  textarea,input[type=text],input[type=number],input[type=password],select { background:var(--ap-field); color:var(--ap-text); }
-  #image-fit,#image-crop,#reference-scope {
-    background-color:var(--ap-field)!important; color:var(--ap-text)!important;
-    border-color:var(--ap-line)!important; color-scheme:inherit;
-  }
-  #image-fit option,#image-crop option,#reference-scope option { background:var(--ap-field); color:var(--ap-text); }
-  textarea::placeholder,input::placeholder { color:color-mix(in srgb,var(--ap-muted) 72%,transparent); }
-  textarea:focus,input:focus,select:focus { border-color:var(--ap-focus)!important; box-shadow:0 0 0 2px color-mix(in srgb,var(--ap-focus) 14%,transparent)!important; }
-  input[type=range] { accent-color:var(--ap-selection); }
-  button:focus-visible,a:focus-visible,label[tabindex]:focus-visible { outline:2px solid var(--ap-focus); outline-offset:2px; }
-
-  .ap-header {
-    min-height:62px; padding:0 24px!important; border-color:var(--ap-line-soft)!important;
-    background:linear-gradient(180deg,rgba(23,17,13,.98),rgba(13,10,8,.98));
-    box-shadow:inset 0 -1px rgba(255,255,255,.018),0 12px 34px rgba(0,0,0,.16);
-  }
-  body[data-theme="paper"] .ap-header { background:rgba(246,239,229,.92); box-shadow:inset 0 -1px rgba(255,255,255,.7),0 9px 24px rgba(79,57,39,.08); }
-  .brand-wrap { display:flex; align-items:center; gap:24px; min-width:0; }
-  .brand-lockup { display:flex; align-items:center; gap:10px; white-space:nowrap; }
-  .brand-mark { width:18px; height:2px; border-radius:0; background:var(--ap-brand); box-shadow:none; flex:0 0 auto; }
-  .brand-title,.grad-text { background:none!important; color:var(--ap-brand-soft)!important; font-family:Georgia,"Songti SC",serif; font-weight:500; letter-spacing:0; }
-  .brand-sub,.ap-muted { color:var(--ap-muted)!important; }
-  .header-actions { display:flex; align-items:center; gap:8px; }
-  .theme-toggle { min-width:80px; display:inline-flex; align-items:center; justify-content:center; gap:8px; }
-  .theme-track { position:relative; width:30px; height:16px; border:1px solid var(--ap-line); border-radius:999px; background:var(--ap-field); box-shadow:inset 0 1px 4px rgba(0,0,0,.24); }
-  .theme-track::after { content:""; position:absolute; width:10px; height:10px; left:2px; top:2px; border-radius:50%; background:var(--ap-selection); transition:transform .18s ease,background-color .18s ease; }
-  body[data-theme="paper"] .theme-track::after { transform:translateX(14px); }
-  .theme-label { min-width:25px; color:var(--ap-muted); font-size:12px; }
-
-  .chip,.grad-btn {
-    min-height:36px; border:1px solid var(--ap-line)!important; border-radius:9px!important;
-    background:linear-gradient(180deg,rgba(255,255,255,.018),rgba(255,255,255,0))!important;
-    color:var(--ap-text)!important; box-shadow:inset 0 1px rgba(255,255,255,.025),0 1px 2px rgba(0,0,0,.22)!important;
-    transition:background .16s ease,border-color .16s ease,color .16s ease,opacity .16s ease!important;
-  }
-  .chip:hover:not(:disabled) { border-color:color-mix(in srgb,var(--ap-selection) 62%,var(--ap-line))!important; background:color-mix(in srgb,var(--ap-selection) 8%,var(--ap-surface))!important; }
-  .grad-btn { background:var(--ap-action)!important; border-color:var(--ap-action)!important; color:var(--ap-action-text)!important; font-weight:500; box-shadow:inset 0 1px rgba(255,255,255,.2),0 5px 16px color-mix(in srgb,var(--ap-action) 18%,transparent)!important; }
-  .grad-btn:hover:not(:disabled) { background:var(--ap-action-hover)!important; border-color:var(--ap-action-hover)!important; filter:none!important; transform:none!important; }
-  .grad-btn:disabled,.chip:disabled { opacity:.42; cursor:not-allowed; }
-  body[data-theme="paper"] .chip { background:rgba(255,250,243,.62)!important; box-shadow:0 2px 6px rgba(70,48,30,.06),inset 0 1px rgba(255,255,255,.66)!important; }
-  .seg { color:var(--ap-muted)!important; background:transparent!important; border-color:var(--ap-line)!important; }
-  .seg.active,.chip.active { background:var(--ap-selection)!important; border-color:var(--ap-selection)!important; color:var(--ap-selection-text)!important; box-shadow:inset 0 1px rgba(255,255,255,.16)!important; }
-  .surface {
-    background:linear-gradient(145deg,rgba(255,255,255,.025),transparent 34%),linear-gradient(180deg,#17120f,#120e0c)!important;
-    border:1px solid var(--ap-line-soft)!important; border-radius:11px!important;
-    box-shadow:inset 0 1px rgba(255,255,255,.028),0 14px 36px rgba(0,0,0,.08);
-  }
-  body[data-theme="paper"] .surface { background:linear-gradient(145deg,rgba(255,255,255,.48),transparent 38%),var(--ap-surface)!important; box-shadow:0 9px 24px rgba(76,54,36,.08),inset 0 1px rgba(255,255,255,.68); }
-  .section-title { display:flex; align-items:center; gap:8px; color:var(--ap-text)!important; font-weight:500; letter-spacing:.015em; }
-  .section-title::before { content:""; width:16px; height:2px; border-radius:0; background:var(--ap-brand); box-shadow:none; }
-  .section-head { display:flex; align-items:center; justify-content:space-between; gap:12px; margin-bottom:12px; }
-  .section-note { color:var(--ap-muted)!important; font-size:12px; }
-  .login-screen { background:radial-gradient(900px 520px at 18% 0%,color-mix(in srgb,var(--ap-brand) 10%,transparent),transparent 58%),var(--ap-bg)!important; }
-  .login-screen input { background:var(--ap-field)!important; border-color:var(--ap-line)!important; color:var(--ap-text)!important; }
-
-  #app { min-height:100vh!important; height:auto!important; overflow:visible!important; }
-  #workspace { width:100%; max-width:1680px; margin:0 auto; padding:18px 22px 26px!important; display:grid!important; grid-template-columns:324px minmax(0,1fr) 360px; grid-template-areas:"composer composer settings" "prompt stage settings" "history history settings" "mobile mobile settings"; gap:16px!important; align-items:start; overflow:visible!important; }
-  #workbenchMain,#stageRow { display:contents!important; }
-  .prompt-composer { grid-area:composer; min-height:232px; padding:16px!important; display:flex; flex-direction:column; box-shadow:none!important; }
-  .prompt-composer > div:first-child { flex:1 1 auto; }
-  #prompt { min-height:76px!important; border:0!important; border-bottom:1px solid var(--ap-line-soft)!important; border-radius:0!important; padding:3px 0 14px!important; background:linear-gradient(180deg,rgba(6,5,4,.18),rgba(6,5,4,.04))!important; color:var(--ap-text)!important; font-size:16px!important; line-height:1.65!important; }
-  #prompt::placeholder { color:color-mix(in srgb,var(--ap-muted) 78%,transparent)!important; }
-  body[data-theme="paper"] #prompt { background:linear-gradient(180deg,rgba(255,255,255,.32),transparent)!important; }
-  #stagePanel { grid-area:stage; min-width:0; overflow:hidden; }
-  #stageToolbar { min-height:48px; display:flex; align-items:center; justify-content:space-between; gap:10px; padding:7px 12px; border-bottom:1px solid var(--ap-line-soft); }
-  #canvasBadges,#canvasActions { position:static!important; }
-  #canvasBadges span { padding:4px 8px; border:1px solid var(--ap-line); border-radius:5px; background:rgba(9,7,6,.82); color:var(--ap-text); }
-  body[data-theme="paper"] #canvasBadges span { background:rgba(255,249,241,.82); color:#51463d; }
-  #canvasMedia { position:relative; flex:none!important; height:clamp(320px,calc(100vh - 398px),690px); min-height:320px!important; overflow:hidden; display:grid; place-items:center; background:radial-gradient(circle at 50% 30%,#17120f,#080706 72%)!important; isolation:isolate; }
-  @supports (height:100dvh) { #canvasMedia { height:clamp(320px,calc(100dvh - 398px),690px); } }
-  body[data-theme="paper"] #canvasMedia { background:linear-gradient(135deg,#d9cebf,#c8b8a4)!important; }
-  .media-ambient { position:absolute; inset:-36px; z-index:-2; background-position:center; background-size:cover; filter:blur(32px) saturate(.75); opacity:.18; transform:scale(1.07); }
-  body[data-theme="paper"] .media-ambient { opacity:.09; filter:blur(34px) saturate(.55); }
-  .media-shade { position:absolute; inset:0; z-index:-1; background:linear-gradient(90deg,rgba(10,8,7,.48),rgba(10,8,7,.16) 50%,rgba(10,8,7,.48)); }
-  body[data-theme="paper"] .media-shade { background:linear-gradient(90deg,rgba(96,73,52,.12),rgba(255,255,255,.04) 50%,rgba(96,73,52,.12)); }
-  #img { position:relative!important; inset:auto!important; margin:auto!important; display:block; min-width:0!important; min-height:0!important; width:auto!important; height:auto!important; max-width:100%!important; max-height:100%!important; object-fit:contain; box-shadow:0 22px 58px rgba(0,0,0,.36),0 0 0 1px rgba(255,255,255,.025); }
-  body[data-theme="paper"] #img { box-shadow:0 18px 38px rgba(68,47,31,.22),0 0 0 7px rgba(255,249,241,.86); }
-  #canvasPlaceholder { position:relative; padding-top:30px; color:var(--ap-muted)!important; }
-  #aiPanel { grid-area:prompt; width:auto!important; padding:16px!important; background:linear-gradient(145deg,rgba(255,255,255,.025),transparent 34%),linear-gradient(180deg,#17120f,#120e0c)!important; border-color:var(--ap-line-soft)!important; }
-  body[data-theme="paper"] #aiPanel { background:linear-gradient(145deg,rgba(255,255,255,.48),transparent 38%),var(--ap-surface)!important; }
-  #breakdown { display:flex!important; flex-direction:column; gap:12px; padding-bottom:14px; margin-bottom:2px; border-bottom:1px solid var(--ap-line-soft); }
-  #breakdownRows { display:grid; grid-template-columns:42px minmax(0,1fr); gap:6px 12px; }
-  #breakdownRows > div:nth-child(odd) { color:var(--ap-brand-soft)!important; font-family:inherit; font-size:12px; text-transform:none; letter-spacing:0; }
-  #breakdownRows > div:nth-child(even) { color:var(--ap-text)!important; }
-  #conceptBlock { padding-bottom:12px; border-bottom:1px solid var(--ap-line-soft); }
-  #conceptEdit { min-height:94px; background:var(--ap-field)!important; border-color:var(--ap-line)!important; color:var(--ap-text)!important; }
-  .completion-option { min-height:28px!important; padding:4px 9px!important; border-radius:6px!important; font-size:11px!important; }
-  #promptEnEdit { min-height:210px!important; background:var(--ap-field)!important; border-color:var(--ap-line)!important; color:var(--ap-text)!important; font:12px/1.62 Consolas,"SFMono-Regular",monospace!important; }
-  #dlg-delta,#dlg-prompt { background:var(--ap-field)!important; border-color:var(--ap-line)!important; color:var(--ap-text)!important; }
-  #paramsPanel { grid-area:settings; display:flex!important; width:auto!important; max-height:calc(100vh - 90px)!important; position:sticky; top:12px; padding:16px!important; gap:0!important; overflow-y:auto; background:linear-gradient(155deg,rgba(255,255,255,.025),transparent 28%),linear-gradient(180deg,#18130f,#110e0b)!important; }
-  body[data-theme="paper"] #paramsPanel { background:linear-gradient(155deg,rgba(255,255,255,.44),transparent 32%),#eee4d7!important; }
-  .setting-group { padding:14px 0; border-top:1px solid var(--ap-line-soft); }
-  .setting-group:first-of-type { border-top:0; padding-top:2px; }
-  .setting-label { display:flex; justify-content:space-between; gap:10px; margin-bottom:9px; color:var(--ap-muted); }
-  .setting-value { color:var(--ap-text); }
-  #sizeToggle,#loraCharToggle,#loraStyleToggle,#detailerToggle { background:var(--ap-field)!important; border-color:var(--ap-line)!important; box-shadow:inset 0 1px 6px rgba(0,0,0,.2)!important; }
-  #sizeMenu,#loraCharMenu,#loraStyleMenu { border:1px solid var(--ap-line)!important; background:var(--ap-raised)!important; box-shadow:0 18px 42px rgba(0,0,0,.46); }
-  .lora-select-wrap { position:relative; }
-  #loraCharMenu,#loraStyleMenu { position:absolute; z-index:32; left:42px; right:0; top:calc(100% + 5px); display:grid; gap:3px!important; padding:6px; max-height:240px; overflow-y:auto; }
-  #loraCharMenu.open-up,#loraStyleMenu.open-up { top:auto; bottom:calc(100% + 5px); }
-  #loraCharMenu.hidden,#loraStyleMenu.hidden { display:none!important; }
-  #loraCharMenu .chip,#loraStyleMenu .chip { min-height:34px; width:100%; text-align:left; padding:7px 9px!important; border:0!important; border-radius:5px!important; background:transparent!important; box-shadow:none!important; }
-  #loraCharMenu .chip.active,#loraStyleMenu .chip.active { background:var(--ap-selection)!important; color:var(--ap-selection-text)!important; }
-  #loraCharMenu .chip,#loraStyleMenu .chip { display:flex; align-items:center; justify-content:space-between; gap:10px; }
-  .lora-menu-mark { width:16px; flex:0 0 16px; text-align:center; font-family:"Space Mono",ui-monospace,monospace; font-size:10px; opacity:.72; }
-  #loraStyleMenu { left:0; grid-template-columns:repeat(2,minmax(0,1fr)); align-content:start; gap:8px!important; padding:8px; max-height:min(62vh,560px); }
-  #loraStyleMenu .lora-menu-clear { grid-column:1 / -1; min-height:30px; padding:4px 8px!important; border-bottom:1px solid var(--ap-line-soft)!important; border-radius:0!important; }
-  #loraStyleMenu .lora-style-card { position:relative; display:block; min-height:0; padding:0!important; overflow:hidden; border:1px solid var(--ap-line-soft)!important; border-radius:7px!important; background:var(--ap-field)!important; color:var(--ap-text)!important; }
-  #loraStyleMenu .lora-style-card:hover,#loraStyleMenu .lora-style-card:focus-visible { border-color:var(--ap-selection)!important; transform:translateY(-1px); }
-  #loraStyleMenu .lora-style-card.active { border-color:var(--ap-selection)!important; background:var(--ap-field)!important; color:var(--ap-text)!important; box-shadow:0 0 0 1px var(--ap-selection),0 8px 20px rgba(0,0,0,.2)!important; }
-  .lora-style-thumb { position:relative; display:block; width:100%; aspect-ratio:7 / 9; overflow:hidden; background:color-mix(in srgb,var(--ap-selection) 8%,var(--ap-raised)); border-bottom:1px solid var(--ap-line-soft); }
-  .lora-style-thumb img { width:100%; height:100%; display:block; object-fit:cover; transition:transform .2s ease; }
-  .lora-style-card:hover .lora-style-thumb img,.lora-style-card:focus-visible .lora-style-thumb img { transform:scale(1.025); }
-  .lora-style-fallback { position:absolute; inset:0; display:grid; place-items:center; color:var(--ap-muted); font:10px/1.4 "Space Mono",ui-monospace,monospace; letter-spacing:.08em; }
-  .lora-style-state { position:absolute; top:6px; right:6px; min-width:30px; padding:3px 5px; border:1px solid color-mix(in srgb,var(--ap-selection-text) 30%,transparent); border-radius:4px; background:color-mix(in srgb,var(--ap-selection) 92%,transparent); color:var(--ap-selection-text); font:9px/1.2 "Space Mono",ui-monospace,monospace; opacity:0; }
-  .lora-style-card.active .lora-style-state { opacity:1; }
-  .lora-style-meta { display:grid; gap:3px; padding:7px 8px 8px; text-align:left; }
-  .lora-style-name { min-width:0; overflow:hidden; color:var(--ap-text); font-size:11px; font-weight:600; line-height:1.35; text-overflow:ellipsis; white-space:nowrap; }
-  .lora-style-sub { display:flex; align-items:center; justify-content:space-between; gap:5px; color:var(--ap-muted); font:9px/1.3 "Space Mono",ui-monospace,monospace; }
-  #lora-preview { padding:0!important; overflow:hidden; background:var(--ap-field)!important; border-color:var(--ap-line-soft)!important; color:var(--ap-muted)!important; }
-  #lora-preview b { color:var(--ap-brand-soft)!important; font-weight:500; }
-  #lora-desc { display:block; width:100%; }
-  .lora-stack-head { display:flex; align-items:center; justify-content:space-between; gap:10px; padding:9px 10px; border-bottom:1px solid var(--ap-line-soft); color:var(--ap-muted); font-size:11px; }
-  .lora-stack-item { position:relative; padding:10px 10px 10px 13px; border-left:2px solid color-mix(in srgb,var(--ap-selection) 72%,var(--ap-line)); }
-  .lora-stack-item + .lora-stack-item { border-top:1px solid var(--ap-line-soft); }
-  .lora-stack-item.has-preview { display:grid; grid-template-columns:42px minmax(0,1fr); gap:9px; }
-  .lora-stack-thumb { width:42px; aspect-ratio:7 / 9; object-fit:cover; border:1px solid var(--ap-line-soft); border-radius:5px; background:var(--ap-raised); }
-  .lora-stack-copy { min-width:0; }
-  .lora-stack-title { display:flex; align-items:flex-start; justify-content:space-between; gap:8px; }
-  .lora-stack-name { min-width:0; color:var(--ap-text); font-size:12px; font-weight:600; line-height:1.45; }
-  .lora-stack-type { display:inline-block; margin-right:5px; color:var(--ap-brand-soft); font:9px/1.4 "Space Mono",ui-monospace,monospace; letter-spacing:.04em; }
-  .lora-stack-candidate { color:#d8a25f; font-size:9px; font-weight:500; }
-  body[data-theme="paper"] .lora-stack-candidate { color:#8a5a20; }
-  .lora-stack-remove { flex:0 0 auto; border:0; background:transparent; color:var(--ap-muted); padding:0 2px; font-size:15px; line-height:1; cursor:pointer; }
-  .lora-stack-remove:hover { color:var(--ap-danger); }
-  .lora-stack-capability { margin-top:3px; color:var(--ap-muted); font-size:10px; line-height:1.55; }
-  .lora-profile-list { display:flex; flex-wrap:wrap; gap:5px; margin-top:8px; }
-  .lora-profile-list .chip { min-height:27px; padding:4px 7px!important; font-size:10px!important; }
-  .lora-profile-list .chip.active { background:var(--ap-selection)!important; border-color:var(--ap-selection)!important; color:var(--ap-selection-text)!important; transition:none!important; }
-  .lora-profile-note { width:100%; color:var(--ap-muted); font-size:9px; line-height:1.45; }
-  .lora-strength-control { display:grid; grid-template-columns:34px minmax(0,1fr) 30px; align-items:center; gap:7px; margin-top:9px; color:var(--ap-muted); font-size:10px; }
-  .lora-strength-control input { min-width:0; width:100%; }
-  .lora-stack-warning { padding:8px 10px; border-top:1px solid var(--ap-line-soft); color:var(--ap-muted); font-size:10px; line-height:1.5; }
-  .format-frame { border-color:var(--ap-line)!important; background:color-mix(in srgb,var(--ap-selection) 8%,transparent)!important; }
-  .size-option.active .format-frame { border-color:var(--ap-selection)!important; background:color-mix(in srgb,var(--ap-selection) 24%,transparent)!important; }
-  .size-option.active { border-color:var(--ap-selection)!important; color:var(--ap-selection-soft)!important; background:color-mix(in srgb,var(--ap-selection) 13%,var(--ap-field))!important; }
-  #historyPanel { grid-area:history; padding:13px 14px!important; }
-  #gallery { display:grid!important; grid-template-columns:repeat(12,minmax(62px,1fr)); gap:8px!important; }
-  #gallery .history-card { width:100%; min-width:0; aspect-ratio:1; position:relative; overflow:hidden; border:1px solid var(--ap-line); border-radius:7px; background:var(--ap-field); color:var(--ap-muted); }
-  #gallery .hist-thumb { width:100%!important; height:100%!important; object-fit:cover; border:0!important; border-radius:0!important; }
-  .history-card:focus-visible { outline:2px solid var(--ap-selection); outline-offset:2px; }
-  .history-card .history-state { position:absolute; left:4px; right:4px; bottom:4px; padding:3px 5px; border-radius:5px; background:color-mix(in srgb,var(--ap-panel) 88%,transparent); backdrop-filter:blur(7px); font-size:10px; line-height:1.2; color:var(--ap-text); }
-  .history-card .history-empty { display:flex; width:100%; height:100%; align-items:center; justify-content:center; padding:7px; text-align:center; font-size:10px; line-height:1.3; }
-  #mobileTabs { grid-area:mobile; display:none; }
-  .bar { background:var(--ap-line-soft); }
-  .bar i { background:linear-gradient(90deg,transparent,var(--ap-action),var(--ap-brand-soft),transparent); }
-  .safelight-dot { background:var(--ap-brand); box-shadow:0 0 10px 2px color-mix(in srgb,var(--ap-brand) 55%,transparent); }
-  #canvasPlaceholder::before { background:radial-gradient(circle,color-mix(in srgb,var(--ap-brand) 20%,transparent),transparent 70%); }
-  .tab-btn.active { color:var(--ap-brand-soft)!important; border-color:var(--ap-brand)!important; }
-  body[data-theme="paper"] .text-accent-pink { color:var(--ap-brand)!important; }
-  body[data-theme="paper"] [class*="bg-accent-pink"] { background:color-mix(in srgb,var(--ap-brand) 14%,transparent)!important; }
-  #status.text-green-400,#dlg-status.text-green-400 { color:var(--ap-green)!important; }
-  #status.text-red-400,#dlg-status.text-red-400 { color:var(--ap-danger)!important; }
-
-  #panel { position:absolute; z-index:60; top:68px; right:24px; width:min(480px,calc(100% - 48px)); border:1px solid var(--ap-line)!important; border-radius:11px; background:var(--ap-raised)!important; box-shadow:0 20px 60px rgba(0,0,0,.45); }
-  #panel.open { max-height:70vh; }
-  body[data-theme="paper"] [class*="text-white"] { color:var(--ap-muted)!important; }
-  body[data-theme="paper"] .section-title,body[data-theme="paper"] .setting-value,body[data-theme="paper"] #breakdownRows > div:nth-child(even),body[data-theme="paper"] #conceptEdit,body[data-theme="paper"] #promptEnEdit,body[data-theme="paper"] #prompt { color:var(--ap-text)!important; }
-  body[data-theme="paper"] .chip.active { background:var(--ap-selection)!important; border-color:var(--ap-selection)!important; color:var(--ap-selection-text)!important; box-shadow:inset 0 1px rgba(255,255,255,.2),0 4px 12px rgba(51,75,81,.12)!important; }
-
-  #darkroom { min-height:100vh; background:transparent; }
-  #darkroomWorkspace { width:100%; max-width:1680px; margin:0 auto; padding:18px 22px 26px!important; display:grid!important; grid-template-columns:324px minmax(0,1fr) 360px; grid-template-areas:"darkControls darkStage lineage"; gap:16px!important; align-items:start; }
-  #darkroomCenter { display:contents!important; }
-  #drControls { grid-area:darkControls; padding:16px!important; }
-  #drActionRow { display:grid!important; grid-template-columns:1fr; gap:12px!important; align-items:center; }
-  #drModeToggle { width:max-content; max-width:100%; }
-  #dlg-strength-row { display:grid; grid-template-columns:64px minmax(0,1fr) 36px; gap:8px; align-items:center; min-width:0; width:100%; }
-  #dlg-denoise { min-width:0; width:100%; }
-  #dlg-go { width:100%; }
-  #darkroomStage { grid-area:darkStage; min-width:0; height:clamp(520px,calc(100vh - 130px),780px); padding:0!important; background:radial-gradient(circle at 50% 30%,#17120f,#080706 72%)!important; isolation:isolate; }
-  body[data-theme="paper"] #darkroomStage { background:linear-gradient(135deg,#d9cebf,#c8b8a4)!important; }
-  #dr-cur-img { position:relative!important; inset:auto!important; margin:auto!important; max-width:100%; max-height:100%; object-fit:contain; box-shadow:0 22px 58px rgba(0,0,0,.36); }
-  #dlg-cur-info { background:rgba(20,16,13,.84)!important; border:1px solid rgba(255,255,255,.12); color:#f0e9df!important; }
-  #dlg-cur-info b { color:#f0e9df!important; }
-  #lineagePanel { grid-area:lineage; padding:16px!important; max-height:calc(100vh - 100px); overflow-y:auto; }
-  #dlg-thumbs { display:grid!important; gap:11px!important; overflow:visible!important; }
-  #dlg-thumbs .lineage { width:auto!important; display:grid; grid-template-columns:76px minmax(0,1fr); gap:10px; align-items:start; padding-bottom:11px; border-bottom:1px solid var(--ap-line-soft); }
-  #dlg-thumbs .lineage > div:first-child { width:76px; aspect-ratio:1!important; }
-  #dlg-thumbs .lineage > div:nth-child(2) { margin-top:0!important; white-space:normal; }
-
-  #app[data-view="compose"] #aiPanel,#app[data-view="compose"] #stagePanel,#app[data-view="compose"] #historyPanel,
-  #app[data-view="review"] #stagePanel,#app[data-view="review"] #historyPanel,
-  #app[data-view="generating"][data-has-result="false"] #aiPanel,#app[data-view="generating"][data-has-result="false"] #stagePanel,#app[data-view="generating"][data-has-result="false"] #historyPanel { display:none!important; }
-  #app[data-view="review"] #aiPanel { grid-column:1 / 3; grid-row:2; display:grid!important; grid-template-columns:324px minmax(0,1fr); gap:18px; }
-  #app[data-view="review"] #aiPanel > div:first-child { grid-column:1 / -1; }
-  #app[data-view="review"] #breakdown { margin:0; padding:0 18px 0 0; border:0; border-right:1px solid var(--ap-line-soft); align-content:start; }
-  #app[data-view="review"] #aiPanel > div:last-child { border-top:0!important; padding-top:0!important; }
-  #app[data-view="generating"][data-has-result="true"] #aiPanel,#app[data-view="generating"][data-has-result="true"] #stagePanel,#app[data-view="generating"][data-has-result="true"] #historyPanel { opacity:.62; pointer-events:none; }
-
-  @media (max-width:1199px) and (min-width:721px) {
-    #workspace { grid-template-columns:minmax(0,1fr) 340px; grid-template-areas:"composer settings" "stage settings" "prompt settings" "history settings"; }
-    #app[data-view="review"] #aiPanel { grid-column:1; grid-row:auto; display:block!important; }
-    #app[data-view="review"] #breakdown { margin-bottom:14px; padding:0 0 14px; border-right:0; border-bottom:1px solid var(--ap-line-soft); }
-    #darkroomWorkspace { grid-template-columns:minmax(0,1fr) 340px; grid-template-areas:"darkStage darkControls" "lineage darkControls"; }
-    #lineagePanel { max-height:none; }
-  }
-  @media (max-width:720px) {
-    .ap-header { min-height:58px; padding:9px 11px!important; align-items:flex-start!important; gap:8px; }
-    .brand-wrap { gap:0; }
-    .brand-sub,.header-actions #quota { display:none!important; }
-    .header-actions { gap:5px; flex-wrap:wrap; justify-content:flex-end; }
-    .header-actions .chip { min-height:34px; padding:6px 9px!important; }
-    .theme-toggle { min-width:68px!important; }
-    #navBtn { font-size:0; white-space:nowrap; }
-    #navBtn::after { content:"公告"; font-size:12px; }
-    #workspace { display:flex!important; flex-direction:column; gap:10px!important; padding:11px!important; }
-    .prompt-composer { order:1; width:100%; min-height:258px; }
-    #stagePanel { order:2; width:100%; }
-    #mobileTabs { order:3; width:100%; display:grid; grid-template-columns:1fr 1fr; border:1px solid var(--ap-line); border-radius:8px; overflow:hidden; }
-    #mobileTabs button { min-height:38px; border:0; background:var(--ap-field); color:var(--ap-muted); }
-    #mobileTabs button.active { background:var(--ap-selection); color:var(--ap-selection-text); }
-    #aiPanel { order:4; width:100%!important; display:flex!important; }
-    #paramsPanel { order:5; width:100%!important; display:flex!important; position:static; max-height:none!important; }
-    #historyPanel { order:6; width:100%; }
-    #app[data-view="compose"] #mobileTabs { display:none!important; }
-    #app[data-view="compose"] #paramsPanel { display:flex!important; }
-    #app[data-view="review"] #aiPanel { display:flex!important; }
-    #app[data-view="review"] #breakdown { margin-bottom:2px; padding:0 0 14px; border-right:0; border-bottom:1px solid var(--ap-line-soft); }
-    #app[data-view="review"] #paramsPanel,#app[data-view="result"][data-mobile-panel="prompt"] #paramsPanel,#app[data-view="generating"][data-mobile-panel="prompt"] #paramsPanel { display:none!important; }
-    #app[data-view="review"][data-mobile-panel="settings"] #aiPanel,#app[data-view="result"][data-mobile-panel="settings"] #aiPanel,#app[data-view="generating"][data-mobile-panel="settings"] #aiPanel { display:none!important; }
-    #app[data-view="review"][data-mobile-panel="settings"] #paramsPanel,#app[data-view="result"][data-mobile-panel="settings"] #paramsPanel,#app[data-view="generating"][data-mobile-panel="settings"] #paramsPanel { display:flex!important; }
-    #canvasMedia { height:min(68vh,620px); min-height:360px!important; }
-    #gallery { display:flex!important; }
-    #gallery .history-card { width:76px!important; min-width:76px; height:92px!important; aspect-ratio:auto; flex:0 0 auto; }
-    #panel { top:64px; right:11px; width:calc(100% - 22px); }
-    #darkroomWorkspace { display:flex!important; flex-direction:column; gap:10px!important; padding:11px!important; }
-    #darkroomStage { order:1; width:100%; height:min(68vh,620px); min-height:390px; }
-    #drControls { order:2; width:100%; }
-    #lineagePanel { order:3; width:100%; max-height:none; }
-    #dlg-thumbs { display:flex!important; overflow-x:auto!important; }
-    #dlg-thumbs .lineage { width:112px!important; display:block; padding-bottom:0; border-bottom:0; }
-    #dlg-thumbs .lineage > div:first-child { width:100%; aspect-ratio:3/4!important; }
-  }
-  @media (prefers-reduced-motion:reduce) { *,*::before,*::after { transition-duration:.001ms!important; animation-duration:.001ms!important; } }
-</style>
-</head>
+<style>:root{font-family:"Microsoft YaHei UI","PingFang SC",system-ui,sans-serif;font-size:14px;--ap-bg:#171c24;--ap-surface:#202631;--ap-field:#252c38;--ap-text:#e4e9f2;--ap-muted:#99a5b8;--ap-line:#343e4e;--ap-brand:#8aa3ff;--ap-selection:#8aa3ff;--ap-selection-text:#182442;color-scheme:dark}
+body[data-theme=paper]{--ap-bg:#f2f4f7;--ap-surface:#fff;--ap-field:#fafbfd;--ap-text:#202733;--ap-muted:#737e90;--ap-line:#e2e6ed;--ap-brand:#4662d6;--ap-selection:#4662d6;--ap-selection-text:#fff;color-scheme:light}
+*{box-sizing:border-box}body{margin:0;background:var(--ap-surface);color:var(--ap-text);font-family:"Microsoft YaHei UI","PingFang SC",system-ui,sans-serif}button,input,textarea,select{font:inherit;color:inherit}button,a{-webkit-tap-highlight-color:transparent;touch-action:manipulation}button{cursor:pointer}button:disabled{opacity:.45;cursor:not-allowed}[hidden],.hidden{display:none!important}button:focus-visible,a:focus-visible,[tabindex]:focus-visible,textarea:focus-visible,select:focus-visible,input:focus-visible{outline:2px solid var(--ap-brand);outline-offset:3px}textarea{resize:vertical;line-height:1.9!important}input:not([type=range]),textarea,select{background:var(--ap-field)!important;border:1px solid var(--ap-line);border-radius:8px;padding:10px 12px;color:var(--ap-text)!important}input[type=range]{accent-color:var(--ap-brand);min-width:0}input[type=checkbox]{accent-color:var(--ap-brand)}select{max-width:100%}p{line-height:1.85}a{color:inherit;text-decoration:none}.mono,.font-mono{font-family:Consolas,"SFMono-Regular",monospace!important}.sr-only{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0}.chip,.quiet-button,.grad-btn{min-height:38px;padding:8px 13px;border-radius:8px;line-height:1.5;font-size:13px;transition:background .15s,border-color .15s}.chip{background:var(--ap-field);border:1px solid var(--ap-line);color:var(--ap-text)}.chip:hover{border-color:var(--ap-brand)}.grad-btn{background:var(--ap-selection);color:var(--ap-selection-text)!important;border:1px solid var(--ap-selection);font-weight:500}.chip.active,.seg.active{color:var(--ap-brand)!important;background:color-mix(in srgb,var(--ap-brand) 12%,var(--ap-surface));border-color:var(--ap-brand)}.quiet-button{color:var(--ap-muted);background:transparent;border:0}.quiet-button:hover{color:var(--ap-text)}[class*="text-white"],.text-accent-pink{color:var(--ap-muted)!important}[class*="border-ink"]{border-color:var(--ap-line)!important}[class*="bg-ink"]{background:var(--ap-field)!important}.text-red-400{color:#c75455!important}.text-amber-300,.text-amber-400{color:#bc872e!important}.text-green-400{color:#65977f!important}
+.studio-view{height:100dvh;min-height:0;flex-direction:column;background:var(--ap-surface)}.studio-header{height:70px;flex:none;display:flex;align-items:center;gap:24px;padding:0 36px;border-bottom:1px solid var(--ap-line)}.studio-brand{font:italic 31px Georgia,serif;letter-spacing:-1.6px;white-space:nowrap;display:flex;align-items:center;gap:9px}.studio-brand sup{font:8px Consolas,monospace;letter-spacing:.06em;align-self:flex-start;padding-top:4px;margin-left:1px;color:var(--ap-muted)}.studio-mark{color:var(--ap-brand);font:31px Georgia,serif;display:block;transform:rotate(-20deg)}.studio-location{font-size:12px;color:var(--ap-muted)}.studio-nav{display:flex;gap:10px;align-items:center;margin-left:auto}.studio-nav .chip{background:transparent;border-color:transparent;font-size:12px;padding:8px 9px}.studio-nav .chip:hover{background:var(--ap-field);border-color:var(--ap-line)}.theme-track{display:none}#quota{font-size:11px;color:var(--ap-muted);margin-left:8px}.studio-workspace{display:flex;flex-direction:column;flex:1;min-height:0;width:100%;max-width:2200px;margin:auto;padding:0 38px 18px;gap:10px}.studio-stage{display:flex;flex-direction:column;flex:1;min-height:0}.stage-toolbar{display:flex;justify-content:space-between;align-items:center;min-height:44px;height:44px;flex:none;color:var(--ap-muted);font-size:12px}#canvasBadges{gap:14px}#badgeWf{font-size:11px}#badgeSize{font:11px Consolas,monospace}.studio-media{position:relative;display:flex;align-items:center;justify-content:center;flex:1;min-height:0;padding:12px 18px 4px;overflow:hidden}#img,#dr-cur-img{width:100%;height:100%;max-height:100%;max-width:100%;object-fit:contain;cursor:zoom-in;position:static;min-height:0}#canvasPlaceholder{display:flex;align-items:center;justify-content:center;flex-direction:column;gap:18px;text-align:center;line-height:1.85;color:var(--ap-muted);font-size:13px;padding:25px}#canvasPlaceholder strong{font-weight:400;font-size:23px;color:var(--ap-text)}.empty-symbol{font:56px Georgia,serif;color:var(--ap-brand);opacity:.7}.canvas-actions{display:flex;align-items:center;justify-content:center;gap:9px;height:55px;min-height:55px;flex:none}.canvas-actions .chip,.canvas-actions .grad-btn{font-size:12px;min-height:36px}.studio-dock{width:min(780px,100%);margin:0 auto;flex:none;background:var(--ap-field);border:1px solid var(--ap-line);border-radius:13px;padding:12px 14px 12px 20px;box-shadow:0 6px 28px #14243809}.dock-row{display:flex;align-items:center;gap:12px}.dock-open{display:flex;align-items:center;gap:14px;min-width:0;flex:1;text-align:left;min-height:43px}.dock-open>span:nth-child(2){min-width:0;flex:1}.dock-open small{display:block;font-size:11px;color:var(--ap-muted);margin-bottom:5px}.dock-open strong{display:block;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-weight:400;font-size:13px;max-width:100%}.dock-pen{font-size:23px;color:var(--ap-brand)}.dock-hint{font-size:11px;white-space:nowrap;color:var(--ap-muted)}.dock-settings{background:transparent!important;border-color:transparent!important}.dock-row>.grad-btn{flex:none;min-height:42px}.dock-status:has(#status:empty):not(:has(.bar[style*="block"])),.dock-status:has(#dlg-status:empty):not(:has(.bar[style*="block"])){display:none}.dock-status{margin:0 0 10px;padding-bottom:10px;border-bottom:1px solid var(--ap-line)}#status,#dlg-status{font-size:12px!important;line-height:1.7;min-height:0!important;margin:0!important;overflow-wrap:anywhere}.bar{display:none;height:2px;background:var(--ap-line);margin-bottom:8px;overflow:hidden}.bar i{display:block;height:100%;width:30%;background:var(--ap-brand);animation:working 1.6s ease-in-out infinite}@keyframes working{0%{transform:translateX(-100%)}100%{transform:translateX(440%)}}
+dialog{color:var(--ap-text);background:var(--ap-surface);border:1px solid var(--ap-line);padding:0;border-radius:15px;box-shadow:0 22px 85px #0b182b30}dialog::backdrop{background:#13243b1c;backdrop-filter:blur(2px)}.studio-sheet{width:min(620px,calc(100vw - 32px));max-width:none;max-height:calc(100dvh - 48px);margin:auto}.studio-sheet[open]{display:flex;flex-direction:column}.sheet-heading{display:flex;align-items:center;justify-content:space-between;gap:20px;padding:25px 30px 18px;flex:none}.sheet-heading h2{font-size:23px;letter-spacing:-.5px;font-weight:500;margin:0}.sheet-close{font-size:26px;line-height:1;width:34px;height:34px;border-radius:6px;color:var(--ap-muted)}.sheet-close:hover{background:var(--ap-field)}.sheet-content{padding:10px 30px 28px;overflow:auto;min-height:0;scrollbar-width:thin;scrollbar-color:var(--ap-line) transparent}#editorSheet,#branchSheet{position:fixed;left:36px;right:auto;top:88px;bottom:100px;margin:0;width:520px;height:auto;max-height:none}#editorSheet .sheet-content,#branchSheet .sheet-content{flex:1;padding-top:26px}#editorSheet .sheet-heading,#branchSheet .sheet-heading{padding-top:26px}.studio-tabs{display:flex;gap:32px;margin:5px 30px 0;border-bottom:1px solid var(--ap-line);flex:none}.studio-tabs button{font-size:14px;padding:12px 0 16px;position:relative;color:var(--ap-muted)}.studio-tabs button[aria-selected=true]{color:var(--ap-text);font-weight:500}.studio-tabs button[aria-selected=true]:after{content:"";position:absolute;height:2px;background:var(--ap-text);bottom:-1px;left:0;right:0}.editor-pane{padding:0!important;border:0!important;background:transparent!important;width:100%!important;max-height:none!important;overflow:visible!important;display:block}.editor-actions,.editor-confirm-actions{padding:18px 30px 24px;display:flex;gap:10px;border-top:1px solid var(--ap-line);flex:none;background:var(--ap-surface)}.editor-actions>button{min-height:46px;font-size:14px}.editor-actions>.grad-btn{flex:1}.editor-confirm-actions{display:none}#editorSheet[data-tab=prompt] .editor-actions{display:none}#editorSheet[data-tab=prompt] .editor-confirm-actions{display:block}.editor-confirm-actions #editActions{margin:0;flex-wrap:wrap}.editor-confirm-actions #editActions>button{min-height:44px}.editor-pane>div{max-width:100%}#ideaEditorPane>.flex{display:block!important}#prompt{background:transparent!important;border:0!important;border-radius:0;font-size:18px!important;line-height:1.95!important;min-height:185px;padding:0!important;outline-offset:5px;resize:vertical}#ideaEditorPane [aria-label="Prompt 补全程度"]{display:flex;flex-wrap:nowrap;width:100%;background:var(--ap-bg);padding:3px;border-radius:8px;margin-top:8px;gap:3px}#ideaEditorPane .completion-option{flex:1;border:0!important;font-size:13px;padding:10px 4px;white-space:nowrap;background:transparent}#ideaEditorPane .completion-option.active{background:var(--ap-surface);color:var(--ap-text)!important;box-shadow:0 1px 5px #15233a15}#completionHint{font-size:12px!important;line-height:1.8}#ideaEditorPane [aria-label="Prompt 补全程度"]+span{display:block;margin-bottom:12px}#ideaEditorPane .min-h-8{margin-top:23px}#ref-dropzone{min-height:45px;width:100%;border:1px dashed var(--ap-line);background:var(--ap-field)}#ref-label-text{font-size:13px!important}#ref-preview{display:flex}#ref-thumb{width:50px;height:58px;object-fit:contain}#reference-options{margin-top:18px;font-size:12px}#reference-hint{margin-top:8px;line-height:1.8}#reference-scope{font-size:13px}.setting-group{margin-bottom:26px}.setting-label{display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;font-size:14px;gap:12px}.setting-value,.section-note{font-size:11px;color:var(--ap-muted)}.seg{font-size:13px;padding:10px 14px}.format-frame{display:inline-block;border:1.5px solid currentColor;color:var(--ap-muted);flex:none}#sizeMenu{position:static!important;background:var(--ap-field)!important;max-height:340px!important;margin-top:10px}#sizeMenu button{width:100%}.size-card{display:flex;align-items:center;gap:12px;text-align:left;padding:12px;border:1px solid var(--ap-line);border-radius:7px}.size-card.active{border-color:var(--ap-brand);color:var(--ap-brand)}#conceptEdit{font-size:15px;min-height:145px;line-height:1.9}#promptEnEdit{font-size:14px;min-height:250px;margin-top:6px;font-family:Consolas,monospace;line-height:1.9}#aiPanel>div:last-child{margin-top:24px}#aiPanel #breakdownRows{display:grid;grid-template-columns:auto 1fr;gap:9px 14px;margin-top:20px}#breakdownRows:empty{display:none}#conceptBlock>div>div{font-size:13px!important}#conceptApply{font-size:12px}#aiPanel .text-sm{font-size:12px;line-height:1.8}#denoise-row{border-top:1px solid var(--ap-line);padding-top:22px;margin-top:22px}#denoise-row select{font-size:12px}#image-fit,#image-crop,#reference-scope{color:var(--ap-text)}.field-note{font-size:12px;color:var(--ap-muted);line-height:1.8;margin-top:15px}.lora-select-wrap{position:relative}#loraCharMenu,#loraStyleMenu{position:static!important;max-height:300px!important;overflow:auto!important;padding:10px;border:1px solid var(--ap-line);border-radius:8px;background:var(--ap-field);margin-top:10px}#loraCharMenu{display:flex;flex-direction:column}#loraCharMenu>.chip{text-align:left;display:flex;align-items:center;justify-content:space-between;gap:8px}#loraStyleMenu{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}#loraStyleMenu .lora-menu-clear{grid-column:1/-1}.lora-menu-clear{display:flex;justify-content:space-between;font-size:12px}.lora-style-card{padding:5px;text-align:left;min-width:0}.lora-style-thumb{display:block;position:relative}.lora-style-thumb img{width:100%;height:150px;object-fit:cover;border-radius:5px}.lora-style-state{display:none;position:absolute;right:6px;bottom:6px;font-size:10px;padding:3px 6px;background:var(--ap-selection);color:var(--ap-selection-text);border-radius:3px}.lora-style-card.active .lora-style-state{display:block}.lora-style-meta{display:block;padding:9px 5px}.lora-style-name{display:block;overflow-wrap:anywhere;font-size:12px}.lora-style-sub{display:flex;justify-content:space-between;font-size:10px;color:var(--ap-muted);margin-top:6px}.lora-style-fallback{display:flex;height:150px;align-items:center;justify-content:center;color:var(--ap-muted);font-size:10px}.lora-stack{display:flex;flex-direction:column;gap:12px;padding:14px}.lora-stack-card{padding:12px;border:1px solid var(--ap-line);border-radius:8px;min-width:0}.lora-stack-card img{max-height:110px;max-width:75px;object-fit:cover;border-radius:5px}.lora-stack-head{display:flex;align-items:center;gap:10px}.lora-stack-title{font-size:13px;overflow-wrap:anywhere}.lora-stack-meta,.lora-stack-desc,.lora-stack-notice{font-size:11px;color:var(--ap-muted);line-height:1.7;overflow-wrap:anywhere}.lora-stack-profiles{display:flex;flex-wrap:wrap;gap:6px;margin:12px 0}.lora-stack-range{display:flex;align-items:center;gap:10px;margin-top:12px}.lora-stack-range input{flex:1;min-width:0}.lora-stack-range output{font:12px Consolas,monospace}.lora-stack-remove{margin-left:auto}
+#historySheet{width:min(970px,calc(100vw - 32px))}#gallery{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:18px;overflow:visible;padding-top:16px}.history-card{display:flex;flex-direction:column;align-items:stretch;min-width:0;padding:7px;background:var(--ap-field);border:1px solid var(--ap-line);border-radius:9px;text-align:left}.history-card:hover{border-color:var(--ap-brand)}.hist-thumb,.history-empty{width:100%;height:190px;object-fit:contain;background:var(--ap-bg);border-radius:5px}.history-empty{display:flex;align-items:center;justify-content:center;padding:14px;font-size:12px;color:var(--ap-muted);line-height:1.8}.history-state{display:block;font-size:11px;padding:10px 2px 4px;overflow-wrap:anywhere}#historyNote{font-size:12px!important;line-height:1.8}#historyPanel>div:last-child{margin-top:20px}.section-title{font-size:13px}.help-content{display:block}.tab-pane{display:none}.tab-pane.active{display:block}.tab-btn.active{border-color:var(--ap-brand);color:var(--ap-text)!important}.help-content .text-xs{font-size:13px;line-height:1.85}.help-content .max-w-3xl{padding:0}.record-fields{display:grid;grid-template-columns:90px minmax(0,1fr);gap:14px;font-size:13px}.record-fields dt{color:var(--ap-muted)}.record-fields dd{overflow-wrap:anywhere;font-family:Consolas,monospace;margin:0}#recordPrompt{font:13px/1.9 Consolas,monospace;white-space:pre-wrap;overflow-wrap:anywhere;padding:14px;background:var(--ap-field);border-radius:8px;margin:15px 0}#recordSheet details{margin:23px 0}summary{cursor:pointer;color:var(--ap-muted);font-size:13px;padding:9px 0}#reuseRecordedPrompt{margin-top:10px}.zoom-sheet{width:96vw;max-width:96vw;max-height:96dvh;margin:auto;background:var(--ap-bg)}.zoom-sheet .sheet-heading{padding:12px 18px}.zoom-sheet .sheet-heading h2{font-size:14px}.zoom-sheet .sheet-content{padding:0 14px 14px}#zoomImage{height:calc(96dvh - 75px);width:100%;object-fit:contain}
+.iteration-strip{display:flex;gap:20px;padding:12px 0 8px;border-top:1px solid var(--ap-line);flex:none;min-height:0;align-items:center}.iteration-strip>.section-head{flex:none;width:72px;line-height:1.8}.iteration-strip .section-note{display:none}.iteration-thumbs{display:flex;gap:9px;overflow:auto;scrollbar-width:thin;min-width:0;align-items:stretch;padding-bottom:3px}.lineage{display:flex;gap:8px;min-width:175px;max-width:215px;width:175px;flex:none;align-items:center;position:relative;padding-bottom:28px}.lineage>div:first-child{height:67px;width:48px;flex:none;aspect-ratio:auto;border-radius:4px}.lineage img{object-fit:contain;background:var(--ap-bg)}.lineage>div:nth-child(2){font-size:10px;max-height:52px;overflow:auto;line-height:1.7}.lineage>button{position:absolute;bottom:0;left:0;width:100%;min-height:24px;padding:3px 6px;font-size:10px}.lineage .glass{font-size:9px;padding:2px 3px;top:0;left:0;background:var(--ap-surface)}#drControls{display:flex;flex-direction:column;gap:18px}#drControls .section-head{font-size:12px;color:var(--ap-muted)}#drControls .section-head .section-title{display:none}#dlg-delta{font-size:17px;min-height:145px;padding:12px}#drActionRow{display:flex;flex-direction:column;gap:18px}#drModeToggle{align-self:stretch}#drModeToggle>button{flex:1;font-size:13px}.advanced-branch{border-top:1px solid var(--ap-line);border-bottom:1px solid var(--ap-line);padding:8px 0}.advanced-branch summary{font-size:13px}.advanced-branch>div,.advanced-branch>label{margin:15px 0;font-size:12px;line-height:1.8}.advanced-branch select{font-size:12px}#dlg-image-options{gap:7px}#dlg-image-options label{display:block;width:100%}#drControls>div:last-child{line-height:1.85;font-size:12px}#branchSheet .editor-actions>button{width:100%}#dr-start{max-width:500px}.login-screen{background:var(--ap-bg)}.login-screen .surface{background:var(--ap-surface)!important;border-color:var(--ap-line)}.login-screen .brand-title{font:italic 44px Georgia,serif}.login-screen input{min-height:45px}.login-screen .text-xs{line-height:1.8}
+@media(min-width:761px) and (max-height:850px){.studio-header{height:60px}.studio-workspace{padding-bottom:12px;gap:6px}.studio-media{padding-top:4px}.stage-toolbar{height:37px;min-height:37px}.canvas-actions{height:48px;min-height:48px}#editorSheet,#branchSheet{top:74px;bottom:88px}#editorSheet .sheet-heading,#branchSheet .sheet-heading{padding-top:20px}.sheet-heading h2{font-size:22px}#prompt{min-height:165px}.studio-dock{padding-top:10px;padding-bottom:10px}}
+@media(max-width:1000px){.studio-location,#quota{display:none}.studio-header{gap:12px;padding:0 24px}.studio-nav{gap:5px}.studio-workspace{padding-left:24px;padding-right:24px}}
+@media(max-width:760px){.studio-header{height:61px;padding:0 16px;gap:10px}.studio-brand{font-size:27px;gap:6px}.studio-brand sup,.studio-mark{display:none}.studio-nav{gap:1px}.studio-nav .chip{font-size:11px;padding:7px 6px;min-height:35px}#newDraft,#navBtn,#drMeta{display:none}.studio-workspace{padding:0 14px max(12px,env(safe-area-inset-bottom));gap:6px}.studio-media{padding:8px 0 3px}.stage-toolbar{height:38px;min-height:38px}.stage-toolbar .quiet-button{font-size:11px}.canvas-actions{height:49px;min-height:49px}.studio-dock{padding:10px 10px 10px 13px;border-radius:11px}.dock-row{gap:7px}.dock-open{gap:8px}.dock-open small{font-size:10px}.dock-open strong{font-size:11px}.dock-hint,.dock-settings{display:none}.dock-pen{font-size:19px}.dock-row>.grad-btn{font-size:12px;padding:9px 12px;min-height:41px}.dock-status{padding-bottom:7px;margin-bottom:7px}#status,#dlg-status{font-size:11px!important;max-height:70px;overflow:auto}#editorSheet,#branchSheet{top:73px;bottom:87px;left:12px;width:calc(100% - 24px);max-height:none;margin:0}.sheet-heading{padding:22px 22px 15px}.sheet-heading h2{font-size:22px}.sheet-content{padding:10px 22px 24px}#editorSheet .sheet-content,#branchSheet .sheet-content{padding-top:22px}.studio-tabs{margin:3px 22px 0;gap:26px}.studio-tabs button{font-size:13px}.editor-actions,.editor-confirm-actions{padding:14px 22px 18px}.editor-actions>button{font-size:13px;min-height:44px}#prompt{min-height:170px;font-size:16px!important}#conceptEdit,#promptEnEdit{font-size:14px}#gallery{grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}.hist-thumb,.history-empty{height:155px}.record-fields{grid-template-columns:68px minmax(0,1fr);font-size:12px;gap:12px}.iteration-strip{gap:10px;padding:8px 0 4px}.iteration-strip>.section-head{width:40px}.iteration-strip .section-title{font-size:11px}.lineage{width:156px;min-width:156px}.lineage>div:first-child{height:55px;width:38px}.studio-sheet{max-height:calc(100dvh - 24px)}#canvasPlaceholder{padding:15px;gap:15px;font-size:12px}#canvasPlaceholder strong{font-size:20px}.setting-label{font-size:13px}.setting-value{font-size:10px}.lora-style-thumb img{height:130px}#drControls{gap:14px}#dlg-delta{font-size:16px}}
+@media(prefers-reduced-motion:reduce){*,*:before,*:after{animation:none!important;transition:none!important;scroll-behavior:auto!important}}
+.sheet-status{padding:0 30px 16px;font-size:12px;line-height:1.7;color:var(--ap-muted);max-height:85px;overflow:auto;flex:none}.lora-stack-item{display:flex;gap:12px;padding:15px;border-top:1px solid var(--ap-line)}.lora-stack-copy{min-width:0;flex:1}.lora-stack-thumb{width:65px;height:90px;object-fit:cover;border-radius:5px}.lora-stack-title{display:flex;gap:10px;justify-content:space-between;align-items:center}.lora-stack-name{font-size:13px;overflow-wrap:anywhere}.lora-stack-type{font-size:10px;color:var(--ap-muted);margin-right:7px}.lora-stack-capability,.lora-profile-note,.lora-stack-warning{font-size:11px;line-height:1.8;color:var(--ap-muted);margin-top:8px;overflow-wrap:anywhere}.lora-stack-remove{width:24px;min-width:24px;font-size:20px;color:var(--ap-muted)}.lora-strength-control{display:flex;gap:10px;align-items:center;margin-top:13px;font-size:11px}.lora-strength-control input{flex:1;min-width:0}.lora-profile-list .chip{font-size:11px;padding:5px 7px;min-height:30px}.lora-stack-head{display:flex;justify-content:space-between;padding:13px 15px;font-size:11px;color:var(--ap-muted)}.lora-stack-warning{padding:0 15px 15px}#app[data-has-result=false] #recordInfo{visibility:hidden}#editorSheet[data-tab=prompt]:not(:has(#editActions:not(.hidden))) .editor-actions{display:flex}#editorSheet[data-tab=prompt]:not(:has(#editActions:not(.hidden))) .editor-confirm-actions{display:none}
+@media(max-width:760px){#promptEnEdit,#conceptEdit,#dlg-delta,#loginCode,#editorSheet select,#branchSheet select{font-size:16px!important}.sheet-status{padding-left:22px;padding-right:22px}}
+</style></head>
 <body class="min-h-screen">
-
-<input type="hidden" id="token">
-
+<input id="token" type="hidden"/>
 <!-- ===================== 登录 ===================== -->
-<div id="login" class="login-screen min-h-screen flex items-center justify-center px-4">
-  <div class="w-full max-w-sm">
-    <div class="text-center mb-8">
-      <h1 class="text-3xl brand-title">air 的绘图小屋</h1>
-      <p class="text-sm text-white/45 mt-2">用中文构思，保留 Prompt 与成像参数控制</p>
-    </div>
-    <div class="surface rounded-xl border border-ink-700 bg-ink-800/60 p-6">
-      <label class="mono text-xs tracking-wider text-white/45 block mb-2 uppercase">邀请码</label>
-      <input type="password" id="loginCode" placeholder="输入邀请码" autocomplete="off"
-        class="w-full border border-ink-600 rounded-lg px-3 py-2.5 text-sm placeholder:text-white/25">
-      <button id="loginBtn" class="grad-btn w-full py-2.5 rounded-lg mt-4">进入</button>
-      <div id="loginErr" class="text-xs text-red-400 mt-3 text-center min-h-[1rem]"></div>
-      <div class="text-xs text-white/35 mt-1 text-center">需要邀请码？找 air 要一个</div>
-    </div>
-    <div class="text-center mono text-[11px] text-white/25 mt-6 tracking-wider">airpaint.xyz</div>
-  </div>
+<div class="login-screen min-h-screen flex items-center justify-center px-4" id="login">
+<div class="w-full max-w-sm">
+<div class="text-center mb-8">
+<h1 class="text-3xl brand-title">airpaint</h1>
+<p class="text-sm text-white/45 mt-2">用中文构思，保留 Prompt 与成像参数控制</p>
 </div>
-
+<div class="surface rounded-xl border border-ink-700 bg-ink-800/60 p-6">
+<label class="mono text-xs tracking-wider text-white/45 block mb-2 uppercase">邀请码</label>
+<input autocomplete="off" class="w-full border border-ink-600 rounded-lg px-3 py-2.5 text-sm placeholder:text-white/25" id="loginCode" placeholder="输入邀请码" type="password"/>
+<button class="grad-btn w-full py-2.5 rounded-lg mt-4" id="loginBtn">进入</button>
+<div class="text-xs text-red-400 mt-3 text-center min-h-[1rem]" id="loginErr"></div>
+<div class="text-xs text-white/35 mt-1 text-center">需要邀请码？找 air 要一个</div>
+</div>
+<div class="text-center mono text-[11px] text-white/25 mt-6 tracking-wider">airpaint.xyz</div>
+</div>
+</div>
 <!-- ===================== 工坊 ===================== -->
-<div id="app" class="min-h-screen flex flex-col" data-view="compose" data-has-result="false" data-mobile-panel="prompt" style="display:none">
+<div class="studio-view" data-has-result="false" data-mobile-panel="prompt" data-view="compose" id="app" style="display:none">
+<header class="studio-header"><a aria-label="AirPaint 画室" class="studio-brand" href="#"><span aria-hidden="true" class="studio-mark">◎</span>airpaint<sup>STUDIO</sup></a><span class="studio-location">我的画室</span><nav aria-label="画室导航" class="studio-nav"><button class="chip" data-open-history="">所有作品</button><button class="chip" id="newDraft">编辑构思</button><span class="mono text-xs text-white/40 px-2 hidden sm:inline" id="quota"></span><button aria-label="切换到纸本画室" aria-pressed="false" class="chip theme-toggle text-sm px-3 py-1.5" id="themeToggle" type="button"><span aria-hidden="true" class="theme-track"></span><span class="theme-label">夜间</span></button><button class="chip text-sm px-3 py-1.5 rounded-lg border border-ink-600 text-white/70" id="navBtn">使用说明</button><button class="chip text-sm px-3 py-1.5 rounded-lg border border-ink-600 text-white/70" id="logoutBtn">退出</button></nav></header>
+<!-- 公告/教程 -->
 
-  <header class="ap-header px-4 sm:px-6 py-3 flex items-center justify-between border-b border-ink-800">
-    <div class="brand-wrap">
-      <div class="brand-lockup"><span class="brand-mark"></span><h1 class="brand-title text-lg sm:text-xl leading-none">air 的绘图小屋</h1></div>
-      <p class="brand-sub text-sm hidden sm:block">让画面意图、Prompt 与成像参数保持连续</p>
-    </div>
-    <div class="header-actions">
-      <span class="mono text-xs text-white/40 px-2 hidden sm:inline" id="quota"></span>
-      <button id="themeToggle" class="chip theme-toggle text-sm px-3 py-1.5" type="button" aria-label="切换到纸本画室" aria-pressed="false"><span class="theme-track" aria-hidden="true"></span><span class="theme-label">夜间</span></button>
-      <button id="navBtn" class="chip text-sm px-3 py-1.5 rounded-lg border border-ink-600 text-white/70">公告/教程</button>
-      <button id="logoutBtn" class="chip text-sm px-3 py-1.5 rounded-lg border border-ink-600 text-white/70">退出</button>
-    </div>
-  </header>
-
-  <!-- 公告/教程 -->
-  <div id="panel" class="panel border-b border-ink-800 bg-ink-900/60 scroll-thin">
-    <div class="max-w-3xl mx-auto p-4">
-      <div class="flex gap-4 mb-3 border-b border-ink-700">
-        <button class="tab-btn active text-sm pb-2 border-b-2 border-transparent" data-tab="news">更新公告</button>
-        <button class="tab-btn text-sm pb-2 text-white/50 border-b-2 border-transparent" data-tab="guide">教程</button>
-      </div>
-      <div id="pane-news" class="tab-pane active space-y-3 text-sm">
-        <div><span class="text-white/40 text-xs">2026-09-08</span><span class="text-xs px-1.5 py-0.5 rounded bg-accent-pink/20 text-accent-pink ml-1">封版</span><b class="ml-1">历史与任务可恢复</b><div class="text-white/55 text-xs mt-0.5">任务、参数、种子和迭代分支由服务器保存。刷新或重新登录后仍能查看作品；连接中断时只恢复查询，不会悄悄重复提交。</div></div>
-        <div><span class="text-white/40 text-xs">2026-09-08</span><b class="ml-2">整图重绘边界</b><div class="text-white/55 text-xs mt-0.5">图生图和暗房重绘会重新采样整张图：低强度可能改不动，高强度可能连带改变人物、发型与构图，不属于局部精准编辑。</div></div>
-        <div><span class="text-white/40 text-xs">2026-08-29</span><b class="ml-2">LoRA 叠加栈</b><div class="text-white/55 text-xs mt-0.5">角色最多三个语义 Profile；多形态可同时选择，同一权重文件只加载一次。请写清多个主体的形态、位置与互动。风格与细节不设数量硬上限。</div></div>
-      </div>
-      <div id="pane-guide" class="tab-pane text-sm leading-relaxed space-y-4 text-white/75">
-        <div><h3 class="text-white font-medium mb-1">基本用法</h3>
-          <p class="text-white/55 text-xs">用中文描述想画的画面，点「生成」即可。想先看 AI 怎么构思，点「先看构思」——可检查并修改中文构思，也能继续编辑最终英文 Prompt。</p></div>
-        <div><h3 class="text-white font-medium mb-1">快速 / 精修 / 图生图</h3>
-          <p class="text-white/55 text-xs"><b class="text-white/75">文生图</b> 可选参考构图与氛围；<b class="text-white/75">图生图</b> 结合原图与 Prompt 整图重绘，适合允许细节变化的另一版。可写重绘方向，并在生成前检查 AI 构思和最终 Prompt。低强度通常更接近原图，也可能改不动；高强度可能连带改变人物、发型与构图。不保证指定改动成功或其他内容不变。上传图片不会自动继承原图 LoRA。</p></div>
-        <div><h3 class="text-white font-medium mb-1">LoRA 是什么</h3>
-          <p class="text-white/55 text-xs">叠在模型上的角色或画风资产。角色最多三个语义 Profile；多形态可同时选择；风格与细节不设数量硬上限。每个 Asset 可在 <b class="text-white/75">0~2</b> 内调节强度，同一物理文件只加载一次。不选就是原生模型。</p></div>
-        <div><h3 class="text-white font-medium mb-1">参考图（非图生图时）</h3>
-          <p class="text-white/55 text-xs">可选择只借<b class="text-white/75">构图</b>、借<b class="text-white/75">构图＋氛围</b>，或参考<b class="text-white/75">完整可见信息</b>。文字中的明确要求与 LoRA 身份优先；参考范围是引导，不保证像素或语义完全复刻。</p></div>
-        <div><h3 class="text-white font-medium mb-1">继续迭代</h3>
-          <p class="text-white/55 text-xs">每张结果图上有「继续迭代」，进入暗房后可以：<b class="text-white/75">换一版</b>（按 Prompt 重新文生图，默认换种子，不以原图像素为起点）；<b class="text-white/75">基于此图重绘</b>（以所选历史图片为起点整图重绘，默认继承尺寸、种子与 LoRA）。文字留空也会重新生成，不是原图直出；指定改动可能不生效，人物与构图也可能变化。右侧能看到这张图的演化线。</p></div>
-      </div>
-    </div>
-  </div>
-
-  <div id="workspace" class="flex-1 flex flex-col lg:flex-row gap-4 p-4">
-
-    <!-- 中 -->
-    <main id="workbenchMain" class="flex-1 flex flex-col gap-3 min-w-0 order-2 lg:order-1">
-      <div id="stageRow" class="flex-1 flex flex-col lg:flex-row gap-3 min-h-0">
-
-        <!-- 画布 -->
-        <div id="stagePanel" class="surface flex-1 flex flex-col min-h-0">
-          <div id="stageToolbar">
-            <div id="canvasBadges" class="flex gap-1.5 hidden">
-              <span id="badgeWf" class="text-xs"></span>
-              <span id="badgeSize" class="text-xs"></span>
-            </div>
-            <div id="canvasActions" class="flex gap-2 hidden">
-              <a id="dl" class="chip text-xs px-2.5 py-1.5 no-underline" download>下载</a>
-              <button id="toDarkroom" class="grad-btn text-xs px-2.5 py-1.5 font-medium">继续迭代</button>
-            </div>
-          </div>
-          <div id="canvasMedia" class="canvas-stage relative flex-1 overflow-hidden flex items-center justify-center">
-            <div id="canvasAmbient" class="media-ambient"></div>
-            <div class="media-shade"></div>
-            <span id="canvasPlaceholder">画布待命 · 描述画面开始出图</span>
-            <img id="img" alt="生成结果" class="max-w-full max-h-full object-contain hidden">
-          </div>
-        </div>
-
-        <!-- AI 理解 -->
-        <aside id="aiPanel" class="surface w-full lg:w-72 lg:shrink-0 rounded-xl border border-ink-700 bg-ink-800/60 p-4 flex flex-col gap-3 min-h-0 order-1 lg:order-2">
-          <div class="section-head"><div class="section-title">Prompt 检查</div><span id="promptNote" class="section-note">图片旁常驻</span></div>
-          <div id="breakdown" class="text-sm shrink-0">
-            <div id="conceptBlock" class="hidden">
-              <div class="flex items-center justify-between gap-2 mb-2">
-                <div class="mono text-[10px] text-accent-pink uppercase tracking-wider">中文构思（可编辑）</div>
-                <span id="conceptDirtyNote" class="hidden text-[10px] text-amber-300">待重编译</span>
-              </div>
-              <textarea id="conceptEdit" rows="4"
-                class="w-full rounded-lg border text-xs p-2.5 resize-y leading-relaxed"
-                placeholder="模型补全的画面构思会显示在这里"></textarea>
-              <div class="mt-2 flex justify-end">
-                <button id="conceptApply" type="button" class="chip text-xs px-3 py-1.5 rounded-lg border border-ink-600 text-white/70" disabled>按此构思重编译</button>
-              </div>
-            </div>
-            <div id="breakdownRows"></div>
-          </div>
-          <div class="border-t border-ink-700 pt-3 flex flex-col flex-1 min-h-0">
-            <div class="mono text-xs text-white/45 mb-2 shrink-0 uppercase tracking-wider">英文 Prompt（可编辑）</div>
-            <textarea id="promptEnEdit" rows="5"
-              class="w-full flex-1 min-h-[110px] bg-ink-900 border border-ink-600 rounded-lg text-xs p-2.5 resize-y font-mono leading-relaxed"
-              placeholder="先点「先看构思」，编译后的英文 Prompt 会出现在这里，可直接编辑"></textarea>
-            <div id="editActions" class="flex gap-2 mt-2 shrink-0 hidden">
-              <button id="reroll" class="chip text-xs px-3 py-2 rounded-lg border border-ink-600 text-white/70 hidden">换个构思</button>
-              <button id="editCancel" class="chip text-xs px-3 py-2 rounded-lg border border-ink-600 text-white/50">取消</button>
-              <button id="confirm" class="grad-btn text-xs px-4 py-2 rounded-lg font-medium ml-auto">确认生成</button>
-            </div>
-            <div class="text-sm text-white/50 mt-1.5 shrink-0">可编辑 tag、自然语言、顺序或权重，再确认生成</div>
-          </div>
-        </aside>
-      </div>
-
-      <!-- 输入 -->
-      <div class="prompt-composer surface rounded-xl border border-ink-700 bg-ink-800/70 p-3 shrink-0">
-        <div class="section-head"><div class="section-title">画面描述</div><span class="section-note">使用中文即可</span></div>
-        <div class="flex flex-col sm:flex-row gap-3 sm:items-stretch">
-          <div class="min-w-0 flex-1">
-            <textarea id="prompt" rows="2"
-              class="w-full min-h-[62px] bg-transparent text-sm leading-relaxed resize-none outline-none border-0 p-0 placeholder:text-white/30"
-              placeholder="描述你想画的… 例：一个白发蓝眼睛的猫耳少女，穿着白色连衣裙，站在樱花树下，微笑"></textarea>
-
-            <div class="mt-2 flex flex-wrap items-center gap-2">
-              <span class="mono text-[10px] text-white/45 uppercase tracking-wider">补全程度</span>
-              <div class="flex flex-wrap items-center gap-1" role="group" aria-label="Prompt 补全程度">
-                <button id="completionAuto" type="button" class="completion-option chip active border border-ink-600" data-completion-level="auto" aria-pressed="true">自动</button>
-                <button id="completionFaithful" type="button" class="completion-option chip border border-ink-600 text-white/65" data-completion-level="faithful" aria-pressed="false">忠于描述</button>
-                <button id="completionFree" type="button" class="completion-option chip border border-ink-600 text-white/65" data-completion-level="free" aria-pressed="false">自由补全</button>
-              </div>
-              <span id="completionHint" class="text-[11px] text-white/40">按已明确的画面信息决定补多少</span>
-            </div>
-
-            <div class="mt-2 flex items-center min-h-8">
-              <div id="ref-preview" class="hidden items-center gap-2 min-w-0">
-                <img id="ref-thumb" alt="" class="h-8 w-8 object-cover rounded border border-ink-600 shrink-0">
-                <span class="text-xs text-white/60 truncate">已添加参考图</span>
-                <button id="ref-clear" type="button" class="chip text-xs px-2 py-1 rounded border border-ink-600 text-white/70 shrink-0">移除</button>
-              </div>
-              <label id="ref-dropzone" tabindex="0" class="inline-flex items-center justify-center rounded-md border border-dashed border-ink-600 text-white/60 hover:border-accent-pink hover:text-accent-pink transition-colors px-3 py-1.5 cursor-pointer">
-                <input type="file" id="ref-file" accept="image/*" hidden>
-                <span id="ref-label-text" class="text-xs">＋ 添加参考图</span>
-              </label>
-            </div>
-          </div>
-
-          <div class="grid grid-cols-2 sm:flex sm:flex-col gap-2 sm:w-36 shrink-0">
-            <button id="preview" class="chip text-sm px-4 py-2 rounded-lg border border-ink-600 text-white/80 sm:flex-1">先看构思</button>
-            <button id="go" class="grad-btn text-sm px-5 py-2 rounded-lg font-medium sm:flex-1">生成</button>
-          </div>
-        </div>
-
-        <div id="denoise-row" class="mt-3 hidden">
-          <div class="flex flex-wrap gap-1.5 mb-2" aria-label="重绘强度预设">
-            <button type="button" class="chip border border-ink-600" data-denoise-target="denoise" data-denoise="0.35">低强度 0.35</button>
-            <button type="button" class="chip border border-ink-600" data-denoise-target="denoise" data-denoise="0.55">中强度 0.55</button>
-            <button type="button" class="chip border border-ink-600" data-denoise-target="denoise" data-denoise="0.75">高强度 0.75</button>
-          </div>
-          <div class="mono text-xs text-white/50 mb-1 uppercase tracking-wider">整图重绘强度</div>
-          <div class="flex items-center gap-2">
-            <input id="denoise" type="range" min="0.1" max="0.9" step="0.05" value="0.35" class="flex-1 accent-accent-pink">
-            <span id="denoise-val" class="mono text-xs text-accent-pink font-medium w-10 text-right">0.35</span>
-          </div>
-          <div class="text-xs text-white/55 mt-1.5">低强度通常更接近原图，也可能改不动；高强度可能连带改变人物、发型与构图。不是局部精准编辑。</div>
-          <div class="text-xs text-white/55 mt-1.5">上传图片不会自动继承原图 LoRA；生成前请检查当前选择和最终 Prompt。</div>
-          <div class="flex flex-wrap gap-2 mt-2 text-xs">
-            <label>画幅适配 <select id="image-fit" class="bg-ink-900 border border-ink-600 rounded p-1"><option value="preserve">保留全图 · 扩边</option><option value="crop">填满画幅 · 裁切</option></select></label>
-            <label id="image-crop-row" class="hidden">裁切位置 <select id="image-crop" class="bg-ink-900 border border-ink-600 rounded p-1"><option value="center">居中</option><option value="top">靠上</option><option value="bottom">靠下</option><option value="left">靠左</option><option value="right">靠右</option></select></label>
-          </div>
-          <div id="source-aspect-note" class="hidden text-xs text-amber-300 mt-2"></div>
-        </div>
-
-        <div id="reference-options" class="hidden mt-2 text-xs text-white/65">
-          <label>参考范围 <select id="reference-scope" class="bg-ink-900 border border-ink-600 rounded p-1.5 ml-1"><option value="composition_vibe">构图＋氛围</option><option value="composition">只参考构图</option><option value="full">完整参考</option></select></label>
-          <div id="reference-hint" class="text-white/45 mt-1">借用构图、光影与配色，不复制角色外观和服装。</div>
-        </div>
-
-        <div class="bar" id="bar"><i></i></div>
-        <div id="status" class="text-xs mt-2 min-h-[1rem]"></div>
-      </div>
-
-      <!-- 历史 -->
-      <div id="historyPanel" class="surface rounded-xl border border-ink-700 bg-ink-800/40 p-2.5 shrink-0">
-        <div class="flex items-center justify-between mb-1.5">
-          <div class="section-title">最近作品</div>
-          <span id="quotaNote" class="section-note">用量读取中…</span>
-        </div>
-        <div id="gallery" class="flex gap-2 overflow-x-auto scroll-thin pb-0.5 min-h-20"></div>
-        <div class="flex items-center justify-between gap-3 mt-2">
-          <span id="historyNote" class="text-[11px] text-white/40">历史由服务器保存</span>
-          <button id="historyMore" type="button" class="chip hidden text-xs px-2.5 py-1 border border-ink-600">查看更多</button>
-        </div>
-      </div>
-    </main>
-
-    <!-- 右: 参数 -->
-    <aside id="paramsPanel" class="surface hidden lg:flex w-full lg:w-72 lg:shrink-0 rounded-xl border border-ink-700 bg-ink-800/60 p-4 flex-col gap-5 overflow-y-auto scroll-thin lg:max-h-[calc(100vh-90px)] order-1 lg:order-3">
-      <!-- 隐藏原生 select: 值由卡片/宫格驱动, 提交逻辑沿用原 id -->
-      <select id="workflow" class="hidden"></select>
-      <select id="size" class="hidden"></select>
-      <div class="section-head"><div class="section-title">成像设置</div><span class="section-note">当前唯一工作流</span></div>
-      <div class="setting-group">
-        <div class="setting-label"><span>工作流</span><span id="wfCurrentLabel" class="setting-value">加载中…</span></div>
-      </div>
-      <div class="setting-group">
-        <div class="setting-label"><span>模式</span><span id="modeCurrentLabel" class="setting-value">文生图</span></div>
-        <div class="inline-flex rounded-lg border border-ink-600 overflow-hidden">
-          <button id="modeTxt" class="seg active px-3 py-1.5 text-sm">文生图</button>
-          <button id="modeImg" class="seg px-3 py-1.5 text-sm text-white/70">图生图</button>
-        </div>
-      </div>
-      <div class="setting-group">
-        <div class="setting-label"><span>精修</span><span class="section-note">脸 / 手 / NSFW / 眼睛</span></div>
-        <button id="detailerToggle" class="chip w-full text-left text-sm px-3 py-1.5 rounded-lg border border-ink-600 text-white/70 flex items-center justify-between">
-          <span id="detailerLabel">关</span>
-          <span class="mono text-xs text-white/40 shrink-0 ml-2">▾</span>
-        </button>
-        <div id="detailerMenu" class="hidden mt-1.5 flex flex-wrap gap-1.5"></div>
-      </div>
-      <div class="setting-group">
-        <div class="setting-label"><span>尺寸</span><span id="sizeOrientationLabel" class="setting-value">画幅</span></div>
-        <div id="sizePicker" class="relative">
-          <button id="sizeToggle" type="button" aria-expanded="false" aria-controls="sizeMenu"
-            class="chip w-full text-left px-3 py-2 rounded-lg border border-ink-600 text-white/75 flex items-center justify-between gap-3">
-            <span class="flex items-center gap-2.5 min-w-0">
-              <span id="sizeCurrentFrame" class="format-frame" style="width:12px;height:18px"></span>
-              <span class="min-w-0">
-                <span id="sizeLabel" class="text-sm block truncate">加载中…</span>
-                <span id="sizeMeta" class="mono text-[10px] text-white/35 block mt-0.5">画幅</span>
-              </span>
-            </span>
-            <span id="sizeChevron" class="mono text-xs text-white/40 shrink-0">▾</span>
-          </button>
-          <div id="sizeMenu" class="hidden lg:absolute z-30 lg:top-full lg:left-0 lg:right-0 mt-1.5 rounded-xl border border-ink-600 bg-ink-900 p-2.5 max-h-[55vh] overflow-y-auto scroll-thin">
-            <div class="flex items-end justify-between gap-2 mb-2">
-              <span class="mono text-[10px] uppercase tracking-wider text-white/45">标准画幅</span>
-              <span class="text-[10px] text-white/30">约 1MP · 推荐</span>
-            </div>
-            <div id="sizeStandardGrid" class="grid grid-cols-2 gap-1.5"></div>
-            <div id="sizeHighGroup" class="hidden mt-3 pt-2.5 border-t border-ink-700">
-              <div class="flex items-end justify-between gap-2 mb-2">
-                <span class="mono text-[10px] uppercase tracking-wider text-accent-pink">高分辨率</span>
-                <span class="text-[10px] text-white/35">更慢 · 显存压力高</span>
-              </div>
-              <div id="sizeHighGrid" class="grid grid-cols-2 gap-1.5"></div>
-            </div>
-          </div>
-        </div>
-      </div>
-      <div class="setting-group">
-        <div class="setting-label"><span>LoRA 组合</span><span id="loraCountLabel" class="setting-value">角色 0/3 · 风格不限</span></div>
-        <div class="lora-select-wrap">
-          <div class="flex items-center gap-2">
-            <span class="mono text-xs text-white/45 w-10 shrink-0">角色</span>
-            <button id="loraCharToggle" class="chip flex-1 text-left text-sm px-3 py-1.5 rounded-lg border border-ink-600 text-white/70 flex items-center justify-between min-w-0" aria-expanded="false">
-              <span id="loraCharLabel" class="truncate">未选择</span>
-              <span class="mono text-xs text-white/40 shrink-0 ml-2">▾</span>
-            </button>
-          </div>
-          <div id="loraCharMenu" class="hidden mt-1.5 flex flex-wrap gap-1.5"></div>
-        </div>
-        <div id="lora-char-strength-row" class="hidden" aria-hidden="true">
-          <span class="mono text-xs text-white/35 w-10 shrink-0">强度</span>
-          <input id="lora-char-strength" type="range" min="0" max="1" step="0.05" value="1" class="flex-1">
-          <span id="lora-char-strength-val" class="mono text-xs text-white/60 w-8 text-right">1.0</span>
-        </div>
-        <div class="lora-select-wrap mt-2.5">
-          <div class="flex items-center gap-2">
-            <span class="mono text-xs text-white/45 w-10 shrink-0">风格</span>
-            <button id="loraStyleToggle" class="chip flex-1 text-left text-sm px-3 py-1.5 rounded-lg border border-ink-600 text-white/70 flex items-center justify-between min-w-0" aria-expanded="false">
-              <span id="loraStyleLabel" class="truncate">风格 / 细节未选择</span>
-              <span class="mono text-xs text-white/40 shrink-0 ml-2">▾</span>
-            </button>
-          </div>
-          <div id="loraStyleMenu" class="hidden mt-1.5 flex flex-wrap gap-1.5"></div>
-        </div>
-        <div id="lora-style-strength-row" class="hidden" aria-hidden="true">
-          <span class="mono text-xs text-white/35 w-10 shrink-0">强度</span>
-          <input id="lora-style-strength" type="range" min="0" max="1" step="0.05" value="0.8" class="flex-1">
-          <span id="lora-style-strength-val" class="mono text-xs text-white/60 w-8 text-right">0.8</span>
-        </div>
-        <div id="lora-preview" class="mt-2 rounded-lg bg-ink-900 border border-ink-600 hidden">
-          <img id="lora-img" class="hidden" alt="">
-          <span id="lora-desc"></span>
-        </div>
-      </div>
-    </aside>
-    <div id="mobileTabs" aria-label="移动端工作区切换">
-      <button id="promptToggle" class="active" type="button">Prompt</button>
-      <button id="paramsToggle" type="button">参数</button>
-    </div>
-  </div>
+<div class="studio-workspace" id="workspace"><div class="studio-stage" id="stagePanel">
+<div class="stage-toolbar" id="stageToolbar">
+<div class="flex gap-1.5 hidden" id="canvasBadges">
+<span class="text-xs" id="badgeWf"></span>
+<span class="text-xs" id="badgeSize"></span>
 </div>
 
+<button class="quiet-button" id="recordInfo">作品参数 ↗</button></div>
+<div class="studio-media" id="canvasMedia">
+
+
+<span id="canvasPlaceholder"><span class="empty-symbol">＋</span><strong>下一张画，还在你的想象里。</strong><span>写下中文构思，可以先检查 Prompt，再生成画面。</span><button class="chip" data-open-editor="idea">写下第一个想法</button></span>
+<img alt="生成结果" aria-label="放大查看作品原图" class="hidden" id="img" role="button" tabindex="0"/>
+</div>
+<div hidden="" id="canvasAmbient"></div><div class="canvas-actions hidden" id="canvasActions">
+<a class="chip text-xs px-2.5 py-1.5 no-underline" download="" id="dl">下载原图</a>
+<button class="grad-btn text-xs px-2.5 py-1.5 font-medium" id="toDarkroom">继续创作</button>
+</div></div><div class="studio-dock"><div aria-live="polite" class="dock-status" role="status"><div class="bar" id="bar"><i></i></div><div class="text-xs mt-2 min-h-[1rem]" id="status"></div></div><div class="dock-row"><button class="dock-open" data-open-editor="idea"><span class="dock-pen">↗</span><span><small>下一张，想画什么？</small><strong id="draftSummary">写下中文构思，画面从这里开始。</strong></span><span class="dock-hint">展开编辑</span></button><button aria-label="成像设置" class="chip dock-settings" data-open-editor="settings">设置</button><button class="grad-btn" id="dockGo">生成画面</button></div></div></div>
+</div>
 <!-- ===================== 暗房 ===================== -->
-<div id="darkroom" class="min-h-screen flex-col" style="display:none">
-  <header class="ap-header px-4 sm:px-6 py-3 flex items-center gap-3 border-b border-ink-800">
-    <button id="drBack" class="chip text-sm px-3 py-1.5 rounded-lg border border-ink-600 text-white/70">返回工坊</button>
-    <div class="flex-1 min-w-0 flex items-center gap-2.5">
-      <span class="brand-mark"></span>
-      <div class="min-w-0">
-        <div class="brand-title text-base truncate">迭代暗房</div>
-        <div class="mono text-xs text-white/40 hidden sm:block tracking-wider">选择任意一版继续，保留每条修改分支</div>
-      </div>
-    </div>
-    <span class="mono text-xs text-white/40 hidden sm:inline" id="drMeta"></span>
-    <button id="drThemeToggle" class="chip theme-toggle text-sm px-3 py-1.5" type="button" aria-label="切换到纸本画室" aria-pressed="false"><span class="theme-track" aria-hidden="true"></span><span class="theme-label">夜间</span></button>
-    <button id="drAbandon" class="chip text-sm px-3 py-1.5 rounded-lg border border-ink-600 text-white/70">放弃</button>
-  </header>
+<div class="studio-view" id="darkroom" style="display:none">
+<header class="studio-header"><a aria-label="AirPaint 画室" class="studio-brand" href="#"><span aria-hidden="true" class="studio-mark">◎</span>airpaint<sup>STUDIO</sup></a><span class="studio-location">我的画室 / 本次迭代</span><nav aria-label="画室导航" class="studio-nav"><button class="chip" data-open-history="">所有作品</button><button class="chip text-sm px-3 py-1.5 rounded-lg border border-ink-600 text-white/70" id="drBack">返回画布</button><span class="mono text-xs text-white/40 hidden sm:inline" id="drMeta"></span><button aria-label="切换到纸本画室" aria-pressed="false" class="chip theme-toggle text-sm px-3 py-1.5" id="drThemeToggle" type="button"><span aria-hidden="true" class="theme-track"></span><span class="theme-label">夜间</span></button><button class="chip text-sm px-3 py-1.5 rounded-lg border border-ink-600 text-white/70" hidden="" id="drAbandon">结束本次查看</button></nav></header>
+<div class="studio-workspace" id="darkroomWorkspace">
+<main class="studio-stage" id="darkroomCenter">
+<div class="stage-toolbar"><span id="iterationCaption">本次迭代</span><button class="quiet-button" id="branchRecordInfo">作品参数 ↗</button></div><div class="studio-media" id="darkroomStage">
+<div class="media-ambient" hidden="" id="drAmbient"></div>
 
-  <div id="darkroomWorkspace" class="flex-1 flex flex-col lg:flex-row gap-4 p-4">
-    <main id="darkroomCenter" class="flex-1 flex flex-col gap-4 min-w-0">
-
-      <div id="darkroomStage" class="surface relative flex-1 rounded-xl overflow-hidden border border-ink-700 bg-ink-800/40 flex items-center justify-center min-h-[300px] lg:min-h-[400px]">
-        <div id="drAmbient" class="media-ambient"></div>
-        <div class="media-shade"></div>
-        <img id="dr-cur-img" alt="" class="max-w-full max-h-full object-contain hidden absolute inset-0 m-auto">
-        <div id="dr-start" class="w-full max-w-md p-4">
-          <div class="text-sm text-white/60 mb-3 text-center">先描述一张图，生成后即可在它基础上迭代</div>
-          <textarea id="dlg-prompt" rows="3" class="w-full bg-ink-900 border border-ink-600 rounded-lg text-sm p-3 resize-none"
-            placeholder="例：一个少女在海边，夕阳，微笑"></textarea>
-          <button id="dlg-start-btn" class="grad-btn w-full py-2.5 rounded-lg font-medium mt-3">开始迭代</button>
-        </div>
-        <div id="dlg-cur-info" class="absolute bottom-3 left-3 right-3 glass text-xs px-3 py-1.5 rounded-lg hidden max-h-20 overflow-auto scroll-thin"></div>
-      </div>
-
-      <div id="drControls" class="surface rounded-xl border border-ink-700 bg-ink-800/60 p-4 flex flex-col gap-3 hidden">
-        <div class="section-head"><div class="section-title">下一版想怎么画</div><span id="dlg-source-label" class="section-note">从当前图继续</span></div>
-        <textarea id="dlg-delta" rows="2" class="w-full bg-ink-900 border border-ink-600 rounded-lg text-sm p-3 resize-none"
-          placeholder="下一版的方向（可空）：尝试清晨光线 / 调整整体氛围；指定改动不保证生效"></textarea>
-
-        <div id="drActionRow" class="gap-3">
-          <div id="drModeToggle" class="inline-flex rounded-lg border border-ink-600 overflow-hidden shrink-0">
-            <button id="dlg-redo" class="seg px-4 py-2 text-sm text-white/70">换一版</button>
-            <button id="dlg-img2img" class="seg active px-4 py-2 text-sm">基于此图重绘</button>
-          </div>
-          <div id="dlg-strength-row" class="flex items-center gap-2 flex-1">
-            <span class="mono text-xs text-white/50 w-16 shrink-0 uppercase tracking-wider">重绘强度</span>
-            <input id="dlg-denoise" type="range" min="0.1" max="0.9" step="0.05" value="0.35" class="flex-1 accent-accent-pink">
-            <span id="dlg-denoise-val" class="mono text-xs text-accent-pink font-medium w-10 text-right">0.35</span>
-          </div>
-          <button id="dlg-go" class="grad-btn px-6 py-2.5 rounded-lg font-medium shrink-0">生成下一版</button>
-        </div>
-
-        <div id="dlg-image-options" class="flex flex-wrap gap-2 text-xs text-white/65">
-          <button type="button" class="chip border border-ink-600" data-denoise-target="dlg-denoise" data-denoise="0.35">低强度 0.35</button>
-          <button type="button" class="chip border border-ink-600" data-denoise-target="dlg-denoise" data-denoise="0.55">中强度 0.55</button>
-          <button type="button" class="chip border border-ink-600" data-denoise-target="dlg-denoise" data-denoise="0.75">高强度 0.75</button>
-          <label>画幅适配 <select id="dlg-fit" class="bg-ink-900 border border-ink-600 rounded p-1"><option value="preserve">保留全图</option><option value="crop">裁切填满</option></select></label>
-          <label id="dlg-crop-row" class="hidden">位置 <select id="dlg-crop" class="bg-ink-900 border border-ink-600 rounded p-1"><option value="center">居中</option><option value="top">靠上</option><option value="bottom">靠下</option><option value="left">靠左</option><option value="right">靠右</option></select></label>
-        </div>
-        <label class="text-xs text-white/60">种子 <select id="dlg-seed-strategy" class="bg-ink-900 border border-ink-600 rounded p-1 ml-1"><option value="inherit">继承源图 seed</option><option value="random">使用新 seed</option></select><span class="ml-2 text-white/40">尺寸继承所选源图；LoRA 在本链内固定</span></label>
-
-        <div class="flex items-center gap-2 pt-2 border-t border-ink-700">
-          <span class="mono text-xs text-white/50 uppercase tracking-wider shrink-0">精修</span>
-          <button id="dr-detailer-toggle" class="chip text-xs px-2.5 py-1 rounded-md border border-ink-600 text-white/70">关</button>
-          <div id="dr-detailer-chips" class="hidden flex-wrap gap-1.5"></div>
-        </div>
-
-        <div class="text-xs text-white/50 pt-2 border-t border-ink-700 leading-relaxed">
-          <span id="dr-desc-redo" class="hidden"><b class="text-white/70">换一版</b>：跟着文字改描述，重新画一张（不填文字则同描述换种子）。</span>
-          <span id="dr-desc-tweak"><b class="text-white/70">基于此图重绘</b>：以所选历史图片为起点整图重绘，适合允许细节变化的另一版。低强度可能改不动，高强度可能改变人物与构图；不保证只改指定内容，留空也会重新生成。</span>
-        </div>
-
-        <div class="bar" id="dlg-bar"><i></i></div>
-        <div id="dlg-status" class="text-xs min-h-[1rem]"></div>
-      </div>
-    </main>
-
-    <aside id="lineagePanel" class="surface w-full lg:w-64 lg:shrink-0 rounded-xl border border-ink-700 bg-ink-800/60 p-4 lg:max-h-[calc(100vh-120px)] lg:overflow-y-auto scroll-thin">
-      <div class="section-head"><div class="section-title">迭代脉络</div><span class="section-note">选择任意一版继续</span></div>
-      <div id="dlg-thumbs" class="flex lg:flex-col items-stretch gap-3 overflow-x-auto lg:overflow-visible scroll-thin pb-1"></div>
-    </aside>
-  </div>
+<img alt="" aria-label="放大查看当前版本" class="hidden" id="dr-cur-img" role="button" tabindex="0"/>
+<div class="w-full max-w-md p-4" id="dr-start">
+<div class="text-sm text-white/60 mb-3 text-center">先描述一张图，生成后即可在它基础上迭代</div>
+<textarea class="w-full bg-ink-900 border border-ink-600 rounded-lg text-sm p-3 resize-none" id="dlg-prompt" placeholder="例：一个少女在海边，夕阳，微笑" rows="3"></textarea>
+<button class="grad-btn w-full py-2.5 rounded-lg font-medium mt-3" id="dlg-start-btn">开始迭代</button>
 </div>
 
-<script>
+</div><div class="canvas-actions"><a class="chip" download="" id="branchDownload">下载原图</a><button class="chip" id="openBranchSecondary">修改这一版</button></div>
+
+<aside class="iteration-strip" id="lineagePanel">
+<div class="section-head"><div class="section-title">本次迭代</div><span class="section-note">选择源图，沿分支继续</span></div>
+<div class="iteration-thumbs" id="dlg-thumbs"></div>
+</aside></main>
+
+<div class="studio-dock"><div aria-live="polite" class="dock-status" role="status"><div class="bar" id="dlg-bar"><i></i></div><div class="text-xs min-h-[1rem]" id="dlg-status"></div></div><div class="dock-row"><button class="dock-open" id="openBranch"><span class="dock-pen">↗</span><span><small>沿着这张画，继续想。</small><strong id="branchSummary">选择本次迭代中的任意一版，再展开修改。</strong></span><span class="dock-hint">展开编辑</span></button><button class="grad-btn" id="branchDockGo">生成下一版</button></div></div></div>
+</div>
+
+<dialog aria-labelledby="editorSheetTitle" class="studio-sheet" id="editorSheet"><div class="sheet-heading"><h2 id="editorSheetTitle">从一个想法开始。</h2><button aria-label="关闭从一个想法开始。" class="sheet-close" data-close-sheet="editorSheet">×</button></div><div aria-label="编辑内容" class="studio-tabs" role="tablist"><button aria-controls="ideaEditorPane" aria-selected="true" data-editor-tab="idea" id="ideaEditorTab" role="tab">画面构思</button><button aria-controls="aiPanel" aria-selected="false" data-editor-tab="prompt" id="promptEditorTab" role="tab">Prompt</button><button aria-controls="paramsPanel" aria-selected="false" data-editor-tab="settings" id="settingsEditorTab" role="tab">成像设置</button></div><div class="sheet-content"><div aria-labelledby="ideaEditorTab" class="editor-pane" id="ideaEditorPane" role="tabpanel">
+
+<div class="flex flex-col sm:flex-row gap-3 sm:items-stretch">
+<div class="min-w-0 flex-1">
+<textarea aria-label="中文画面构思" class="w-full min-h-[62px] bg-transparent text-sm leading-relaxed resize-none outline-none border-0 p-0 placeholder:text-white/30" id="prompt" placeholder="你脑中的画面，是什么样的？写下人物、场景，或想保留的细节。" rows="2"></textarea>
+<div class="mt-2 flex flex-wrap items-center gap-2">
+<span class="mono text-[10px] text-white/45 uppercase tracking-wider">补全程度</span>
+<div aria-label="Prompt 补全程度" class="flex flex-wrap items-center gap-1" role="group">
+<button aria-pressed="true" class="completion-option chip active border border-ink-600" data-completion-level="auto" id="completionAuto" type="button">自动</button>
+<button aria-pressed="false" class="completion-option chip border border-ink-600 text-white/65" data-completion-level="faithful" id="completionFaithful" type="button">忠于描述</button>
+<button aria-pressed="false" class="completion-option chip border border-ink-600 text-white/65" data-completion-level="free" id="completionFree" type="button">自由补全</button>
+</div>
+<span class="text-[11px] text-white/40" id="completionHint">按已明确的画面信息决定补多少</span>
+</div>
+<div class="mt-2 flex items-center min-h-8">
+<div class="hidden items-center gap-2 min-w-0" id="ref-preview">
+<img alt="" class="h-8 w-8 object-cover rounded border border-ink-600 shrink-0" id="ref-thumb"/>
+<span class="text-xs text-white/60 truncate">已添加参考图</span>
+<button class="chip text-xs px-2 py-1 rounded border border-ink-600 text-white/70 shrink-0" id="ref-clear" type="button">移除</button>
+</div>
+<label class="inline-flex items-center justify-center rounded-md border border-dashed border-ink-600 text-white/60 hover:border-accent-pink hover:text-accent-pink transition-colors px-3 py-1.5 cursor-pointer" id="ref-dropzone" tabindex="0">
+<input accept="image/*" hidden="" id="ref-file" type="file"/>
+<span class="text-xs" id="ref-label-text">＋ 添加参考图</span>
+</label>
+</div>
+</div>
+
+</div>
+
+<div class="hidden mt-2 text-xs text-white/65" id="reference-options">
+<label>参考范围 <select class="bg-ink-900 border border-ink-600 rounded p-1.5 ml-1" id="reference-scope"><option value="composition_vibe">构图＋氛围</option><option value="composition">只参考构图</option><option value="full">完整参考</option></select></label>
+<div class="text-white/45 mt-1" id="reference-hint">借用构图、光影与配色，不复制角色外观和服装。</div>
+</div>
+
+
+</div><aside aria-labelledby="promptEditorTab" class="editor-pane" hidden="" id="aiPanel" role="tabpanel">
+<div class="sr-only"><div class="section-title">Prompt 检查</div><span class="section-note" id="promptNote">图片旁常驻</span></div>
+<div class="text-sm shrink-0" id="breakdown">
+<div class="hidden" id="conceptBlock">
+<div class="flex items-center justify-between gap-2 mb-2">
+<div class="mono text-[10px] text-accent-pink uppercase tracking-wider">中文构思（可编辑）</div>
+<span class="hidden text-[10px] text-amber-300" id="conceptDirtyNote">待重编译</span>
+</div>
+<textarea aria-label="中文构思" class="w-full rounded-lg border text-xs p-2.5 resize-y leading-relaxed" id="conceptEdit" placeholder="模型补全的画面构思会显示在这里" rows="4"></textarea>
+<div class="mt-2 flex justify-end">
+<button class="chip text-xs px-3 py-1.5 rounded-lg border border-ink-600 text-white/70" disabled="" id="conceptApply" type="button">按此构思重编译</button>
+</div>
+</div>
+<div id="breakdownRows"></div>
+</div>
+<div class="border-t border-ink-700 pt-3 flex flex-col flex-1 min-h-0">
+<div class="mono text-xs text-white/45 mb-2 shrink-0 uppercase tracking-wider">英文 Prompt（可编辑）</div>
+<textarea aria-label="英文 Prompt" class="w-full flex-1 min-h-[110px] bg-ink-900 border border-ink-600 rounded-lg text-xs p-2.5 resize-y font-mono leading-relaxed" id="promptEnEdit" placeholder="先点「先看 Prompt」，编译后的英文 Prompt 会出现在这里，可直接编辑" rows="5"></textarea>
+
+<div class="text-sm text-white/50 mt-1.5 shrink-0">可编辑 tag、自然语言、顺序或权重，再确认生成</div>
+</div>
+</aside><aside aria-labelledby="settingsEditorTab" class="editor-pane" hidden="" id="paramsPanel" role="tabpanel">
+<!-- 隐藏原生 select: 值由卡片/宫格驱动, 提交逻辑沿用原 id -->
+<select class="hidden" id="workflow"></select>
+<select class="hidden" id="size"></select>
+<div class="sr-only"><div class="section-title">成像设置</div><span class="section-note">当前唯一工作流</span></div>
+<div class="setting-group">
+<div class="setting-label"><span>工作流</span><span class="setting-value" id="wfCurrentLabel">加载中…</span></div>
+</div>
+<div class="setting-group">
+<div class="setting-label"><span>模式</span><span class="setting-value" id="modeCurrentLabel">文生图</span></div>
+<div class="inline-flex rounded-lg border border-ink-600 overflow-hidden">
+<button class="seg active px-3 py-1.5 text-sm" id="modeTxt">文生图</button>
+<button class="seg px-3 py-1.5 text-sm text-white/70" id="modeImg">图生图</button>
+</div>
+</div>
+<div class="setting-group">
+<div class="setting-label"><span>精修</span><span class="section-note">脸 / 手 / NSFW / 眼睛</span></div>
+<button class="chip w-full text-left text-sm px-3 py-1.5 rounded-lg border border-ink-600 text-white/70 flex items-center justify-between" id="detailerToggle">
+<span id="detailerLabel">关</span>
+<span class="mono text-xs text-white/40 shrink-0 ml-2">▾</span>
+</button>
+<div class="hidden mt-1.5 flex flex-wrap gap-1.5" id="detailerMenu"></div>
+</div>
+<div class="setting-group">
+<div class="setting-label"><span>尺寸</span><span class="setting-value" id="sizeOrientationLabel">画幅</span></div>
+<div class="relative" id="sizePicker">
+<button aria-controls="sizeMenu" aria-expanded="false" class="chip w-full text-left px-3 py-2 rounded-lg border border-ink-600 text-white/75 flex items-center justify-between gap-3" id="sizeToggle" type="button">
+<span class="flex items-center gap-2.5 min-w-0">
+<span class="format-frame" id="sizeCurrentFrame" style="width:12px;height:18px"></span>
+<span class="min-w-0">
+<span class="text-sm block truncate" id="sizeLabel">加载中…</span>
+<span class="mono text-[10px] text-white/35 block mt-0.5" id="sizeMeta">画幅</span>
+</span>
+</span>
+<span class="mono text-xs text-white/40 shrink-0" id="sizeChevron">▾</span>
+</button>
+<div class="hidden lg:absolute z-30 lg:top-full lg:left-0 lg:right-0 mt-1.5 rounded-xl border border-ink-600 bg-ink-900 p-2.5 max-h-[55vh] overflow-y-auto scroll-thin" id="sizeMenu">
+<div class="flex items-end justify-between gap-2 mb-2">
+<span class="mono text-[10px] uppercase tracking-wider text-white/45">标准画幅</span>
+<span class="text-[10px] text-white/30">约 1MP · 推荐</span>
+</div>
+<div class="grid grid-cols-2 gap-1.5" id="sizeStandardGrid"></div>
+<div class="hidden mt-3 pt-2.5 border-t border-ink-700" id="sizeHighGroup">
+<div class="flex items-end justify-between gap-2 mb-2">
+<span class="mono text-[10px] uppercase tracking-wider text-accent-pink">高分辨率</span>
+<span class="text-[10px] text-white/35">更慢 · 显存压力高</span>
+</div>
+<div class="grid grid-cols-2 gap-1.5" id="sizeHighGrid"></div>
+</div>
+</div>
+</div>
+</div>
+<div class="setting-group">
+<div class="setting-label"><span>LoRA 组合</span><span class="setting-value" id="loraCountLabel">角色 0/3 · 风格不限</span></div>
+<div class="lora-select-wrap">
+<div class="flex items-center gap-2">
+<span class="mono text-xs text-white/45 w-10 shrink-0">角色</span>
+<button aria-expanded="false" class="chip flex-1 text-left text-sm px-3 py-1.5 rounded-lg border border-ink-600 text-white/70 flex items-center justify-between min-w-0" id="loraCharToggle">
+<span class="truncate" id="loraCharLabel">未选择</span>
+<span class="mono text-xs text-white/40 shrink-0 ml-2">▾</span>
+</button>
+</div>
+<div class="hidden mt-1.5 flex flex-wrap gap-1.5" id="loraCharMenu"></div>
+</div>
+<div aria-hidden="true" class="hidden" id="lora-char-strength-row">
+<span class="mono text-xs text-white/35 w-10 shrink-0">强度</span>
+<input class="flex-1" id="lora-char-strength" max="1" min="0" step="0.05" type="range" value="1"/>
+<span class="mono text-xs text-white/60 w-8 text-right" id="lora-char-strength-val">1.0</span>
+</div>
+<div class="lora-select-wrap mt-2.5">
+<div class="flex items-center gap-2">
+<span class="mono text-xs text-white/45 w-10 shrink-0">风格</span>
+<button aria-expanded="false" class="chip flex-1 text-left text-sm px-3 py-1.5 rounded-lg border border-ink-600 text-white/70 flex items-center justify-between min-w-0" id="loraStyleToggle">
+<span class="truncate" id="loraStyleLabel">风格 / 细节未选择</span>
+<span class="mono text-xs text-white/40 shrink-0 ml-2">▾</span>
+</button>
+</div>
+<div class="hidden mt-1.5 flex flex-wrap gap-1.5" id="loraStyleMenu"></div>
+</div>
+<div aria-hidden="true" class="hidden" id="lora-style-strength-row">
+<span class="mono text-xs text-white/35 w-10 shrink-0">强度</span>
+<input class="flex-1" id="lora-style-strength" max="1" min="0" step="0.05" type="range" value="0.8"/>
+<span class="mono text-xs text-white/60 w-8 text-right" id="lora-style-strength-val">0.8</span>
+</div>
+<div class="mt-2 rounded-lg bg-ink-900 border border-ink-600 hidden" id="lora-preview">
+<img alt="" class="hidden" id="lora-img"/>
+<span id="lora-desc"></span>
+</div>
+</div>
+<div class="mt-3 hidden" id="denoise-row">
+<div aria-label="重绘强度预设" class="flex flex-wrap gap-1.5 mb-2">
+<button class="chip border border-ink-600" data-denoise="0.35" data-denoise-target="denoise" type="button">低强度 0.35</button>
+<button class="chip border border-ink-600" data-denoise="0.55" data-denoise-target="denoise" type="button">中强度 0.55</button>
+<button class="chip border border-ink-600" data-denoise="0.75" data-denoise-target="denoise" type="button">高强度 0.75</button>
+</div>
+<div class="mono text-xs text-white/50 mb-1 uppercase tracking-wider">整图重绘强度</div>
+<div class="flex items-center gap-2">
+<input class="flex-1 accent-accent-pink" id="denoise" max="0.9" min="0.1" step="0.05" type="range" value="0.35"/>
+<span class="mono text-xs text-accent-pink font-medium w-10 text-right" id="denoise-val">0.35</span>
+</div>
+<div class="text-xs text-white/55 mt-1.5">低强度通常更接近原图，也可能改不动；高强度可能连带改变人物、发型与构图。不是局部精准编辑。</div>
+<div class="text-xs text-white/55 mt-1.5">上传图片不会自动继承原图 LoRA；生成前请检查当前选择和最终 Prompt。</div>
+<div class="flex flex-wrap gap-2 mt-2 text-xs">
+<label>画幅适配 <select class="bg-ink-900 border border-ink-600 rounded p-1" id="image-fit"><option value="preserve">保留全图 · 扩边</option><option value="crop">填满画幅 · 裁切</option></select></label>
+<label class="hidden" id="image-crop-row">裁切位置 <select class="bg-ink-900 border border-ink-600 rounded p-1" id="image-crop"><option value="center">居中</option><option value="top">靠上</option><option value="bottom">靠下</option><option value="left">靠左</option><option value="right">靠右</option></select></label>
+</div>
+<div class="hidden text-xs text-amber-300 mt-2" id="source-aspect-note"></div>
+</div></aside></div><div class="editor-actions">
+<button class="chip text-sm px-4 py-2 rounded-lg border border-ink-600 text-white/80 sm:flex-1" id="preview">先看 Prompt</button>
+<button class="grad-btn text-sm px-5 py-2 rounded-lg font-medium sm:flex-1" id="go">生成画面</button>
+</div><div class="editor-confirm-actions"><div class="flex gap-2 mt-2 shrink-0 hidden" id="editActions">
+<button class="chip text-xs px-3 py-2 rounded-lg border border-ink-600 text-white/70 hidden" id="reroll">换个构思</button>
+<button class="chip text-xs px-3 py-2 rounded-lg border border-ink-600 text-white/50" id="editCancel">取消</button>
+<button class="grad-btn text-xs px-4 py-2 rounded-lg font-medium ml-auto" id="confirm">确认生成</button>
+</div></div><div class="sheet-status" hidden="" id="editorStatus" role="status"></div></dialog><dialog aria-labelledby="historySheetTitle" class="studio-sheet" id="historySheet"><div class="sheet-heading"><h2 id="historySheetTitle">所有作品</h2><button aria-label="关闭所有作品" class="sheet-close" data-close-sheet="historySheet">×</button></div><div class="sheet-content"><div class="" id="historyPanel">
+<div class="flex items-center justify-between mb-1.5">
+<div class="section-title">作品与任务</div>
+<span class="section-note" id="quotaNote">用量读取中…</span>
+</div>
+<div class="flex gap-2 overflow-x-auto scroll-thin pb-0.5 min-h-20" id="gallery"></div>
+<div class="flex items-center justify-between gap-3 mt-2">
+<span class="text-[11px] text-white/40" id="historyNote">历史由服务器保存</span>
+<button class="chip hidden text-xs px-2.5 py-1 border border-ink-600" id="historyMore" type="button">查看更多</button>
+</div>
+</div></div></dialog><dialog aria-labelledby="helpSheetTitle" class="studio-sheet" id="helpSheet"><div class="sheet-heading"><h2 id="helpSheetTitle">画室使用说明</h2><button aria-label="关闭画室使用说明" class="sheet-close" data-close-sheet="helpSheet">×</button></div><div class="sheet-content"><div class="help-content" id="panel">
+<div class="max-w-3xl mx-auto p-4">
+<div class="flex gap-4 mb-3 border-b border-ink-700">
+<button class="tab-btn active text-sm pb-2 border-b-2 border-transparent" data-tab="news">更新公告</button>
+<button class="tab-btn text-sm pb-2 text-white/50 border-b-2 border-transparent" data-tab="guide">教程</button>
+</div>
+<div class="tab-pane active space-y-3 text-sm" id="pane-news">
+<div><span class="text-white/40 text-xs">2026-09-08</span><span class="text-xs px-1.5 py-0.5 rounded bg-accent-pink/20 text-accent-pink ml-1">封版</span><b class="ml-1">历史与任务可恢复</b><div class="text-white/55 text-xs mt-0.5">任务、参数、种子和迭代分支由服务器保存。刷新或重新登录后仍能查看作品；连接中断时只恢复查询，不会悄悄重复提交。</div></div>
+<div><span class="text-white/40 text-xs">2026-09-08</span><b class="ml-2">整图重绘边界</b><div class="text-white/55 text-xs mt-0.5">图生图和暗房重绘会重新采样整张图：低强度可能改不动，高强度可能连带改变人物、发型与构图，不属于局部精准编辑。</div></div>
+<div><span class="text-white/40 text-xs">2026-08-29</span><b class="ml-2">LoRA 叠加栈</b><div class="text-white/55 text-xs mt-0.5">角色最多三个语义 Profile；多形态可同时选择，同一权重文件只加载一次。请写清多个主体的形态、位置与互动。风格与细节不设数量硬上限。</div></div>
+</div>
+<div class="tab-pane text-sm leading-relaxed space-y-4 text-white/75" id="pane-guide">
+<div><h3 class="text-white font-medium mb-1">基本用法</h3>
+<p class="text-white/55 text-xs">用中文描述想画的画面，点「生成」即可。想先看 AI 怎么构思，点「先看 Prompt」——可检查并修改中文构思，也能继续编辑最终英文 Prompt。</p></div>
+<div><h3 class="text-white font-medium mb-1">快速 / 精修 / 图生图</h3>
+<p class="text-white/55 text-xs"><b class="text-white/75">文生图</b> 可选参考构图与氛围；<b class="text-white/75">图生图</b> 结合原图与 Prompt 整图重绘，适合允许细节变化的另一版。可写重绘方向，并在生成前检查 AI 构思和最终 Prompt。低强度通常更接近原图，也可能改不动；高强度可能连带改变人物、发型与构图。不保证指定改动成功或其他内容不变。上传图片不会自动继承原图 LoRA。</p></div>
+<div><h3 class="text-white font-medium mb-1">LoRA 是什么</h3>
+<p class="text-white/55 text-xs">叠在模型上的角色或画风资产。角色最多三个语义 Profile；多形态可同时选择；风格与细节不设数量硬上限。每个 Asset 可在 <b class="text-white/75">0~2</b> 内调节强度，同一物理文件只加载一次。不选就是原生模型。</p></div>
+<div><h3 class="text-white font-medium mb-1">参考图（非图生图时）</h3>
+<p class="text-white/55 text-xs">可选择只借<b class="text-white/75">构图</b>、借<b class="text-white/75">构图＋氛围</b>，或参考<b class="text-white/75">完整可见信息</b>。文字中的明确要求与 LoRA 身份优先；参考范围是引导，不保证像素或语义完全复刻。</p></div>
+<div><h3 class="text-white font-medium mb-1">继续迭代</h3>
+<p class="text-white/55 text-xs">点击「继续创作」，进入本次迭代后可以：<b class="text-white/75">换一版</b>（按 Prompt 重新文生图，默认换种子，不以原图像素为起点）；<b class="text-white/75">基于此图重绘</b>（以所选历史图片为起点整图重绘，默认继承尺寸、种子与 LoRA）。文字留空也会重新生成，不是原图直出；指定改动可能不生效，人物与构图也可能变化。下方的「本次迭代」保留源图与各条分支。</p></div>
+</div>
+</div>
+</div></div></dialog><div aria-label="移动端工作区切换" hidden="" id="mobileTabs">
+<button class="active" id="promptToggle" type="button">Prompt</button>
+<button id="paramsToggle" type="button">参数</button>
+</div><dialog aria-labelledby="branchSheetTitle" class="studio-sheet" id="branchSheet"><div class="sheet-heading"><h2 id="branchSheetTitle">下一版想怎么画？</h2><button aria-label="关闭下一版想怎么画？" class="sheet-close" data-close-sheet="branchSheet">×</button></div><div class="sheet-content"><div class="hidden" id="drControls">
+<div class="section-head"><div class="section-title">下一版想怎么画</div><span class="section-note" id="dlg-source-label">从当前图继续</span></div>
+<textarea class="w-full bg-ink-900 border border-ink-600 rounded-lg text-sm p-3 resize-none" id="dlg-delta" placeholder="下一版的方向（可空）：尝试清晨光线 / 调整整体氛围；指定改动不保证生效" rows="2"></textarea>
+<div class="gap-3" id="drActionRow">
+<div class="inline-flex rounded-lg border border-ink-600 overflow-hidden shrink-0" id="drModeToggle">
+<button class="seg px-4 py-2 text-sm text-white/70" id="dlg-redo">换一版</button>
+<button class="seg active px-4 py-2 text-sm" id="dlg-img2img">基于此图重绘</button>
+</div>
+
+
+</div><details class="advanced-branch"><summary>重绘、种子与精修设置</summary><div class="flex items-center gap-2 flex-1" id="dlg-strength-row">
+<span class="mono text-xs text-white/50 w-16 shrink-0 uppercase tracking-wider">重绘强度</span>
+<input class="flex-1 accent-accent-pink" id="dlg-denoise" max="0.9" min="0.1" step="0.05" type="range" value="0.35"/>
+<span class="mono text-xs text-accent-pink font-medium w-10 text-right" id="dlg-denoise-val">0.35</span>
+</div><div class="flex flex-wrap gap-2 text-xs text-white/65" id="dlg-image-options">
+<button class="chip border border-ink-600" data-denoise="0.35" data-denoise-target="dlg-denoise" type="button">低强度 0.35</button>
+<button class="chip border border-ink-600" data-denoise="0.55" data-denoise-target="dlg-denoise" type="button">中强度 0.55</button>
+<button class="chip border border-ink-600" data-denoise="0.75" data-denoise-target="dlg-denoise" type="button">高强度 0.75</button>
+<label>画幅适配 <select class="bg-ink-900 border border-ink-600 rounded p-1" id="dlg-fit"><option value="preserve">保留全图</option><option value="crop">裁切填满</option></select></label>
+<label class="hidden" id="dlg-crop-row">位置 <select class="bg-ink-900 border border-ink-600 rounded p-1" id="dlg-crop"><option value="center">居中</option><option value="top">靠上</option><option value="bottom">靠下</option><option value="left">靠左</option><option value="right">靠右</option></select></label>
+</div><label class="text-xs text-white/60">种子 <select class="bg-ink-900 border border-ink-600 rounded p-1 ml-1" id="dlg-seed-strategy"><option value="inherit">继承源图 seed</option><option value="random">使用新 seed</option></select><span class="ml-2 text-white/40">尺寸继承所选源图；LoRA 在本链内固定</span></label><div class="flex items-center gap-2 pt-2 border-t border-ink-700">
+<span class="mono text-xs text-white/50 uppercase tracking-wider shrink-0">精修</span>
+<button class="chip text-xs px-2.5 py-1 rounded-md border border-ink-600 text-white/70" id="dr-detailer-toggle">关</button>
+<div class="hidden flex-wrap gap-1.5" id="dr-detailer-chips"></div>
+</div></details>
+
+
+
+<div class="text-xs text-white/50 pt-2 border-t border-ink-700 leading-relaxed">
+<span class="hidden" id="dr-desc-redo"><b class="text-white/70">换一版</b>：跟着文字改描述，重新画一张（不填文字则同描述换种子）。</span>
+<span id="dr-desc-tweak"><b class="text-white/70">基于此图重绘</b>：以所选历史图片为起点整图重绘，适合允许细节变化的另一版。低强度可能改不动，高强度可能改变人物与构图；不保证只改指定内容，留空也会重新生成。</span>
+</div>
+
+
+</div></div><div class="editor-actions"><button class="grad-btn px-6 py-2.5 rounded-lg font-medium shrink-0" id="dlg-go">生成下一版</button></div><div class="sheet-status" hidden="" id="branchEditorStatus" role="status"></div></dialog><dialog aria-labelledby="recordSheetTitle" class="studio-sheet" id="recordSheet"><div class="sheet-heading"><h2 id="recordSheetTitle">这张画的记录</h2><button aria-label="关闭这张画的记录" class="sheet-close" data-close-sheet="recordSheet">×</button></div><div class="sheet-content"><dl class="record-fields" id="recordFields"></dl><details><summary>查看原始 Prompt</summary><pre id="recordPrompt"></pre></details><button class="chip" id="reuseRecordedPrompt">用这段描述开始新的构思</button><p class="field-note" id="reuseNote">会载入中文描述；在成像设置中检查当前 LoRA 和画幅，再重新编译。</p><div class="absolute bottom-3 left-3 right-3 glass text-xs px-3 py-1.5 rounded-lg hidden max-h-20 overflow-auto scroll-thin" hidden="" id="dlg-cur-info"></div></div></dialog><dialog aria-labelledby="zoomSheetTitle" class="zoom-sheet" id="zoomSheet"><div class="sheet-heading"><h2 id="zoomSheetTitle">查看原图</h2><button aria-label="关闭查看原图" class="sheet-close" data-close-sheet="zoomSheet">×</button></div><div class="sheet-content"><img alt="作品原图" id="zoomImage"/></div></dialog><script>
 const $ = id => document.getElementById(id);
 const API = ['127.0.0.1', 'localhost'].includes(location.hostname)
   ? location.origin
@@ -824,16 +365,16 @@ function setTheme(theme, remember = true) {
     const label = button.querySelector('.theme-label');
     if (label) label.textContent = next === 'paper' ? '日间' : '夜间';
     button.setAttribute('aria-pressed', String(next === 'paper'));
-    button.setAttribute('aria-label', next === 'paper' ? '切换到石墨暗房' : '切换到纸本画室');
-    button.title = next === 'paper' ? '当前：纸本画室' : '当前：石墨暗房';
+    button.setAttribute('aria-label', next === 'paper' ? '切换到夜间主题' : '切换到日间主题');
+    button.title = next === 'paper' ? '当前：日间主题' : '当前：夜间主题';
   });
   if (remember) { try { localStorage.setItem(THEME_KEY, next); } catch (e) {} }
 }
 function toggleTheme() { setTheme(document.body.dataset.theme === 'paper' ? 'graphite' : 'paper'); }
 $('themeToggle').onclick = toggleTheme;
 $('drThemeToggle').onclick = toggleTheme;
-let storedTheme = 'graphite';
-try { storedTheme = localStorage.getItem(THEME_KEY) || 'graphite'; } catch (e) {}
+let storedTheme = 'paper';
+try { storedTheme = localStorage.getItem(THEME_KEY) || 'paper'; } catch (e) {}
 setTheme(storedTheme, false);
 
 function animateIn(elements) {
@@ -843,21 +384,18 @@ function animateIn(elements) {
 }
 function setWorkbenchView(view, animate = true) {
   $('app').dataset.view = view;
-  if ($('promptNote')) $('promptNote').textContent = view === 'review' ? '生成前确认' : '图片旁常驻';
+  if ($('promptNote')) $('promptNote').textContent = view === 'review' ? '生成前确认' : '当前草稿';
+  if (view === 'review') openEditor('prompt');
+  if (view === 'generating') closeSheet('editorSheet');
   if (animate) {
     if (view === 'review') animateIn($('aiPanel'));
     if (view === 'result') animateIn([$('aiPanel'), $('stagePanel'), $('historyPanel')]);
   }
 }
-function setMobilePanel(panel) {
-  const next = panel === 'settings' ? 'settings' : 'prompt';
-  $('app').dataset.mobilePanel = next;
-  $('promptToggle').classList.toggle('active', next === 'prompt');
-  $('paramsToggle').classList.toggle('active', next === 'settings');
-  animateIn(next === 'prompt' ? $('aiPanel') : $('paramsPanel'));
-}
+function setMobilePanel(panel) { openEditor(panel === 'settings' ? 'settings' : 'prompt'); }
 
 function swapPrimaryView(from, to) {
+  closeSheet('editorSheet'); closeSheet('branchSheet');
   if (reducedMotion || !window.gsap) { from.style.display = 'none'; to.style.display = 'flex'; return; }
   window.gsap.to(from, { autoAlpha:0, y:-6, duration:.16, ease:'power1.out', onComplete:() => {
     from.style.display = 'none'; from.style.opacity = ''; from.style.visibility = ''; from.style.transform = '';
@@ -888,6 +426,7 @@ async function enterApp(inviteCode = '', silent = false) {
   }
 }
 function showLogin(err) {
+  document.querySelectorAll('dialog[open]').forEach(d => d.close());
   $('login').style.display = 'flex';
   $('app').style.display = 'none';
   $('darkroom').style.display = 'none';
@@ -911,7 +450,7 @@ $('logoutBtn').onclick = async () => {
 };
 
 // ---------------- 公告/教程 ----------------
-$('navBtn').onclick = () => $('panel').classList.toggle('open');
+$('navBtn').onclick = () => openSheet('helpSheet');
 document.querySelectorAll('.tab-btn').forEach(t => t.onclick = () => {
   document.querySelectorAll('.tab-btn').forEach(x => { x.classList.remove('active'); x.classList.add('text-white/50'); });
   t.classList.add('active'); t.classList.remove('text-white/50');
@@ -1092,7 +631,7 @@ function updateImg2ImgUI() {
   $('ref-label-text').textContent = i2i ? '上传重绘原图' : '＋ 添加参考图';
   $('prompt').placeholder = i2i
     ? '可写重绘方向，例如：尝试清晨光线；留空也会重新生成，不保证人物与构图不变'
-    : '描述你想画的… 例：一个白发蓝眼睛的猫耳少女，穿着白色连衣裙，站在樱花树下，微笑';
+    : '你脑中的画面，是什么样的？写下人物、场景，或想保留的细节。';
   updateReferenceUI();
 }
 
@@ -1497,7 +1036,7 @@ document.querySelectorAll('[data-denoise-target]').forEach(button => {
 // ---------------- 翻译 / 出图 ----------------
 let polling = null;
 let actionBusy = false;
-const ACTION_BTNS = ['go','preview','confirm','reroll','conceptApply','completionAuto','completionFaithful','completionFree'];
+const ACTION_BTNS = ['dockGo','go','preview','confirm','reroll','conceptApply','completionAuto','completionFaithful','completionFree'];
 function setBusy(b) {
   actionBusy = b;
   ACTION_BTNS.forEach(id => { const el=$(id); if(el) el.disabled=b; });
@@ -1574,6 +1113,7 @@ async function recoverPendingRequest() {
   try {
     const job = await api('/api/requests/' + encodeURIComponent(marker.id));
     clearPendingRequest(marker.id);
+    viewedJob = job;
     currentJobId = job.id;
     currentHistorySessionId = job.session_id || null;
     if (job.status === 'done' && job.image) {
@@ -1683,7 +1223,7 @@ $('conceptEdit').addEventListener('input', () => {
 function setCanvasImage(src) {
   if (src) {
     const image = $('img');
-    const requestedSize = $('size').value || '';
+    const requestedSize = viewedJob?.width && viewedJob?.height ? `${viewedJob.width}x${viewedJob.height}` : '';
     image.onload = () => {
       const actualSize = `${image.naturalWidth}x${image.naturalHeight}`;
       $('badgeSize').textContent = actualSize;
@@ -1695,7 +1235,7 @@ function setCanvasImage(src) {
     $('canvasAmbient').style.backgroundImage = `url("${src}")`;
     $('canvasPlaceholder').classList.add('hidden');
     $('canvasBadges').classList.remove('hidden'); $('canvasActions').classList.remove('hidden');
-    const w = currentWf(); if (w) $('badgeWf').textContent = w.label;
+    $('badgeWf').textContent = viewedJob?.workflow || '';
     $('badgeSize').textContent = requestedSize;
     $('app').dataset.hasResult = 'true';
   } else {
@@ -1710,7 +1250,6 @@ async function submitJob(promptEn, promptRaw, translation = null) {
   if (!workflows.length) await loadWorkflows();
   if (!workflows.length) throw new Error('未加载到工作流，请检查邀请码是否有效');
   const job = await postGeneration('/api/jobs', jobsBody(promptEn, promptRaw, translation), 'workshop');
-  currentHistorySessionId = null;
   if ($('app').dataset.hasResult !== 'true') setCanvasImage(null);
   setWorkbenchView('generating', false);
   $('status').textContent = '已提交，排队中…'; $('status').className = '';
@@ -1811,7 +1350,7 @@ $('confirm').onclick = async () => {
   }
   const stale = translationStaleReasons();
   if (stale.length) {
-    $('status').textContent = `${stale.join('、')}已变化，请先点「先看构思」重新编译`;
+    $('status').textContent = `${stale.join('、')}已变化，请先点「先看 Prompt」重新编译`;
     $('status').className = 'text-amber-300';
     return;
   }
@@ -1846,6 +1385,7 @@ function startPolling(id) {
 }
 function generationStatusText(job) {
   const labels = {
+    queued:'排队中', done:'已完成', failed:'生成失败',
     waiting_for_comfy:'等待 ComfyUI 启动或恢复连接…',
     dispatching:'正在提交到 ComfyUI…',
     submitted:'已提交，等待 GPU 开始…',
@@ -1867,7 +1407,9 @@ async function poll(id) {
     }
     else if (j.status === 'done') {
       stopPolling();
+      viewedJob = j;
       currentJobId = id;
+      currentHistorySessionId = (j.session_ids || [])[0] || j.session_id || null;
       const src = API + j.image;
       $('dl').href = src;
       setCanvasImage(src);
@@ -1876,7 +1418,7 @@ async function poll(id) {
       done('完成 · seed ' + j.seed, false);
     } else if (j.status === 'result_ready' || j.status === 'reconcile_pending') {
       stopPolling();
-      $('status').textContent = generationStatusText(j) + '；可在最近作品中点按重新核对';
+      $('status').textContent = generationStatusText(j) + '；可在所有作品中点按重新核对';
       $('status').className = 'text-amber-300';
       $('bar').style.display = 'none'; setBusy(false);
       await loadHistory(true);
@@ -1922,25 +1464,17 @@ function historyStateLabel(job) {
   return '生成中';
 }
 function restoreHistoryJob(job) {
+  viewedJob = job;
   currentJobId = job.id;
   currentHistorySessionId = (job.session_ids || [])[0] || job.session_id || null;
-  if (job.prompt_raw) $('prompt').value = job.prompt_raw;
-  if (job.prompt_en) $('promptEnEdit').value = job.prompt_en;
-  const recordedSize = job.width && job.height ? `${job.width}x${job.height}` : '';
-  if (recordedSize && Array.from($('size').options).some(option => option.value === recordedSize)) selectSize(recordedSize);
-  if (job.concept) {
-    $('conceptEdit').value = job.concept;
-    $('conceptEdit').dataset.compiledValue = job.concept;
-    $('conceptBlock').classList.remove('hidden');
-    setConceptDirty(false);
-  }
   if (job.image) {
-    const src = API + job.image;
-    const bindingLabel = (job.lora_bindings || []).map(binding =>
-      binding.key + (binding.profile ? ':' + binding.profile : '')).join(', ') || '无 LoRA';
-    $('dl').href = src; setCanvasImage(src); setWorkbenchView('result');
-    $('status').textContent = `历史作品 · ${job.generation_mode || 'txt2img'} · ${job.width || '?'}×${job.height || '?'} · seed ${job.seed} · ${bindingLabel}`;
-    $('status').className = '';
+    $('dl').href = API + job.image;
+    setCanvasImage(API + job.image);
+    $('badgeWf').textContent = job.workflow || '';
+    setWorkbenchView('result', false);
+    if (!polling && !actionBusy && $('status').className === 'text-green-400') {
+      $('status').textContent = ''; $('status').className = '';
+    }
   }
 }
 async function recoverHistoryJob(job) {
@@ -1974,9 +1508,11 @@ function renderHistory() {
     const state = document.createElement('span');
     state.className = 'history-state'; state.textContent = historyStateLabel(job);
     card.appendChild(state);
-    card.onclick = () => job.status === 'done' ? restoreHistoryJob(job)
-      : ['result_ready','reconcile_pending','result_pending','submitted','running','waiting_for_comfy'].includes(job.status)
-        ? recoverHistoryJob(job) : undefined;
+    card.onclick = () => {
+      if (job.status === 'done') { closeSheet('historySheet'); if ($('darkroom').style.display !== 'none') showWorkshop(); restoreHistoryJob(job); }
+      else if (['result_ready','reconcile_pending','result_pending','submitted','running','waiting_for_comfy'].includes(job.status)) recoverHistoryJob(job);
+      else showRecord(job);
+    };
     gallery.appendChild(card);
   });
 }
@@ -2000,7 +1536,6 @@ async function loadHistory(reset = false) {
     if (reset && !polling) {
       const active = historyItems.find(job => ['queued','waiting_for_comfy','dispatching','submitted','running','result_pending'].includes(job.status));
       if (active) {
-        currentJobId = active.id;
         if ($('app').dataset.hasResult !== 'true') setCanvasImage(null);
         setWorkbenchView('generating', false);
         $('bar').style.display = 'block';
@@ -2040,6 +1575,7 @@ function showDarkroom(prefillPrompt) {
 }
 function showWorkshop() {
   clearInterval(dlgPolling);
+  loadHistory(true);
   swapPrimaryView($('darkroom'), $('app')); window.scrollTo(0,0);
 }
 $('toDarkroom').onclick = async () => {
@@ -2063,7 +1599,7 @@ $('toDarkroom').onclick = async () => {
     $('dlg-thumbs').innerHTML = ''; $('dlg-delta').value = ''; $('dlg-status').textContent = '';
     swapPrimaryView($('app'), $('darkroom')); window.scrollTo(0,0);
     pollDialog();
-  } catch (e) { done('无法进入暗房：' + e.message, true); }
+  } catch (e) { done('无法继续创作：' + e.message, true); }
 };
 $('drBack').onclick = showWorkshop;
 $('drAbandon').onclick = showWorkshop;
@@ -2114,6 +1650,7 @@ function dlgBusy(on, msg) {
   dlgIsBusy = on;
   $('dlg-bar').style.display = on ? 'block' : 'none';
   $('dlg-start-btn').disabled = on;
+  $('branchDockGo').disabled = on;
   $('dlg-go').disabled = on || !dlgTurns.some(t => t.job_id === dlgSourceJobId && t.status === 'done');
   if (msg !== undefined) { $('dlg-status').textContent = msg; $('dlg-status').className = ''; }
 }
@@ -2139,6 +1676,7 @@ $('dlg-go').onclick = async () => {
       body.fit_mode = $('dlg-fit').value; body.crop_position = $('dlg-crop').value;
     }
     const result = await dlgTurn(body);
+    closeSheet('branchSheet');
     dlgSourceJobId = result.job_id;
     $('dlg-delta').value = '';
     pollDialog();
@@ -2156,7 +1694,7 @@ function pollDialog() {
       const finishedMessage = latest?.status === 'failed'
         ? '⚠ ' + (latest.error_message || latest.error || '生成失败')
         : ['result_ready','reconcile_pending'].includes(latest?.status)
-          ? generationStatusText(latest) + '，可在右侧重新核对'
+          ? generationStatusText(latest) + '，可在本次迭代中重新核对'
           : '';
       dlgBusy(!allDone, allDone ? finishedMessage : generationStatusText(latest || {}));
       if (allDone) clearInterval(dlgPolling);
@@ -2191,6 +1729,10 @@ function renderDialog(turns) {
   $('drMeta').textContent = turns.length + ' 个版本';
   $('dlg-source-label').textContent = '从第 ' + selectedIndex + ' 版继续';
   const visible = selected.image ? selected : turns.find(t => t.job_id === selected.parent_job_id);
+  viewedTurn = visible?.image ? visible : null;
+  $('iterationCaption').textContent = visible?.image ? (selected.image ? '第 ' + selectedIndex + ' 版' : '源图预览 · 新版尚未完成') : generationStatusText(selected);
+  $('branchDownload').hidden = !visible?.image;
+  if (visible?.image) $('branchDownload').href = API + visible.image;
   $('dlg-cur-info').classList.remove('hidden');
   if (visible?.image) {
     const src = API + visible.image;
@@ -2230,8 +1772,99 @@ function renderDialog(turns) {
 }
 
 // ---------------- 启动 ----------------
+// Exhibit navigation. Recorded artwork and the next request's draft are separate.
+let viewedJob = null;
+let viewedTurn = null;
+let recordSelection = null;
+function openSheet(id) { if (!$(id).open) $(id).showModal(); }
+function closeSheet(id) { if ($(id).open) $(id).close(); }
+function openEditor(tab = 'idea') {
+  const panes = { idea:'ideaEditorPane', prompt:'aiPanel', settings:'paramsPanel' };
+  if (!panes[tab]) tab = 'idea';
+  Object.entries(panes).forEach(([key,id]) => { $(id).hidden = key !== tab; });
+  document.querySelectorAll('[data-editor-tab]').forEach(button => {
+    const selected = button.dataset.editorTab === tab;
+    button.setAttribute('aria-selected', String(selected)); button.tabIndex = selected ? 0 : -1;
+  });
+  $('editorSheet').dataset.tab = tab;
+  $('editorSheet').querySelector('.sheet-content').scrollTop = 0;
+  openSheet('editorSheet');
+}
+document.querySelectorAll('[data-open-editor]').forEach(b => b.onclick = () => openEditor(b.dataset.openEditor));
+document.querySelectorAll('[data-editor-tab]').forEach(b => {
+  b.onclick = () => openEditor(b.dataset.editorTab);
+  b.onkeydown = e => {
+    if (!['ArrowLeft','ArrowRight','Home','End'].includes(e.key)) return;
+    e.preventDefault(); const tabs = ['idea','prompt','settings'];
+    const index = e.key === 'Home' ? 0 : e.key === 'End' ? 2 : (tabs.indexOf(b.dataset.editorTab) + (e.key === 'ArrowRight' ? 1 : 2)) % 3;
+    openEditor(tabs[index]); $(tabs[index]+'EditorTab').focus();
+  };
+});
+document.querySelectorAll('[data-close-sheet]').forEach(b => b.onclick = () => closeSheet(b.dataset.closeSheet));
+document.querySelectorAll('dialog').forEach(d => {
+  d.addEventListener('click', e => {
+    if (e.target !== d) return;
+    const r = d.getBoundingClientRect();
+    if (e.clientX < r.left || e.clientX > r.right || e.clientY < r.top || e.clientY > r.bottom) d.close();
+  });
+});
+document.querySelectorAll('[data-open-history]').forEach(b => b.onclick = () => { openSheet('historySheet'); loadHistory(true); });
+function updateDraftSummary() { $('draftSummary').textContent = $('prompt').value.trim() || '写下中文构思，画面从这里开始。'; }
+$('prompt').addEventListener('input', updateDraftSummary);
+$('dockGo').onclick = () => {
+  if (!$('prompt').value.trim() && !refImage) { openEditor('idea'); $('prompt').focus(); return; }
+  $('go').click();
+};
+$('newDraft').onclick = () => {
+  // Opening the existing draft never destroys unsent input or in-flight work.
+  openEditor('idea'); $('prompt').focus();
+};
+$('openBranch').onclick = $('openBranchSecondary').onclick = () => openSheet('branchSheet');
+$('branchDockGo').onclick = () => {
+  if ($('dlg-go').disabled) { openSheet('branchSheet'); return; }
+  $('dlg-go').click();
+};
+$('dlg-delta').addEventListener('input', () => { $('branchSummary').textContent = $('dlg-delta').value.trim() || '选择本次迭代中的任意一版，再展开修改。'; });
+function showRecord(job) {
+  if (!job) return;
+  recordSelection = job;
+  const bindings = (job.lora_bindings || []).map(b => b.key + (b.profile ? ':' + b.profile : '')).join(', ');
+  const fields = [ ['任务',job.id || job.job_id], ['状态',job.status === 'done' ? '已完成' : job.status === 'failed' ? '生成失败' : generationStatusText(job)], ['seed',job.seed],
+    ['尺寸',job.width && job.height ? job.width+' × '+job.height : null], ['工作流',job.workflow],
+    ['生成方式',job.generation_mode], ['LoRA',bindings || '无'], ['源图任务',job.parent_job_id || '无'],
+    ['失败原因',job.error_message || job.error] ];
+  $('recordFields').innerHTML = fields.filter(([,v]) => v !== undefined && v !== null && v !== '').map(([k,v]) => '<dt>'+escapeHtml(k)+'</dt><dd>'+escapeHtml(v)+'</dd>').join('');
+  $('recordPrompt').textContent = job.prompt_en || '没有已保存的 Prompt';
+  $('reuseRecordedPrompt').hidden = !job.prompt_raw;
+  $('reuseNote').hidden = !job.prompt_raw;
+  openSheet('recordSheet');
+}
+$('recordInfo').onclick = () => showRecord(viewedJob);
+$('branchRecordInfo').onclick = () => showRecord(viewedTurn);
+$('reuseRecordedPrompt').onclick = () => {
+  if (!recordSelection?.prompt_raw) return;
+  $('prompt').value = recordSelection.prompt_raw;
+  $('prompt').dispatchEvent(new Event('input', { bubbles:true }));
+  closeSheet('recordSheet'); closeSheet('historySheet');
+  if ($('darkroom').style.display !== 'none') showWorkshop();
+  openEditor('idea');
+};
+function zoomArtwork(image) {
+  if (!image.src || image.classList.contains('hidden')) return;
+  $('zoomImage').src = image.src; openSheet('zoomSheet');
+}
+['img','dr-cur-img'].forEach(id => {
+  $(id).onclick = () => zoomArtwork($(id));
+  $(id).onkeydown = e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); zoomArtwork($(id)); } };
+});
+updateDraftSummary();
+[['status','editorStatus'],['dlg-status','branchEditorStatus']].forEach(([source,target]) => {
+  const sync = () => { $(target).textContent = $(source).textContent; $(target).hidden = !$(source).textContent.trim(); };
+  new MutationObserver(sync).observe($(source), { childList:true, characterData:true, subtree:true });
+  sync();
+});
+
 const legacyInvite = localStorage.getItem('token') || '';
 enterApp(legacyInvite, !legacyInvite);
-</script>
-</body>
+</script></body>
 </html>

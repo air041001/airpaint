@@ -956,3 +956,12 @@ ComfyUI 提交前由 AirPaint 分配 prompt ID 并先落盘。本机 ComfyUI 源
 最终确定性验证为 `15 persistence/recovery tests passed`、`19 image iteration tests passed`、`58 prompt unit tests passed`、`6` 项 LoRA Composition 与 `18` 项 onboarding 回归通过；Python compileall/pyflakes、前端脚本/可靠性契约、PowerShell 语法和当前 workflow 检查通过。以临时本地 ComfyUI 协议替身启动真实 AirPaint 进程，验证 health、cookie 登录、90 次配额、服务端历史与正常 shutdown；实际空库完成 online backup、manifest/hash/schema/integrity 校验及隔离目录恢复，没有调用 GPU/外部模型或覆盖生产状态。
 
 浏览器在桌面与 390×844、纸本与石墨主题下验证结果恢复、Prompt/seed/配额、异常状态、设置、历史分支和迭代暗房，移动端无横向溢出；纸本 Img2Img 的近黑画幅适配下拉框已修为可读。README 保存真实前端截图，中央图片来自项目已有生成结果；任务状态明确来自本地演示夹具，不能冒充实时生成。浏览器仍有原有 Tailwind CDN 生产提示，作为外部依赖边界记录，不在封版时引入构建迁移。用户已确认最终界面；另从 D59 原始 PNG metadata 核对并保存两张 SFW 案例的 Prompt、seed、尺寸、模型与采样参数。D59 图片验收事实不变，`v1.0.0` 作为封版基线。
+
+
+## 2026-09-09 · 最后一次前端收尾：沉浸展台（D61）
+
+- 从用户选定的独立预览迁移到原生产请求逻辑：竖图完整适应高度、默认收起的 520px 桌面编辑器、三页签与独立手机布局。
+- 全局历史与当前 session 的迭代分支分开呈现；查看旧图保留草稿，图片详情与新请求设置分开，后台任务不再抢占当前画面的源图 ID。
+- 保留编译/手工 Prompt/LoRA/Profile/强度、参考/整图重绘、恢复核对、配额和登录。字体使用本机字体；未新增前端框架或改变后端协议。
+- 最低验证包含前端内联脚本、D59/可靠性契约、草稿与源图状态回归和 Python 编译；浏览器独立验收范围见 `docs/demo.md`。不把夹具生成状态当成真实模型/GPU 或画质验证。
+- `v1.0.0`/`9af5604` 保持封版基线；本次仅完成用户随后授权的前端收尾。Registry 与原有安全副本/stash 不动。
