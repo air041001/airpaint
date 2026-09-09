@@ -122,11 +122,25 @@ def _cache_job(job: dict) -> dict:
     return job
 
 
+def _hide_missing_outputs(
+    owner_id: str | None = None,
+    job_id: str | None = None,
+) -> list[str]:
+    hidden = STORE.hide_missing_outputs(IMAGES, owner_id=owner_id, job_id=job_id)
+    for hidden_job_id in hidden:
+        JOBS.pop(hidden_job_id, None)
+    return hidden
+
+
 def _load_job(job_id: str, owner_id: str | None = None) -> dict | None:
     job = STORE.get_job(job_id, owner_id)
-    if job:
-        _cache_job(job)
-    return job
+    if not job or job.get("status") == "deleted":
+        return None
+    if job.get("status") == "done" and _hide_missing_outputs(
+        owner_id=job.get("owner_id"), job_id=job_id
+    ):
+        return None
+    return _cache_job(job)
 
 
 async def _schedule(job_id: str) -> None:
@@ -352,6 +366,7 @@ async def _restore_scheduler() -> int:
 @app.on_event("startup")
 async def _startup():
     global _worker_task
+    _hide_missing_outputs()
     await _restore_scheduler()
     _worker_task = asyncio.create_task(worker(), name="airpaint-single-worker")
 
@@ -374,12 +389,15 @@ async def _shutdown():
 @app.get("/api/images/{filename}")
 async def protected_image(filename: str, owner_id: str = Depends(verify_token)):
     safe_name = Path(filename).name
-    if safe_name != filename or not STORE.output_owned_by(owner_id, safe_name):
+    if safe_name != filename:
+        raise HTTPException(404, "图片不存在")
+    _hide_missing_outputs(owner_id=owner_id)
+    if not STORE.output_owned_by(owner_id, safe_name):
         raise HTTPException(404, "图片不存在")
     path = IMAGES / safe_name
     if not path.is_file():
         raise HTTPException(404, "图片文件不存在")
-    return FileResponse(path, headers={"Cache-Control": "private, max-age=3600"})
+    return FileResponse(path, headers={"Cache-Control": "private, no-store"})
 
 def check_banned(text: str):
     low = text.lower()
@@ -555,6 +573,8 @@ def _state_snapshot(job: dict) -> dict:
 
 
 def _public_job(job: dict) -> dict:
+    if job.get("status") == "deleted":
+        return {key: job[key] for key in ("id", "status") if key in job}
     keys = ("id", "status", "prompt_raw", "prompt_en", "workflow", "concept", "completion_level",
             "lora_bindings", "lora_warnings", "registry_revision", "prompt_ir", "seed",
             "parent_job_id", "generation_mode", "denoise", "fit_mode", "crop_position",
@@ -591,6 +611,8 @@ def _idempotent_existing(owner_id: str, request_id: str, fingerprint: str) -> di
     existing = STORE.get_job_by_request(owner_id, request_id)
     if not existing:
         return None
+    if existing.get("status") == "deleted":
+        raise HTTPException(410, "作品文件已删除；旧请求不会自动重新生成")
     previous = existing.get("request_fingerprint")
     if previous and previous != fingerprint:
         raise HTTPException(409, "client_request_id 已用于不同请求")
@@ -930,6 +952,7 @@ async def history(limit: int = 20, cursor: str | None = None,
         decoded = STORE.decode_cursor(cursor)
     except ValueError as exc:
         raise HTTPException(400, str(exc))
+    _hide_missing_outputs(owner_id=owner_id)
     jobs, next_cursor = STORE.list_jobs(owner_id, limit=limit, cursor=decoded)
     return {
         "items": [
@@ -946,10 +969,15 @@ async def history(limit: int = 20, cursor: str | None = None,
 async def request_status(client_request_id: str, owner_id: str = Depends(verify_token)):
     if not _CLIENT_REQUEST_RE.fullmatch(client_request_id):
         raise HTTPException(400, "client_request_id 无效")
-    job = STORE.get_job_by_request(owner_id, client_request_id)
-    if not job:
+    stored = STORE.get_job_by_request(owner_id, client_request_id)
+    if not stored:
         raise HTTPException(404, "服务器没有记录该请求")
-    return _public_job(_cache_job(job))
+    if stored.get("status") == "deleted":
+        raise HTTPException(410, "作品文件已删除")
+    job = _load_job(stored["id"], owner_id)
+    if not job:
+        raise HTTPException(410, "作品文件已删除")
+    return _public_job(job)
 
 def _session_source(session: dict, source_job_id: str | None, owner_id: str) -> dict:
     turn_ids = [turn["job_id"] for turn in session["turns"]]
@@ -1147,11 +1175,25 @@ async def dialog_get(session_id: str, owner_id: str = Depends(verify_token)):
         raise HTTPException(404, "会话不存在")
     SESSIONS[session_id] = copy.deepcopy(session)
     turns = []
+    visible_jobs = []
     for turn in session["turns"]:
-        job = _load_job(turn["job_id"], owner_id) or {}
+        job = _load_job(turn["job_id"], owner_id)
+        if not job:
+            continue
+        visible_jobs.append(job)
         turns.append({**_public_job(job), "job_id": turn["job_id"],
                       "action": turn["action"], "delta": turn["delta"]})
-    return {key: session.get(key) for key in (
-        "raw", "current_en", "concept", "completion_level", "lora_bindings",
-        "lora_warnings", "registry_revision"
-    )} | {"session_id": session_id, "turns": turns}
+    if not visible_jobs:
+        raise HTTPException(404, "会话中的作品已删除")
+    latest = visible_jobs[-1]
+    return {
+        "raw": latest.get("prompt_raw"),
+        "current_en": latest.get("prompt_en"),
+        "concept": latest.get("concept"),
+        "completion_level": latest.get("completion_level"),
+        "lora_bindings": latest.get("lora_bindings"),
+        "lora_warnings": latest.get("lora_warnings"),
+        "registry_revision": latest.get("registry_revision"),
+        "session_id": session_id,
+        "turns": turns,
+    }

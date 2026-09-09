@@ -1028,3 +1028,21 @@ LoRA 用户可见名称以 versioned `server/lora_registry.yaml` 为单一真相
 **修订关系**：修订旧三栏与暗房材质布局；保留 D59 整图重绘边界、D60 持久化和幂等契约。旧 `v1.0.0` tag 不变。
 
 **相关文件**：`web/index.html`、`.tools/check_frontend.js`、`.tools/test_frontend_state.cjs`、`docs/architecture.md`、`docs/BUILDHANDOFF.md`、`docs/demo.md`。
+
+## D62. 输出文件缺失后隐藏作品，数据库只保留不可见墓碑
+
+**背景**：SQLite 持久化后，人工删除 `server/images/` 中的图片不会同步删除任务。历史仍返回旧 URL 与完整参数，前端因此显示破图和参数空壳；输出响应的一小时缓存还可能让已删文件暂时看似存在。
+
+**问题**：只用前端 `img.onerror` 删除记录会把断网、登录失效和服务异常误判为用户删图；直接硬删数据库行又会破坏会话 turn、父子分支和用量审计。删除后退款还会让每日额度可通过删文件绕过。
+
+**决定**：本地输出文件是完成作品是否可展示的最终事实。服务启动、历史读取和单任务读取只核对 `done` 任务；确认文件不存在、引用非法或目标不是普通文件时，将任务转成内部 `deleted`，清空 `output_image_ref`，并从历史、任务详情和会话 turn 中过滤。数据库行、原用量和关系继续保留，旧幂等请求返回 410 而不自动重画。目录不可访问或其他 OS 错误不作删除判断；`result_ready` 等未完成状态不参与核对。图片响应改为 `private, no-store`。
+
+**原因**：后端文件检查能给“已删除”提供唯一可靠证据，同时不可见墓碑兼顾用户界面预期与数据库引用完整性。保留原扣次符合 D60 的落盘计数规则。
+
+**代价与风险**：这是对项目图库中人工删文件的单向收口；文件后来以同名恢复不会自动把墓碑改回 `done`。需要恢复误删作品时应从完整备份同时恢复数据库和图片，而不是只把文件复制回来。
+
+**验证**：持久化回归覆盖文件存在时正常历史/读取与 `no-store`、删除后历史/任务/图片/会话隐藏、额度不返还、旧请求 410，以及 `result_ready` 不被误删。未生成新图片，不涉及画质结论。
+
+**修订关系**：补充 D60 的“图片留文件系统”边界；保留 D61 的作品/草稿分离和 D59 的整图重绘结论。
+
+**相关文件**：`server/persistence.py`、`server/api.py`、`.tools/test_persistence_recovery.py`、`README.md`、`docs/api.md`、`docs/architecture.md`、`docs/operations.md`、`docs/BUILDHANDOFF.md`。

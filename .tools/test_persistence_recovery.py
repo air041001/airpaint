@@ -202,6 +202,68 @@ class PersistenceRecoveryTests(unittest.IsolatedAsyncioTestCase):
             await api.protected_image(f"{job_id}.png", "owner-b")
         self.assertEqual(error.exception.status_code, 404)
 
+    async def test_removed_output_disappears_without_refunding_quota(self):
+        job_id = await self.enqueue("request-deleted-output", fingerprint="same-request")
+        output_name = f"{job_id}.png"
+        output_path = self.images / output_name
+        output_path.write_bytes(b"\x89PNG\r\n\x1a\nresult")
+        self.store.update_job(
+            job_id, status="done", output_image_ref=output_name, completed_at=time.time()
+        )
+
+        before = await api.history(owner_id="owner-a")
+        self.assertEqual([item["id"] for item in before["items"]], [job_id])
+        response = await api.protected_image(output_name, "owner-a")
+        self.assertEqual(response.headers["cache-control"], "private, no-store")
+        used = self.store.usage_count("owner-a")
+
+        output_path.unlink()
+        after = await api.history(owner_id="owner-a")
+        self.assertEqual(after["items"], [])
+        stored = self.store.get_job(job_id, "owner-a")
+        self.assertEqual(stored["status"], "deleted")
+        self.assertIsNone(stored["output_image_ref"])
+        self.assertNotIn("image", stored)
+        self.assertEqual(self.store.usage_count("owner-a"), used)
+
+        with self.assertRaises(HTTPException) as status_error:
+            await api.job_status(job_id, "owner-a")
+        self.assertEqual(status_error.exception.status_code, 404)
+        with self.assertRaises(HTTPException) as image_error:
+            await api.protected_image(output_name, "owner-a")
+        self.assertEqual(image_error.exception.status_code, 404)
+        with self.assertRaises(HTTPException) as replay_error:
+            api._idempotent_existing("owner-a", "request-deleted-output", "same-request")
+        self.assertEqual(replay_error.exception.status_code, 410)
+
+    async def test_removed_only_session_turn_exposes_no_parameter_shell(self):
+        job_id = await self.enqueue("request-deleted-session")
+        output_name = f"{job_id}.png"
+        output_path = self.images / output_name
+        output_path.write_bytes(b"\x89PNG\r\n\x1a\nresult")
+        self.store.update_job(
+            job_id, status="done", output_image_ref=output_name, completed_at=time.time()
+        )
+        opened = await api.dialog_turn(Request(action="start-image", job_id=job_id), "owner-a")
+
+        output_path.unlink()
+        with self.assertRaises(HTTPException) as error:
+            await api.dialog_get(opened["session_id"], "owner-a")
+        self.assertEqual(error.exception.status_code, 404)
+
+    async def test_missing_file_does_not_hide_unfinished_recoverable_job(self):
+        job_id = await self.enqueue("request-result-ready")
+        self.store.update_job(
+            job_id,
+            status="result_ready",
+            comfy_prompt_id="77777777-7777-4777-8777-777777777777",
+        )
+
+        response = await api.history(owner_id="owner-a")
+        self.assertEqual(response["items"][0]["id"], job_id)
+        self.assertEqual(response["items"][0]["status"], "result_ready")
+        self.assertEqual(self.store.get_job(job_id)["status"], "result_ready")
+
     async def test_live_database_backup_is_consistent(self):
         await self.enqueue("request-backup")
         backup = self.root / "backup.db"

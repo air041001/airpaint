@@ -12,6 +12,7 @@ import hmac
 import json
 import secrets
 import sqlite3
+import stat
 import threading
 import time
 from datetime import datetime
@@ -619,7 +620,7 @@ class AirPaintStore:
     ) -> tuple[list[dict], str | None]:
         limit = max(1, min(int(limit), 50))
         params: list[Any] = [owner_id]
-        where = "owner_id=?"
+        where = "owner_id=? AND status!='deleted'"
         if cursor:
             where += " AND (created_at < ? OR (created_at = ? AND id < ?))"
             params.extend([cursor[0], cursor[0], cursor[1]])
@@ -638,6 +639,83 @@ class AirPaintStore:
             next_cursor = self.encode_cursor(last["created_at"], last["id"])
         return jobs, next_cursor
 
+    def hide_missing_outputs(
+        self,
+        images_dir: Path,
+        *,
+        owner_id: str | None = None,
+        job_id: str | None = None,
+    ) -> list[str]:
+        """Hide completed jobs whose local output file was explicitly removed.
+
+        Only a confirmed missing/non-file path is treated as deletion.  If the
+        image directory or an individual path cannot be inspected for another
+        OS-level reason, the job remains untouched so a storage or permission
+        incident cannot erase visible history.
+        """
+        images_dir = Path(images_dir)
+        try:
+            if not stat.S_ISDIR(images_dir.stat().st_mode):
+                return []
+        except OSError:
+            return []
+
+        where = ["status='done'", "output_image_ref IS NOT NULL"]
+        params: list[Any] = []
+        if owner_id is not None:
+            where.append("owner_id=?")
+            params.append(owner_id)
+        if job_id is not None:
+            where.append("id=?")
+            params.append(job_id)
+
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT id, output_image_ref FROM jobs WHERE " + " AND ".join(where),
+                params,
+            ).fetchall()
+            missing: list[tuple[str, str]] = []
+            for row in rows:
+                reference = row["output_image_ref"]
+                if (
+                    not isinstance(reference, str)
+                    or not reference
+                    or Path(reference).name != reference
+                ):
+                    missing.append((row["id"], reference))
+                    continue
+                try:
+                    file_info = (images_dir / reference).stat()
+                except FileNotFoundError:
+                    missing.append((row["id"], reference))
+                except OSError:
+                    continue
+                else:
+                    if not stat.S_ISREG(file_info.st_mode):
+                        missing.append((row["id"], reference))
+
+            if not missing:
+                return []
+
+            hidden: list[str] = []
+            now = time.time()
+            self._conn.execute("BEGIN IMMEDIATE")
+            try:
+                for missing_job_id, reference in missing:
+                    cur = self._conn.execute(
+                        "UPDATE jobs SET status='deleted', output_image_ref=NULL, "
+                        "updated_at=?, error_kind='output_deleted', error_message=NULL "
+                        "WHERE id=? AND status='done' AND output_image_ref=?",
+                        (now, missing_job_id, reference),
+                    )
+                    if cur.rowcount == 1:
+                        hidden.append(missing_job_id)
+                self._conn.commit()
+            except Exception:
+                self._conn.rollback()
+                raise
+            return hidden
+
     def recoverable_jobs(self) -> list[dict]:
         placeholders = ",".join("?" for _ in RECOVERABLE_STATUSES)
         with self._lock:
@@ -651,7 +729,8 @@ class AirPaintStore:
     def output_owned_by(self, owner_id: str, filename: str) -> bool:
         with self._lock:
             row = self._conn.execute(
-                "SELECT 1 FROM jobs WHERE owner_id=? AND output_image_ref=? LIMIT 1",
+                "SELECT 1 FROM jobs WHERE owner_id=? AND status='done' "
+                "AND output_image_ref=? LIMIT 1",
                 (owner_id, filename),
             ).fetchone()
             return row is not None

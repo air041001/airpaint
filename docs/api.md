@@ -263,6 +263,8 @@ failed (失败):
 
 `image` 是受归属保护的相对路径，浏览器必须携带登录 cookie。任务状态还返回 `concept/completion_level/lora_bindings/lora_warnings/registry_revision`、生命周期时间、`comfy_prompt_id`、`error_kind/error_message`，便于区分连接、执行和取图错误。
 
+若一个 `done` 任务引用的本地输出文件已被人工删除，服务端会在查询时确认文件缺失、隐藏该任务并返回 `404`；不会继续返回只剩 Prompt/参数的作品空壳。该判断只由服务端文件系统完成，不依据浏览器图片加载失败，因此网络中断和登录失效不会被误记为删除。
+
 ### POST /api/jobs/{job_id}/recover
 
 重新核对现有 ComfyUI prompt ID，或重新下载已经生成的结果。需校验任务归属，不创建任务、不重复扣次。`done` 幂等返回；没有可恢复状态的明确失败任务返回 409。
@@ -271,11 +273,11 @@ failed (失败):
 
 服务端历史（需鉴权），按任务创建时间倒序并校验 owner。参数：`limit` 为 1～50，`cursor` 使用响应的 opaque `next_cursor`。
 
-响应含 `items`、`next_cursor`、`daily_used`、`daily_limit`。每项是公开任务快照并附带 `session_ids`，前端可在刷新/重新登录后继续有效历史分支。
+响应含 `items`、`next_cursor`、`daily_used`、`daily_limit`。每项是公开任务快照并附带 `session_ids`，前端可在刷新/重新登录后继续有效历史分支。已确认本地输出文件不存在的完成任务不会出现在 `items`；其参数也不再通过会话接口展示，但已消耗额度不返还。
 
 ### GET /api/requests/{client_request_id}
 
-浏览器在 POST 响应丢失后按稳定请求 ID 找回任务。服务器没有落盘该请求返回 404，此时才可安全按原点击重新创建；找到则继续查询原任务。
+浏览器在 POST 响应丢失后按稳定请求 ID 找回任务。服务器没有落盘该请求返回 404，此时才可安全按原点击重新创建；找到则继续查询原任务。若原任务的作品文件后来已删除，返回 410，旧请求不会自动重新生成。
 
 ### POST /api/dialog/turn
 ⑤ 对话迭代: 每轮一次出图 (需鉴权, 计入日限)。显式路由不猜意图: `action` 由前端按钮决定 (见 D25)。
@@ -313,11 +315,11 @@ failed (失败):
 ```
 `image` 在对应 job 完成后才有值 (worker 写回)。
 
-`turns` 的每项含 `job_id`、`parent_job_id`、`action/delta` 和完整公开任务字段/快照；显示历史时以各节点状态为准，不用顶层 `current_en` 覆盖旧图。任务与会话从 SQLite 读取，重启后仍可继续有效分支；仅 Vision/Composer 缓存留在内存。
+`turns` 的每项含 `job_id`、`parent_job_id`、`action/delta` 和完整公开任务字段/快照；显示历史时以各节点状态为准，不用顶层 `current_en` 覆盖旧图。任务与会话从 SQLite 读取，重启后仍可继续有效分支；仅 Vision/Composer 缓存留在内存。输出文件已确认删除的 turn 会被过滤；若会话已无可见 turn，返回 404，不留下参数空壳。
 
 ### 资源
 - `GET /` → 前端网页 `index.html`
-- `GET /api/images/{filename}` → 需鉴权并校验图片属于当前 owner 的输出图
+- `GET /api/images/{filename}` → 需鉴权并校验图片属于当前 owner 的输出图；响应使用 `private, no-store`，文件不存在时返回 404 并同步隐藏对应历史
 - `GET /lora-previews/{filename}` → 无需鉴权的受控 LoRA 预览资源
 
 ---

@@ -101,6 +101,8 @@ Active LoRA 时，Reasoning Model 只看 Asset/Profile 的 `provides` 与允许�
 - 同链固定 LoRA 选择/强度及 revision；更换 LoRA 回工坊开新链。校验/翻译失败不修改会话，不入队。
 - 旧 `vibe` 请求映射 `composition_vibe` 参考流程；旧 `image` 字段保留一兼容周期。任务、会话、turn、配额和图片引用写入 SQLite，重启后仍可查历史与继续有效分支；Vision/Composer 结果缓存仍为进程内 LRU。
 
+输出图片仍以文件系统为事实来源。启动、历史读取和完成任务查询会核对 `done.output_image_ref`：只有明确的 `FileNotFoundError`、非法文件名或非普通文件才把任务转为内部 `deleted` 墓碑并清除公开图片引用；图片目录不可访问、权限错误或浏览器加载失败都不会触发删除。`deleted` 不进入历史、任务详情或会话 turn，但数据库行保留父子/审计/配额关系，删除不退款。图片响应使用 `private, no-store`，避免已删除文件继续被一小时浏览器缓存伪装成存在。
+
 ### LoRA Registry / Binding
 
 - `server/lora_registry.yaml` 是版本化人工知识：Asset → Profile → required/default/optional tags、`provides`、默认强度、source/verified。`HotLoraRegistry` 保留嵌套结构，YAML 半写或校验失败时继续使用 last-good snapshot；canonical 内容 hash 作为 `registry_revision`。

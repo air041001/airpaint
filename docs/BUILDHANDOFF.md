@@ -37,6 +37,7 @@ AirPaint 是 ComfyUI 上层的 Prompt / Intent / Knowledge Intelligence Layer。
 - owner ID 由本机 `identity.key` 对邀请码做 HMAC；原始邀请码/API key 不写入业务记录。浏览器登录后使用签名 HttpOnly cookie，不再持久保存邀请码。
 - 提交前预分配 ComfyUI prompt ID 并落盘。连接失败可安全等待；响应丢失进入 `reconcile_pending`，只核对不重发；等待超时进入 `result_pending`；已出图但下载失败进入 `result_ready`，只重取结果。
 - `/api/history` 提供分页服务端历史；刷新/重新登录可找回进行中任务和有效 session 分支。图片通过 `/api/images/{filename}` 按 owner 读取，不再公开挂载 `/images`。
+- `done` 任务会以本地输出文件为事实来源：确认文件被人工删除后转为内部 `deleted` 墓碑，并从历史、任务详情和会话中隐藏，不展示残留参数、不返还额度；网络/权限错误不作删除判断。
 - `server.maintenance` 把 SQLite online backup、一致的 `identity.key` 和数据库引用图片打成带 hash manifest 的 zip；离线恢复前自动创建 rollback 包。
 
 ### UI / 运行
@@ -93,6 +94,8 @@ docs/DEVLOG.md                开发演进
 - `docs/showcase.md` 另存两张 D59 真实 SFW 原图，并从 PNG 内嵌 workflow 核对 Prompt、seed、尺寸、模型与采样参数；未把演示夹具字段当作真实参数。
 
 `v1.0.0` 已封存于 `9af5604`。用户随后明确授权最后一次前端改版，选择「沉浸展台」并要求竖图优先、加宽编辑器、降低信息密度；这次是已授权的界面收尾，不重开 Prompt/模型/workflow 开发，也不移动旧 tag。当前前端验证与证据见 `docs/demo.md`。
+
+2026-09-09 封版维护新增“缺失输出隐藏”回归，当前 `18 persistence/recovery tests passed`：覆盖完成图存在时正常访问、人工删除后历史/任务/图片/会话不再暴露、额度不返还、旧幂等请求不自动重画，以及 `result_ready` 不因尚无本地文件被误删。该维护不改变 `v1.0.0` 基线标签，也不构成新的图像质量结论。
 
 结构性检查不能替代图片质量。不得把上述数字写成参考图或 Img2Img 画质通过。
 
