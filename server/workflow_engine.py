@@ -3,6 +3,7 @@ import asyncio
 import json
 import os
 import random
+import re
 import time
 import uuid
 
@@ -44,6 +45,39 @@ def sanitize_for_api(wf: dict) -> dict:
             del wf[nid]
     return wf
 
+def default_negative_text(wf_name: str) -> tuple[str | None, bool]:
+    """读取工作流默认负面的真实文字（负面节点 text 上游节点的 wildcard_text）。
+
+    返回 ``(text, is_static)``。依据实际 JSON 连接推导，不硬编码节点编号；
+    只读 ``wildcard_text`` 而非静态 ``populated_text``（后者会被 ComfyUI
+    ``onprompt`` 用 seed 覆盖，见 P1 契约 §1.2/§8.B）。含动态语法（``{}``、
+    ``__wildcard__``、``#`` 注释）时 ``is_static=False``，新路径应拒绝预览而非猜测。
+    """
+    wcfg = WORKFLOWS.get(wf_name) or {}
+    node_id = wcfg.get("negative_node")
+    if not node_id:
+        return None, False
+    wf = json.loads((BASE / str(wcfg["file"])).read_text(encoding="utf-8"))
+    node = wf.get(str(node_id))
+    if not node:
+        return None, False
+    source = (node.get("inputs") or {}).get("text")
+    raw = None
+    if isinstance(source, list) and len(source) == 2:
+        upstream = wf.get(str(source[0])) or {}
+        upstream_inputs = upstream.get("inputs") or {}
+        raw = upstream_inputs.get("wildcard_text")
+        if raw is None:
+            raw = upstream_inputs.get("text")
+    elif isinstance(source, str):
+        raw = source
+    if not isinstance(raw, str) or not raw.strip():
+        return None, False
+    text = raw.strip().strip(",").strip()
+    dynamic = bool(re.search(r"[{}]|__[^_\n]+__|^\s*#", raw, flags=re.MULTILINE))
+    return text, not dynamic
+
+
 def _workflow_lora_entries(bindings: list[dict], strength_char: float | None = None,
                            strength_style: float | None = None) -> list[dict]:
     """把语义 binding 压成物理文件加载表；同一 safetensors 最多加载一次。"""
@@ -84,7 +118,9 @@ def build_prompt(wf_name: str, prompt_en: str, width: int | None, height: int | 
                  registry_revision: str | None = None,
                  seed: int | None = None,
                  fit_mode: str = "preserve",
-                 crop_position: str = "center") -> dict:
+                 crop_position: str = "center",
+                 final_prompt_en: str | None = None,
+                 final_negative: str | None = None) -> dict:
     wcfg = WORKFLOWS[wf_name]
     wf = json.loads((BASE / wcfg["file"]).read_text(encoding="utf-8"))
     wf = sanitize_for_api(wf)
@@ -147,14 +183,23 @@ def build_prompt(wf_name: str, prompt_en: str, width: int | None, height: int | 
         lora_entries = _workflow_lora_entries(
             effective_bindings, strength_char=strength_char, strength_style=strength_style)
         set_input("lora_node", "loras", {"__value__": lora_entries})
-        prompt_en = compile_lora_bindings(prompt_en, effective_bindings)
+        if final_prompt_en is None:
+            # 旧路径：正文在此注入 trigger 文本；新路径正文已在最终化时编译，不再重复。
+            prompt_en = compile_lora_bindings(prompt_en, effective_bindings)
 
     # rating tag (safe/sensitive/questionable/explicit) 不再由关键词启发式推断。
     # 用户可在生成前编辑英文 Prompt 明确加入，后端原样保留。
-    full_prompt = wcfg.get("quality_prefix", "") + prompt_en
+    # 正向：final_prompt_en 是已最终化的主采样文本（不加前缀、不再编译）；
+    # 旧路径（None）由本函数拼质量前缀，trigger 已在上方注入。
+    full_prompt = (final_prompt_en if final_prompt_en is not None
+                   else wcfg.get("quality_prefix", "") + prompt_en)
     set_input("prompt_node", "text", full_prompt)
-    if "negative_node" in wcfg:
-        set_input("negative_node", "text", wcfg.get("negative_prefix", "") + wcfg.get("negative_extra", ""))
+    # 负面：final_negative 非 None（含显式空串）时字面写入负面节点并切断其原连接；
+    # 旧路径（None）保持工作流 wildcard 行为，不触碰负面节点 (P1 契约 §8.B)。
+    if final_negative is not None:
+        if "negative_node" not in wcfg:
+            raise HTTPException(500, f"workflow {wf_name} 未配置负面节点")
+        set_input("negative_node", "text", final_negative)
     if "seed_node" in wcfg:
         set_input("seed_node", "seed", seed)
     if width and height and "size_node" in wcfg:

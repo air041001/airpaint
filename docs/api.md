@@ -46,9 +46,13 @@ Authorization: Bearer <token>
 响应 `200`:
 ```json
 [
-  { "name": "anima", "label": "Anima V7", "sizes": ["832x1216","896x1152","1024x1024","1344x768","1024x1536","1536x864"] }
+  { "name": "anima", "label": "Anima V7", "sizes": ["832x1216","896x1152","1024x1024","1344x768","1024x1536","1536x864"],
+    "quality_prefix": "masterpiece, best quality, newest, absurdres, ",
+    "default_negative": "worst quality, low quality, ..., watermark, artist name" }
 ]
 ```
+
+`quality_prefix` 与 `default_negative`（P1 增补）供前端「填入默认预设/恢复默认」；`default_negative` 为 `null` 表示工作流默认负面含动态 wildcard 语法，新路径不支持预览该动态默认（需用户提供完整负面）。
 
 ### GET /api/loras
 列出可用 LoRA Asset (需鉴权)。合并 versioned Registry > 尚未迁移的 legacy config，按 type 分组；未注册本地文件不进入生产 API，由 onboarding 工具直接枚举。
@@ -86,6 +90,8 @@ Authorization: Bearer <token>
 
 ### POST /api/translate
 只编译不排队 (需鉴权, 不计入 image 限额)：中文/参考图 + 补全程度 + 可选 LoRA selection -> LoRA-aware 英文 Prompt。前端「先看构思」和「生成」都先调用它；文本 Composer 同时返回可编辑中文 `concept` 与 binding snapshot。
+
+P1 增补：可选 `workflow`（用于取质量前缀与默认负面）；响应新增 `final_prompt_en`（含质量前缀的最终主采样正向）、`final_negative`（本次将实际生效的完整负面）、`negative_source`、`prompt_mode`。前端据此展示「最终文本」并可直接编辑；`prompt_en` 仍为不含质量前缀的编译正文（旧调用方兼容）。
 
 请求体:
 ```json
@@ -177,6 +183,16 @@ Composer 必须返回 `CONCEPT + 精确 12 字段 IR + CHAR + [LORA] + PROMPT`�
 
 ### POST /api/jobs
 提交生图任务 (需鉴权)。**接收已翻译的 `prompt_en`** (前端先用 `/api/translate` 翻译, 可在「预览提示词」里编辑后再提交), 后端不再翻译。
+
+文本状态与最终正负 (P1)：
+
+- `prompt_mode`: `assisted`(缺省) | `manual`。`manual` 表示用户英文原文即最终文本——系统不调用翻译、不加质量前缀、不注入 trigger（LoRA 仍按服务端可信 binding/revision 加载，文本标签不加载任何文件）。
+- `prompt_state`: `body` | `final` | 缺省(旧路径)。
+  - `final` = `prompt_en` 已是最终文本，后端只校验与持久化、**不再组装**（用户删除的前缀/trigger 不会被补回）；
+  - `body` = `prompt_en` 为待组装正文，由服务端唯一最终化步骤加质量前缀并幂等注入 trigger；
+  - 缺省(不传) = 旧客户端兼容路径：做一次最终化，但**不覆盖工作流默认负面**（保留 wildcard 行为）。
+- `negative_prompt`: 三态。缺省/`null` = 使用工作流默认负面；`""` = 清空；非空 = 完整覆盖。新路径下最终负面**字面写入负面节点**，之后改 seed 不会暗中改变已确认文字。
+- 响应/历史新增 `prompt_mode`、`prompt_state`、`final_prompt_en`、`final_negative`、`negative_source`；旧客户端不传新字段时行为不变。
 
 请求体:
 ```json

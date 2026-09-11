@@ -971,3 +971,9 @@ ComfyUI 提交前由 AirPaint 分配 prompt ID 并先落盘。本机 ComfyUI 源
 SQLite 历史原先只信任 `output_image_ref`，人工删掉实际 PNG 后仍返回图片 URL、Prompt 和参数，形成破图空壳。现由后端在启动、历史和完成任务读取时核对本地文件：只对确认缺失/非法/非文件的 `done` 任务写入内部 `deleted` 墓碑并清空输出引用；历史、任务详情和会话 turn 均不再公开它。数据库行、父子关系和原扣次保留，旧幂等请求返回 410，不自动重画或返还额度。图片响应改为 `private, no-store`。
 
 判断不依赖浏览器加载失败；图片目录不可访问、权限/系统错误和 `result_ready` 等待取图状态均不会被误记为删除。新增回归将持久化套件扩到 18 项，覆盖存在、删除、归属、会话、额度、幂等与未完成状态。本次不改 Prompt、模型、workflow 或 LoRA Registry，也未生成图片。
+
+## 第 70 条 2026-09-11 - P1：主采样最终正负文本可接管与恢复
+
+用户解除封版后进入有限实验阶段，P1 交付「稳定默认预设 + 主采样完整正负可见/可编辑 + 一次最终化」。新增唯一最终化入口 `prompt_engine.finalize_generation_text`：`assisted/manual` 与 `body/final` 显式区分文本来源与状态，不用字符串猜测；质量前缀与 trigger 只组装一次，用户删除后不被补回。请求新增 `prompt_mode/prompt_state/negative_prompt`（三态：缺省 / 空串清空 / 非空覆盖）。负面写入点固定为覆盖负面节点 `CLIPTextEncode.text`（`config.workflows.anima.negative_node`=55），绕开 ImpactWildcardProcessor 的 `onprompt` populate 与 seed 波动；缺省负面取负面节点上游 `wildcard_text` 的真实文字（`workflow_engine.default_negative_text`），不使用会被覆盖的静态 `populated_text`。旧客户端与旧内部调用保持兼容（不传新字段 → 做一次最终化且不覆盖默认负面）。`/api/dialog/turn` 分支：无 delta 继承已保存 final、零 Composer 调用；有 delta/vibe 明确重编译并默认继承源负面。排队恢复只用已落盘 final；Registry/配置在排队期间变化时以 `pipeline_config_changed` 明确失败，不静默改用最新 binding。前端最小接入：最终正向/负面编辑框、手动英文直出、填入默认预设与恢复默认。
+
+验证：新增 `.tools/test_final_text.py` 15 项通过（最终化三态与状态区分、默认负面与 workflow 文件一致、final 文本字面写入与旧路径保留 wildcard、前缀仅一次、空负面进入幂等指纹）；既有 58 prompt unit、19 image iteration、18 persistence/recovery、LoRA Composition 及前端脚本/状态检查保持通过；Python compileall 与 pyflakes 通过。未调用真实模型/GPU/ComfyUI，无实图验收；UI 改动未做浏览器视口实测（列为未验项）。

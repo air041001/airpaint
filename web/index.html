@@ -157,10 +157,24 @@ dialog{color:var(--ap-text);background:var(--ap-surface);border:1px solid var(--
 <div id="breakdownRows"></div>
 </div>
 <div class="border-t border-ink-700 pt-3 flex flex-col flex-1 min-h-0">
-<div class="mono text-xs text-white/45 mb-2 shrink-0 uppercase tracking-wider">英文 Prompt（可编辑）</div>
+<div class="flex items-center justify-between mb-2 shrink-0 gap-2">
+<div class="mono text-xs text-white/45 uppercase tracking-wider">英文 Prompt（可编辑）</div>
+<div class="flex gap-1.5">
+<button class="chip text-[11px] px-2 py-1 rounded-md border border-ink-600 text-white/70" id="manualGo" type="button">直接用此英文生成</button>
+<button class="chip text-[11px] px-2 py-1 rounded-md border border-ink-600 text-white/70" id="fillDefaults" type="button">填入默认预设</button>
+</div>
+</div>
 <textarea aria-label="英文 Prompt" class="w-full flex-1 min-h-[110px] bg-ink-900 border border-ink-600 rounded-lg text-xs p-2.5 resize-y font-mono leading-relaxed" id="promptEnEdit" placeholder="先点「先看 Prompt」，编译后的英文 Prompt 会出现在这里，可直接编辑" rows="5"></textarea>
 
 <div class="text-sm text-white/50 mt-1.5 shrink-0">可编辑 tag、自然语言、顺序或权重，再确认生成</div>
+</div>
+<div class="border-t border-ink-700 pt-3 flex flex-col shrink-0">
+<div class="flex items-center justify-between mb-2">
+<div class="mono text-xs text-white/45 uppercase tracking-wider">最终负面提示词（可编辑）</div>
+<button class="chip text-[11px] px-2 py-1 rounded-md border border-ink-600 text-white/70" id="negativeReset" type="button">恢复默认</button>
+</div>
+<textarea aria-label="最终负面提示词" class="w-full min-h-[80px] bg-ink-900 border border-ink-600 rounded-lg text-xs p-2.5 resize-y font-mono leading-relaxed" id="negativeEdit" placeholder="显示本次将实际生效的完整负面提示词，可修改或清空" rows="3"></textarea>
+<div class="text-[11px] text-white/40 mt-1.5">清空即不发送负面；确认生成后不会自动补回被删除的内容。开启精修（detailer）时，各检测区域还会追加固定的局部增强文字（手/脸/眼等），不在此文本框内。</div>
 </div>
 </aside><aside aria-labelledby="settingsEditorTab" class="editor-pane" hidden="" id="paramsPanel" role="tabpanel">
 <!-- 隐藏原生 select: 值由卡片/宫格驱动, 提交逻辑沿用原 id -->
@@ -1140,11 +1154,16 @@ async function recoverPendingRequest() {
 
 function jobsBody(promptEn, promptRaw, translation = null) {
   const body = { workflow: $('workflow').value, prompt_en: promptEn, prompt: promptRaw,
-    size: $('size').value || undefined };
+    size: $('size').value || undefined,
+    prompt_mode: 'assisted', prompt_state: 'final' };
+  if ($('negativeEdit') && $('negativeEdit').dataset.touched === 'true') {
+    body.negative_prompt = $('negativeEdit').value;
+  }
   body.completion_level = translation?._completionLevel || completionLevel;
   if (translation?.concept) body.concept = translation.concept;
   if (translation?.prompt_ir) body.prompt_ir = translation.prompt_ir;
-  body.prompt_edited = Boolean(translation && promptEn.trim() !== (translation.prompt_en || '').trim());
+  const shownOrigin = (translation && (translation.final_prompt_en || translation.prompt_en)) || '';
+  body.prompt_edited = Boolean(translation && promptEn.trim() !== shownOrigin.trim());
   if (translation?.reference_contract) {
     body.reference_contract = translation.reference_contract;
     body.reference_scope = translation.reference_scope;
@@ -1173,7 +1192,8 @@ async function doTranslate(opts = {}) {
   const requestReferenceRevision = refImageRevision;
   const requestReferenceScope = referenceScope;
   const requestImageMode = isImg2Img() ? 'img2img' : 'txt2img';
-  const json = { prompt: sourcePrompt, completion_level: requestCompletionLevel };
+  const json = { prompt: sourcePrompt, completion_level: requestCompletionLevel,
+    workflow: $('workflow').value || undefined };
   const selections = getSelectedLoraSelections();
   if (selections.length) json.lora_selections = selections;
   if (opts.reroll) json.reroll = true;
@@ -1208,7 +1228,13 @@ function renderTranslation(result) {
   $('conceptEdit').dataset.compiledValue = concept;
   $('conceptBlock').classList.toggle('hidden', !concept);
   setConceptDirty(false);
-  $('promptEnEdit').value = result.prompt_en || '';
+  // 展示“最终正向文本”（含质量前缀），即确认生成后实际生效的主采样文本 (P1 §8.A)
+  $('promptEnEdit').value = (typeof result.final_prompt_en === 'string' && result.final_prompt_en)
+    ? result.final_prompt_en : (result.prompt_en || '');
+  if (typeof result.final_negative === 'string' && $('negativeEdit')) {
+    $('negativeEdit').value = result.final_negative;
+    delete $('negativeEdit').dataset.touched;
+  }
   renderBreakdown(result.breakdown);
   $('reroll').classList.toggle('hidden', !(concept || result.breakdown));
 }
@@ -1246,10 +1272,12 @@ function setCanvasImage(src) {
     $('canvasBadges').classList.add('hidden'); $('canvasActions').classList.add('hidden');
   }
 }
-async function submitJob(promptEn, promptRaw, translation = null) {
+async function submitJob(promptEn, promptRaw, translation = null, mode = 'assisted') {
   if (!workflows.length) await loadWorkflows();
   if (!workflows.length) throw new Error('未加载到工作流，请检查邀请码是否有效');
-  const job = await postGeneration('/api/jobs', jobsBody(promptEn, promptRaw, translation), 'workshop');
+  const body = jobsBody(promptEn, promptRaw, translation);
+  if (mode === 'manual') { body.prompt_mode = 'manual'; body.prompt_state = 'final'; }
+  const job = await postGeneration('/api/jobs', body, 'workshop');
   if ($('app').dataset.hasResult !== 'true') setCanvasImage(null);
   setWorkbenchView('generating', false);
   $('status').textContent = '已提交，排队中…'; $('status').className = '';
@@ -1358,6 +1386,34 @@ $('confirm').onclick = async () => {
   $('bar').style.display='block'; $('status').className=''; $('status').textContent='提交中…';
   stopPolling(); setBusy(true);
   try { await submitJob(en, prompt, lastTranslation); }
+  catch (e) { done('⚠ ' + e.message, true); }
+};
+$('negativeEdit').addEventListener('input', () => { $('negativeEdit').dataset.touched = 'true'; });
+$('negativeReset').onclick = () => {
+  const wf = currentWf();
+  if (wf && typeof wf.default_negative === 'string') {
+    $('negativeEdit').value = wf.default_negative;
+    delete $('negativeEdit').dataset.touched;
+    $('status').textContent = '已恢复默认负面提示词';
+    $('status').className = '';
+  }
+};
+$('fillDefaults').onclick = () => {
+  const wf = currentWf();
+  if (!wf) return;
+  $('promptEnEdit').value = (wf.quality_prefix || '').trim();
+  if (typeof wf.default_negative === 'string') $('negativeEdit').value = wf.default_negative;
+  delete $('negativeEdit').dataset.touched;
+  $('status').textContent = '已填入默认质量前缀与负面预设，可继续编辑';
+  $('status').className = '';
+};
+$('manualGo').onclick = async () => {
+  const en = ($('promptEnEdit').value || '').trim();
+  if (!en) { $('status').textContent = '请先填写英文 Prompt'; $('status').className = 'text-amber-300'; return; }
+  $('editActions').classList.add('hidden');
+  $('bar').style.display = 'block'; $('status').className = ''; $('status').textContent = '提交中（不翻译）…';
+  stopPolling(); setBusy(true);
+  try { await submitJob(en, $('prompt').value.trim(), null, 'manual'); }
   catch (e) { done('⚠ ' + e.message, true); }
 };
 $('editCancel').onclick = () => {

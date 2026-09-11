@@ -53,6 +53,8 @@ workflows:
       eyes: "30"
     sizes: ["832x1216", "896x1152", "1024x1024", "1344x768", "1024x1536", "1536x864"]
     quality_prefix: "masterpiece, best quality, newest, absurdres, "
+    # 负面文本节点: 最终化后字面写入其 CLIPTextEncode.text (会切断该节点原 text 连接)
+    negative_node: "55"
 
 # ---- 旧 LoRA 配置兼容层（已由 server/lora_registry.yaml + onboarding 取代）----
 # 新 LoRA 请运行 `.tools/register_lora.py --agent`；不要继续向这里新增条目。

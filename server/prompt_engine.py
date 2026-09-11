@@ -1439,3 +1439,54 @@ async def google_translate_batch(texts: list[str]) -> list[str]:
         r.raise_for_status()
         res.append("".join(seg[0] for seg in r.json()[0]).strip())
     return res
+
+
+def finalize_generation_text(*, prompt_mode: str = "assisted", prompt_state: str | None = None,
+                             prompt_en: str, bindings: list[dict] | None = None,
+                             quality_prefix: str = "", default_negative: str | None = None,
+                             default_negative_dynamic: bool = False,
+                             negative_prompt=None) -> dict:
+    """唯一最终化入口：确定主采样正向与完整负面（P1 契约 §4.3/§8.A/§8.B）。
+
+    纯函数，不落盘、不排队；状态只用显式字段判定，不做字符串猜测。
+
+    正向：
+      - ``prompt_state="final"`` 或 ``prompt_mode="manual"`` → ``prompt_en`` 原样（不再组装）；
+      - 其余（含 ``prompt_state=None`` 旧路径）→ ``quality_prefix`` + LoRA trigger 编译。
+    负面三态：
+      - 非空 str → 完整覆盖；``""`` → 清空；
+      - ``None`` + 旧路径（``prompt_state=None``）→ 返回 ``None``，保留工作流 wildcard；
+      - ``None`` + 新路径 → 使用工作流默认真实文字；含动态语法则 400。
+    """
+    mode = "manual" if str(prompt_mode or "").strip().lower() == "manual" else "assisted"
+    state = None if prompt_state in (None, "") else str(prompt_state).strip().lower()
+    if state not in (None, "body", "final"):
+        raise HTTPException(400, "prompt_state 必须是 body 或 final")
+    text = (prompt_en or "").strip()
+    if not text:
+        raise HTTPException(400, "提示词为空")
+    if state == "final" or mode == "manual":
+        final_prompt = text
+    else:
+        final_prompt = (quality_prefix or "") + compile_lora_bindings(text, bindings)
+    if negative_prompt is None:
+        if state is None:
+            final_negative, negative_source = None, "workflow_wildcard"
+        elif default_negative is None or default_negative_dynamic:
+            raise HTTPException(
+                400, "当前工作流默认负面包含动态语法，暂不支持预览；请提供完整负面提示词")
+        else:
+            final_negative, negative_source = default_negative, "workflow_default"
+    elif not isinstance(negative_prompt, str):
+        raise HTTPException(400, "negative_prompt 必须是字符串")
+    elif negative_prompt.strip():
+        final_negative, negative_source = negative_prompt, "user"
+    else:
+        final_negative, negative_source = "", "user"
+    return {
+        "prompt_mode": mode,
+        "prompt_state": state,
+        "final_prompt_en": final_prompt,
+        "final_negative": final_negative,
+        "negative_source": negative_source,
+    }

@@ -19,11 +19,16 @@ from fastapi.staticfiles import StaticFiles
 
 from server.lora import (
     _bindings_as_selections,
-    compile_lora_bindings,
     get_lora_registry,
     resolve_lora_selections,
 )
-from server.prompt_engine import _IR_FIELDS, _normalize_optional_concept, _validate_prompt_ir, translate
+from server.prompt_engine import (
+    _IR_FIELDS,
+    _normalize_optional_concept,
+    _validate_prompt_ir,
+    finalize_generation_text,
+    translate,
+)
 from server.persistence import OwnershipError, QuotaExceeded, local_day, redact_secrets
 from server.runtime import CLIENT, IDENTITY, IMAGES, JOBS, QUEUE, SESSIONS, SOURCE_IMAGES, STORE, USAGE
 from server.settings import (
@@ -53,6 +58,7 @@ from server.workflow_engine import (
     ComfySubmissionUncertain,
     ComfyUnavailable,
     build_prompt,
+    default_negative_text,
     inspect_comfy_prompt,
     retrieve_comfy_result,
     submission_payload,
@@ -169,6 +175,8 @@ def _job_request(job: dict, image_filename: str | None) -> dict:
         registry_revision=job.get("registry_revision"), seed=job["seed"],
         fit_mode=job.get("fit_mode", "preserve"),
         crop_position=job.get("crop_position", "center"),
+        final_prompt_en=job.get("final_prompt_en"),
+        final_negative=job.get("final_negative"),
     )
     prompt_id = job.get("comfy_prompt_id") or str(uuid.uuid4())
     return submission_payload(built, prompt_id, job["id"])
@@ -283,7 +291,17 @@ async def _submit_queued(job: dict) -> None:
             return
         job["comfy_image_filename"] = image_filename
 
-    request = _job_request(job, image_filename)
+    try:
+        request = _job_request(job, image_filename)
+    except HTTPException as exc:
+        # 排队期间 Registry/工作流配置变化等：明确失败，不静默改用最新 binding (P1 §8.D)
+        now = time.time()
+        job.update(
+            status="failed", failed_at=now, error_kind="pipeline_config_changed",
+            error_message=f"生成前校验失败，未提交 ComfyUI: {exc.detail}",
+        )
+        _cache_job(STORE.save_job(job))
+        return
     now = time.time()
     job.update(
         status="dispatching", comfy_prompt_id=request["prompt_id"],
@@ -433,10 +451,15 @@ async def auth_logout(response: Response):
 
 @app.get("/api/workflows")
 async def list_workflows(token: str = Depends(auth)):
-    return [
-        {"name": k, "label": v.get("label", k), "sizes": v.get("sizes")}
-        for k, v in WORKFLOWS.items()
-    ]
+    items = []
+    for k, v in WORKFLOWS.items():
+        default_negative, static = default_negative_text(k)
+        items.append({
+            "name": k, "label": v.get("label", k), "sizes": v.get("sizes"),
+            "quality_prefix": v.get("quality_prefix", ""),
+            "default_negative": default_negative if static else None,
+        })
+    return items
 
 @app.get("/api/loras")
 async def list_loras(token: str = Depends(auth)):
@@ -565,6 +588,7 @@ _SNAPSHOT_FIELDS = (
     "lora_bindings", "registry_revision", "width", "height", "seed", "parent_job_id",
     "generation_mode", "denoise", "fit_mode", "crop_position", "change_fields",
     "reference_contract", "reference_scope", "detailer",
+    "prompt_mode", "prompt_state", "final_prompt_en", "final_negative", "negative_source",
 )
 
 
@@ -577,6 +601,7 @@ def _public_job(job: dict) -> dict:
         return {key: job[key] for key in ("id", "status") if key in job}
     keys = ("id", "status", "prompt_raw", "prompt_en", "workflow", "concept", "completion_level",
             "lora_bindings", "lora_warnings", "registry_revision", "prompt_ir", "seed",
+            "prompt_mode", "prompt_state", "final_prompt_en", "final_negative", "negative_source",
             "parent_job_id", "generation_mode", "denoise", "fit_mode", "crop_position",
             "width", "height", "state_snapshot", "change_fields", "image_warnings",
             "reference_contract", "reference_scope", "image", "error", "error_kind",
@@ -605,6 +630,33 @@ def _request_fingerprint(body: dict) -> str:
             normalized[key] = "sha256:" + hashlib.sha256(value.encode("utf-8")).hexdigest()
     raw = json.dumps(normalized, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
     return hashlib.sha256(raw.encode("utf-8")).hexdigest()
+
+
+def _normalize_prompt_mode(value) -> str:
+    """文本来源策略：assisted（中文辅助，需系统组装前缀/trigger）| manual（用户原文即最终）。"""
+    mode = "assisted" if value in (None, "") else str(value).strip().lower()
+    if mode not in ("assisted", "manual"):
+        raise HTTPException(400, "prompt_mode 必须是 assisted 或 manual")
+    return mode
+
+
+def _normalize_prompt_state(value) -> str | None:
+    """文本状态：body（待组装正文）| final（已最终化文本）| None（旧路径，兼容最终化一次）。"""
+    if value in (None, ""):
+        return None
+    state = str(value).strip().lower()
+    if state not in ("body", "final"):
+        raise HTTPException(400, "prompt_state 必须是 body 或 final")
+    return state
+
+
+def _normalize_negative_prompt(value):
+    """负面三态：None=缺省；str（含空串）原样；其它类型 400。"""
+    if value is None:
+        return None
+    if not isinstance(value, str):
+        raise HTTPException(400, "negative_prompt 必须是字符串")
+    return value
 
 
 def _idempotent_existing(owner_id: str, request_id: str, fingerprint: str) -> dict | None:
@@ -656,6 +708,19 @@ async def translate_prompt(req: Request, token: str = Depends(verify_token)):
         reference_scope=scope, source_image=bool(source_image),
     )
     check_banned(prompt_en)
+    # 最终文本预览：与提交共用同一最终化函数，返回可展示/编辑的完整正负 (P1 §4.3)
+    preview_wf = body.get("workflow") or next(iter(WORKFLOWS), "")
+    if preview_wf not in WORKFLOWS:
+        raise HTTPException(400, "未知工作流")
+    preview_negative, preview_static = default_negative_text(preview_wf)
+    preview = finalize_generation_text(
+        prompt_mode=_normalize_prompt_mode(body.get("prompt_mode")),
+        prompt_state="body", prompt_en=prompt_en,
+        bindings=prompt_ir_meta.get("lora_bindings") or [],
+        quality_prefix=WORKFLOWS[preview_wf].get("quality_prefix", ""),
+        default_negative=preview_negative, default_negative_dynamic=not preview_static,
+        negative_prompt=_normalize_negative_prompt(body.get("negative_prompt")),
+    )
     return {
         "prompt_en": prompt_en,
         "breakdown": breakdown,
@@ -667,6 +732,10 @@ async def translate_prompt(req: Request, token: str = Depends(verify_token)):
         "registry_revision": prompt_ir_meta.get("registry_revision"),
         "reference_contract": prompt_ir_meta.get("reference_contract"),
         "reference_scope": prompt_ir_meta.get("reference_scope"),
+        "final_prompt_en": preview["final_prompt_en"],
+        "final_negative": preview["final_negative"],
+        "negative_source": preview["negative_source"],
+        "prompt_mode": preview["prompt_mode"],
     }
 
 async def _enqueue(owner_id: str, wf_name: str, prompt_en: str, prompt_raw: str,
@@ -687,7 +756,10 @@ async def _enqueue(owner_id: str, wf_name: str, prompt_en: str, prompt_raw: str,
                    client_request_id: str | None = None,
                    request_fingerprint: str | None = None,
                    session: dict | None = None,
-                   turn: dict | None = None) -> str:
+                   turn: dict | None = None,
+                   prompt_mode: str = "assisted",
+                   prompt_state: str | None = None,
+                   negative_prompt=None) -> str:
     """Validate and atomically persist one generation before scheduling it."""
     completion_level = _normalize_completion_level(completion_level)
     concept = _normalize_optional_concept(concept, "concept")
@@ -746,9 +818,19 @@ async def _enqueue(owner_id: str, wf_name: str, prompt_en: str, prompt_raw: str,
             override = strength_char if binding.get("type") == "character" else strength_style
             if override is not None:
                 binding["strength_model"] = binding["strength_clip"] = float(override)
-        prompt_en = compile_lora_bindings(prompt_en, resolved_bindings)
     else:
         strength_char = strength_style = None
+    # 唯一最终化：确定主采样正向与完整负面 (P1 §4.3/§8)。旧路径 (prompt_state=None) 仍做一次
+    # 最终化（前缀+trigger），但负面返回 None 以保留工作流 wildcard 行为。
+    default_negative, default_static = (default_negative_text(wf_name)
+                                        if prompt_state is not None else (None, False))
+    finalized = finalize_generation_text(
+        prompt_mode=prompt_mode, prompt_state=prompt_state, prompt_en=prompt_en,
+        bindings=resolved_bindings, quality_prefix=wcfg.get("quality_prefix", ""),
+        default_negative=default_negative, default_negative_dynamic=not default_static,
+        negative_prompt=negative_prompt,
+    )
+    prompt_en = finalized["final_prompt_en"]
     if len(prompt_en) > MAX_COMPILED_PROMPT_CHARS:
         raise HTTPException(400, f"编译后的提示词过长(>{MAX_COMPILED_PROMPT_CHARS})")
     # detailer 校验 (只允许 face/hand/nsfw/eyes)
@@ -785,6 +867,10 @@ async def _enqueue(owner_id: str, wf_name: str, prompt_en: str, prompt_raw: str,
         "comfy_image_filename": image_filename, "denoise": denoise,
         "detailer": detailer,
         "prompt_ir": prompt_ir, "prompt_edited": bool(prompt_edited), "seed": seed,
+        "prompt_mode": finalized["prompt_mode"], "prompt_state": finalized["prompt_state"],
+        "final_prompt_en": finalized["final_prompt_en"],
+        "final_negative": finalized["final_negative"],
+        "negative_source": finalized["negative_source"],
         "parent_job_id": parent_job_id, "session_id": session_id,
         "generation_mode": generation_mode or ("img2img" if has_source else "txt2img"),
         "fit_mode": fit_mode, "crop_position": crop_position,
@@ -900,7 +986,10 @@ async def create_job(req: Request, owner_id: str = Depends(auth)):
                             reference_scope=body.get("reference_scope"),
                             source_image_bytes=image_bytes,
                             client_request_id=client_request_id,
-                            request_fingerprint=request_fingerprint)
+                            request_fingerprint=request_fingerprint,
+                            prompt_mode=_normalize_prompt_mode(body.get("prompt_mode")),
+                            prompt_state=_normalize_prompt_state(body.get("prompt_state")),
+                            negative_prompt=_normalize_negative_prompt(body.get("negative_prompt")))
     replayed = bool(JOBS.get(job_id, {}).get("idempotent_replay"))
     job = _load_job(job_id, owner_id)
     if replayed:
@@ -1143,6 +1232,21 @@ async def dialog_turn(req: Request, owner_id: str = Depends(verify_token)):
     check_banned(prompt_en)
     if source and _bindings_as_selections(meta.get("lora_bindings", [])) != selections:
         raise HTTPException(502, "增量修改改变了固定 LoRA binding，本次未入队；请重试或回工坊开启新链")
+    # 模式/负面：暗房分支默认继承源 final 正负；重新编译（vibe / 有 delta）回到 assisted 来源 (P1 §8.C)。
+    # 旧任务无 final_prompt_en 时按兼容路径重新组装（不把正文误当最终文本）。
+    if source:
+        inherited_negative = source.get("final_negative")
+        recompiled = action == "vibe" or bool(delta)
+        if not recompiled and source.get("final_prompt_en") is not None:
+            prompt_mode = source.get("prompt_mode") or "assisted"
+            prompt_state = "final"
+        else:
+            prompt_mode, prompt_state = "assisted", "body"
+        negative_prompt = body.get("negative_prompt", inherited_negative)
+    else:
+        prompt_mode = _normalize_prompt_mode(body.get("prompt_mode"))
+        prompt_state = _normalize_prompt_state(body.get("prompt_state"))
+        negative_prompt = _normalize_negative_prompt(body.get("negative_prompt"))
     job_id = await _enqueue(
         owner_id, wf_name, prompt_en, raw, size, None,
         None if source else body.get("strength_char"), None if source else body.get("strength_style"),
@@ -1158,6 +1262,7 @@ async def dialog_turn(req: Request, owner_id: str = Depends(verify_token)):
         source_image_bytes=source_image_bytes,
         client_request_id=client_request_id,
         request_fingerprint=request_fingerprint,
+        prompt_mode=prompt_mode, prompt_state=prompt_state, negative_prompt=negative_prompt,
         session=session,
         turn={"action": action, "delta": delta},
     )

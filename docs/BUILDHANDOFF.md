@@ -115,6 +115,15 @@ docs/DEVLOG.md                开发演进
 
 旧验收页和图片在本机 gitignored `server/images/` 中，clone 不保证存在。它们只作维护者复盘，不是公开演示素材。
 
+### 解封后有限实验：P1 最终正负文本控制（2026-09-11）
+
+用户明确解除封版、把「中文意图 + LoRA 用法」立为新的有限实验线。**P1 已交付**（非 P2）：稳定默认预设 + 主采样完整正负可编辑 + 一次最终化。要点：
+
+- 新增唯一最终化入口 `prompt_engine.finalize_generation_text`；请求用显式 `prompt_mode`(assisted/manual) 与 `prompt_state`(body/final) 区分文本来源与状态（不用字符串猜测）。质量前缀/trigger 只组装一次，用户删除后不补回。
+- 负面三态（缺省 / 空串清空 / 非空完整覆盖）；负面写入点为覆盖负面节点 `CLIPTextEncode.text`（config `negative_node`，本机 55），不改 ImpactWildcardProcessor；缺省负面取上游 `wildcard_text` 真实文字而非 `populated_text`。
+- 旧客户端与旧内部调用兼容；暗房无 delta 继承 final、有 delta/vibe 重编译；排队恢复只用已落盘 final，Registry/配置变化以 `pipeline_config_changed` 明确失败。
+- 验证：新增 `.tools/test_final_text.py` 15 项 + 既有 58/19/18/composition 与前端检查全通过；**未做真实模型/GPU 或实图验收，UI 未做浏览器视口实测**。`v1.0.0`/`9af5604` 基线标签未移动；`server/lora_registry.yaml` 未修改。
+
 ## 已知边界
 
 - 旧内存任务、localStorage 历史和孤立图片没有可信 owner/参数，不能凭空写入 SQLite；文件可作为旧图另存。
