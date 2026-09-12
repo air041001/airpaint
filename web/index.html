@@ -504,6 +504,32 @@ function wfHint(w) {
 }
 function currentWf() { return workflows.find(x => x.name === $('workflow').value); }
 function isImg2Img() { return img2imgMode; }
+// 负面框“就绪”状态：ready = 已加载/经用户确认过内容，提交时按显示值发送（含空串）；
+// 未就绪（从未初始化）= 不发送，交由后端使用工作流默认 (P1.1 §2.2)。
+function setNegativeEditor(text, ready = true) {
+  const box = $('negativeEdit');
+  if (!box) return;
+  box.value = text == null ? '' : text;
+  box.dataset.ready = ready ? 'true' : 'false';
+}
+function negativeForSubmit() {
+  const box = $('negativeEdit');
+  if (!box || box.dataset.ready !== 'true') return undefined;
+  return box.value;
+}
+function initNegativeEditorForWorkflow() {
+  const box = $('negativeEdit');
+  if (!box || box.dataset.touched === 'true') return;   // 不覆盖用户已修改
+  const wf = currentWf();
+  if (!wf) return;
+  if (typeof wf.default_negative === 'string') {
+    setNegativeEditor(wf.default_negative, true);
+    box.placeholder = '显示本次将实际生效的完整负面提示词，可修改或清空';
+  } else {
+    setNegativeEditor('', false);
+    box.placeholder = '该工作流默认负面含动态语法，请手动填写完整负面提示词';
+  }
+}
 
 async function loadWorkflows() {
   workflows = await api('/api/workflows');
@@ -511,6 +537,7 @@ async function loadWorkflows() {
   $('workflow').innerHTML = workflows.map(w => `<option value="${w.name}">${w.label}</option>`).join('');
   if (!$('workflow').value) $('workflow').value = workflows[0]?.name;
   $('wfCurrentLabel').textContent = currentWf()?.label || '未加载';
+  initNegativeEditorForWorkflow();
   updateSizes();
 }
 // 模式: 文生图 / 图生图
@@ -1156,9 +1183,8 @@ function jobsBody(promptEn, promptRaw, translation = null) {
   const body = { workflow: $('workflow').value, prompt_en: promptEn, prompt: promptRaw,
     size: $('size').value || undefined,
     prompt_mode: 'assisted', prompt_state: 'final' };
-  if ($('negativeEdit') && $('negativeEdit').dataset.touched === 'true') {
-    body.negative_prompt = $('negativeEdit').value;
-  }
+  const neg = negativeForSubmit();
+  if (neg !== undefined) body.negative_prompt = neg;
   body.completion_level = translation?._completionLevel || completionLevel;
   if (translation?.concept) body.concept = translation.concept;
   if (translation?.prompt_ir) body.prompt_ir = translation.prompt_ir;
@@ -1232,7 +1258,7 @@ function renderTranslation(result) {
   $('promptEnEdit').value = (typeof result.final_prompt_en === 'string' && result.final_prompt_en)
     ? result.final_prompt_en : (result.prompt_en || '');
   if (typeof result.final_negative === 'string' && $('negativeEdit')) {
-    $('negativeEdit').value = result.final_negative;
+    setNegativeEditor(result.final_negative, true);
     delete $('negativeEdit').dataset.touched;
   }
   renderBreakdown(result.breakdown);
@@ -1388,21 +1414,27 @@ $('confirm').onclick = async () => {
   try { await submitJob(en, prompt, lastTranslation); }
   catch (e) { done('⚠ ' + e.message, true); }
 };
-$('negativeEdit').addEventListener('input', () => { $('negativeEdit').dataset.touched = 'true'; });
+$('negativeEdit').addEventListener('input', () => {
+  $('negativeEdit').dataset.touched = 'true';
+  $('negativeEdit').dataset.ready = 'true';
+});
 $('negativeReset').onclick = () => {
   const wf = currentWf();
   if (wf && typeof wf.default_negative === 'string') {
-    $('negativeEdit').value = wf.default_negative;
+    setNegativeEditor(wf.default_negative, true);
     delete $('negativeEdit').dataset.touched;
     $('status').textContent = '已恢复默认负面提示词';
     $('status').className = '';
+  } else {
+    $('status').textContent = '该工作流默认负面含动态语法，请手动填写完整负面提示词';
+    $('status').className = 'text-amber-300';
   }
 };
 $('fillDefaults').onclick = () => {
   const wf = currentWf();
   if (!wf) return;
   $('promptEnEdit').value = (wf.quality_prefix || '').trim();
-  if (typeof wf.default_negative === 'string') $('negativeEdit').value = wf.default_negative;
+  if (typeof wf.default_negative === 'string') setNegativeEditor(wf.default_negative, true);
   delete $('negativeEdit').dataset.touched;
   $('status').textContent = '已填入默认质量前缀与负面预设，可继续编辑';
   $('status').className = '';
