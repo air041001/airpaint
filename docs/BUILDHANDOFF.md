@@ -124,6 +124,13 @@ docs/DEVLOG.md                开发演进
 - 旧客户端与旧内部调用兼容；暗房无 delta 继承 final、有 delta/vibe 重编译；排队恢复只用已落盘 final，Registry/配置变化以 `pipeline_config_changed` 明确失败。
 - 验证：新增 `.tools/test_final_text.py` 15 项 + 既有 58/19/18/composition 与前端检查全通过；**未做真实模型/GPU 或实图验收，UI 未做浏览器视口实测**。`v1.0.0`/`9af5604` 基线标签未移动；`server/lora_registry.yaml` 未修改。
 
+### P2A：LoRA 用法资料不可变入库与关联读取（2026-09-12）
+
+- 新增 `lora_usage` 不可变版本表（`SCHEMA_VERSION` 2，事务迁移）：版本ID = 规范化完整记录的 sha256；正文完整保存，结构化候选可空、不伪造。
+- Registry 只存 `usage.ref(s)` 引用；`resolve_lora_usage` 返回 `no_ref/ok/partial/invalid` 与 `shared`/`profiles[pid]`，不相关 Profile 不返回，缺失/不符分别报告。
+- `.tools/register_lora.py --usage`（必须显式 `--db`）写记录并打印可合并片段；示例见 `docs/lora_usage.example.yaml`；契约见 `docs/LORA_USAGE_CONTRACT.md` §9。
+- 验证：新增 `.tools/test_lora_usage.py` 10 项；既有套件与前端检查通过；测试使用临时库，**生产库未迁移/未触碰**（mtime 不变），真实 Registry 未写。零真实模型/GPU 调用；本批不改生成输出（P2B 再接运行时）。
+
 ## 已知边界
 
 - 旧内存任务、localStorage 历史和孤立图片没有可信 owner/参数，不能凭空写入 SQLite；文件可作为旧图另存。

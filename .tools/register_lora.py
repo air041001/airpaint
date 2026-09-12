@@ -869,6 +869,74 @@ def collect_asset(filename: str, asset_id: str | None, existing: dict | None = N
     return asset_id, asset
 
 
+def _read_optional_json(path: str | None, label: str) -> dict:
+    if not path:
+        return {}
+    try:
+        value = json.loads(Path(path).read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise SystemExit(f"{label} 不是有效 JSON: {exc}")
+    if not isinstance(value, dict):
+        raise SystemExit(f"{label} 必须是 JSON 对象")
+    return value
+
+
+def register_usage(asset_key: str, *, db_path: str, body: str = "", profile_id: str = "",
+                   source_kind: str = "user", source_url: str = "",
+                   candidate: dict | None = None, advisory: dict | None = None,
+                   background: dict | None = None, verified: str = "unverified") -> dict:
+    """把一条用法资料写入不可变记录，返回记录与可合并的 Registry usage 片段。
+
+    只写入显式指定的数据库；不触碰生产库、不修改真实 Registry（P2A §3）。
+    """
+    from server.persistence import AirPaintStore
+    from server.lora import USAGE_SOURCE_KINDS, USAGE_VERIFIED_STATUSES
+    if not db_path:
+        raise SystemExit("登记用法资料需要显式 --db <path>；不会默认写生产库")
+    if source_kind not in USAGE_SOURCE_KINDS:
+        raise SystemExit(f"source_kind 必须是 {USAGE_SOURCE_KINDS}")
+    if verified not in USAGE_VERIFIED_STATUSES:
+        raise SystemExit(f"verified 必须是 {USAGE_VERIFIED_STATUSES}")
+    if not asset_key.strip():
+        raise SystemExit("需要 --asset-key")
+    store = AirPaintStore(Path(db_path))
+    try:
+        record, created = store.save_lora_usage({
+            "asset_key": asset_key.strip(), "profile_id": profile_id.strip(),
+            "body": body, "source_kind": source_kind, "source_url": source_url,
+            "candidate": candidate or {}, "advisory": advisory or {},
+            "background": background or {}, "verified": verified,
+        })
+    finally:
+        store.close()
+    return {"record": record, "created": created,
+            "registry_usage": {"ref": record["usage_id"]}}
+
+
+def run_usage_cli(args) -> int:
+    if args.body_file and args.body:
+        raise SystemExit("--body-file 与 --body 只能二选一")
+    body = Path(args.body_file).read_text(encoding="utf-8") if args.body_file else (args.body or "")
+    if not body.strip():
+        raise SystemExit("正文为空；用法资料必须保留原文，已取消。")
+    result = register_usage(
+        args.asset_key, db_path=args.db, body=body, profile_id=args.profile,
+        source_kind=args.source_kind, source_url=args.source_url,
+        candidate=_read_optional_json(args.candidate_file, "candidate"),
+        advisory=_read_optional_json(args.advisory_file, "advisory"),
+        background=_read_optional_json(args.background_file, "background"),
+        verified=args.verified,
+    )
+    record = result["record"]
+    print(f"{'已新增' if result['created'] else '已存在（未覆盖）'}用法记录 usage_id={record['usage_id']}")
+    print(f"asset={record['asset_key']} profile={record['profile_id'] or '(asset 级)'} "
+          f"source_kind={record['source_kind']} verified={record['verified']}")
+    print("\n--- 可手工合并到 server/lora_registry.yaml 的片段（本工具不自动写入 Registry）---")
+    print(yaml.safe_dump({record["asset_key"]: {"usage": result["registry_usage"]}},
+                         allow_unicode=True, sort_keys=False, width=120))
+    return 0
+
+
 def main_cli() -> int:
     parser = argparse.ArgumentParser(description="注册/编辑 AirPaint LoRA semantic profiles")
     parser.add_argument("filename", nargs="?", help="models/loras 下的 safetensors 文件名")
@@ -881,7 +949,21 @@ def main_cli() -> int:
     parser.add_argument("--preview", metavar="ASSET_ID", help="为已注册的 style Asset 生成并人工确认人物预览")
     parser.add_argument("--description-file", metavar="PATH", help="Agent 模式从 UTF-8 文件读取作者说明")
     parser.add_argument("--no-manager-scan", action="store_true", help="不刷新或验证 LoRA Manager 索引（仅用于离线准备）")
+    parser.add_argument("--usage", action="store_true", help="登记 LoRA 用法资料（写入不可变记录，不改真实 Registry）")
+    parser.add_argument("--asset-key", metavar="KEY", help="--usage: 目标 Asset key")
+    parser.add_argument("--profile", metavar="PID", default="", help="--usage: 资料归属 Profile；留空 = asset 级共享")
+    parser.add_argument("--body-file", metavar="PATH", help="--usage: 作者/社区原文 UTF-8 文件（完整保留）")
+    parser.add_argument("--body", metavar="TEXT", help="--usage: 原文文本（与 --body-file 二选一）")
+    parser.add_argument("--source-kind", default="user", choices=["author", "community", "user", "inferred"], help="--usage: 来源类别")
+    parser.add_argument("--source-url", default="", help="--usage: 来源地址（仅元数据，不抓取）")
+    parser.add_argument("--candidate-file", metavar="PATH", help="--usage: 结构化候选 JSON（可为空；提取失败不丢正文）")
+    parser.add_argument("--advisory-file", metavar="PATH", help="--usage: 适用条件/建议 JSON")
+    parser.add_argument("--background-file", metavar="PATH", help="--usage: 样例背景 JSON（模型/版本/参数）")
+    parser.add_argument("--verified", default="unverified", choices=["unverified", "source_confirmed", "image_verified"], help="--usage: 验证状态")
+    parser.add_argument("--db", metavar="PATH", help="--usage: 目标数据库（必填，避免误写生产库）")
     args = parser.parse_args()
+    if args.usage:
+        return run_usage_cli(args)
     raw = load_registry()
     if args.agent:
         return run_agent_onboarding(raw, args.filename, args.description_file, not args.no_manager_scan)

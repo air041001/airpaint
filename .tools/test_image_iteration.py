@@ -10,6 +10,11 @@ from pathlib import Path
 from unittest.mock import AsyncMock, patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
+# 测试隔离：DB 指向临时 state，避免导入即触碰/迁移生产 server/state (P2A §3)。
+import os as _os
+import tempfile as _tempfile
+_os.environ.setdefault("AIRPAINT_STATE_DIR", _tempfile.mkdtemp(prefix="airpaint-test-state-"))
 from fastapi import HTTPException
 from server import api, prompt_engine as prompt, settings, workflow_engine as workflow
 from server.persistence import AirPaintStore

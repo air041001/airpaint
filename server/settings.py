@@ -1,4 +1,5 @@
 """AirPaint 路径、配置与稳定协议常量。"""
+import os
 from pathlib import Path
 
 import yaml
@@ -23,9 +24,13 @@ CHAR_DICT_PATH = BASE / "char_dict.yaml"
 KNOWLEDGE_CACHE_DIR = BASE / "knowledge_cache"
 CHAR_AUTO_PATH = KNOWLEDGE_CACHE_DIR / "characters_auto.yaml"
 CHAR_LOOKUP_PATH = KNOWLEDGE_CACHE_DIR / "characters_lookup.json"
-LORA_REGISTRY_PATH = BASE / "lora_registry.yaml"
+# 测试/维护工具可注入临时路径，避免导入 runtime/api 即触碰生产 state 或真实 Registry；
+# 未设置环境变量时行为与以往一致 (P2A §3)。
+LORA_REGISTRY_PATH = (Path(os.environ["AIRPAINT_LORA_REGISTRY"])
+                      if os.environ.get("AIRPAINT_LORA_REGISTRY") else BASE / "lora_registry.yaml")
 LORA_PREVIEWS = BASE / "lora_previews"
-STATE_DIR = BASE / "state"
+STATE_DIR = (Path(os.environ["AIRPAINT_STATE_DIR"])
+             if os.environ.get("AIRPAINT_STATE_DIR") else BASE / "state")
 DATABASE_PATH = STATE_DIR / "airpaint.db"
 IDENTITY_KEY_PATH = STATE_DIR / "identity.key"
 SOURCE_IMAGES = STATE_DIR / "source_images"

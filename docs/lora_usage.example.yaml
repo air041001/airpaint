@@ -1,0 +1,58 @@
+# LoRA 用法资料示例（P2A）—— 请勿直接写入 server/lora_registry.yaml
+#
+# 工作方式：正文与结构化候选存入**不可变记录**（SQLite 表 `lora_usage`），
+# Registry 的 asset / profile 只保存对这些记录的**引用**（usage.ref / usage.refs）。
+# 这样同一份 negative/template 不会出现两套真相。
+#
+# 维护者导入步骤（在 E:\comfy-web 下执行）：
+#   1. 准备作者/社区原文（完整保留，不截断）与可选候选 JSON：
+#        body.txt          # 作者说明原文
+#        candidate.json    # {"negative": [...], "template": "..."}（可省略；提取失败不丢正文）
+#   2. 写入不可变记录（必须显式 --db；不会自动写生产库或真实 Registry）：
+#        # 先用临时库演练：
+#        python .tools/register_lora.py --usage --asset-key <ASSET_KEY> \
+#            --source-kind author --body-file body.txt --candidate-file candidate.json \
+#            --db .tools/.artifacts/usage-dryrun.db
+#        # 确认无误后写入正式库：
+#        python .tools/register_lora.py --usage --asset-key <ASSET_KEY> \
+#            --source-kind author --body-file body.txt --candidate-file candidate.json \
+#            --db server/state/airpaint.db
+#   3. 把命令输出的 usage 片段手工合并进对应 asset（或 profile）：
+#        <ASSET_KEY>:
+#          usage:
+#            ref: <usage_id>
+#      同一个 LoRA 可以有 asset 级（profile_id=""）与多个 profile 级资料，
+#      asset 级作为共享建议，profile 级只在该 Profile 被选中时返回。
+#   4. 刷新 AirPaint；Registry revision 会随 YAML 变化，旧任务仍按保存时的资料解释。
+#
+# 注意：
+#   - 数据库备份（online backup）包含资料正文；Registry YAML 由你独立管理，
+#     恢复时需保证 Registry 与资料库匹配（备份不包含 Registry YAML）。
+#   - source_url 仅为元数据：后端不联网抓取，也不执行正文里的任何指令。
+#   - source_kind 至少区分 author/community/user/inferred；粘贴社区样例不要标成 author。
+#
+# ---- 以下为字段形状示例（虚构资源，勿照抄写入真实 Registry）----
+schema_version: 1
+loras:
+  demo_style_alpha:                     # 虚构 key
+    name: "Demo Style Alpha (虚构)"
+    type: style
+    file: "demo_style_alpha.safetensors"
+    trigger_policy: none
+    selection:
+      default_profile: base
+    usage:                              # asset 级共享资料引用
+      refs:
+        - "8a0201a1a543640fa457c5a388bc20f1173a284a2f6b61f9067b0f7b26b5c65e"
+    profiles:
+      base:
+        name: "Base"
+        aliases: ["Demo Alpha"]
+        provides: ["demo style"]
+        required_tags: ["demo_style_alpha"]
+        default_tags: []
+        optional_tags: {}
+        usage:                          # 该 Profile 专属资料引用
+          ref: "b0f7c1d2e3f4a5b6c7d8e9f0a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0"
+        source: manual config
+        verified: curated

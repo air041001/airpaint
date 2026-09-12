@@ -10,6 +10,10 @@ import unittest
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+# 测试隔离：DB 指向临时 state，避免导入即触碰/迁移生产 server/state (P2A §3)。
+import tempfile as _tempfile
+os.environ.setdefault("AIRPAINT_STATE_DIR", _tempfile.mkdtemp(prefix="airpaint-test-state-"))
+
 from fastapi import HTTPException
 
 from server.api import _normalize_negative_prompt, _normalize_prompt_mode, _normalize_prompt_state, _request_fingerprint

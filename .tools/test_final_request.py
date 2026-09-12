@@ -12,6 +12,11 @@ from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
+# 测试隔离：DB 指向临时 state，避免导入即触碰/迁移生产 server/state (P2A §3)。
+import os as _os
+import tempfile as _tempfile
+_os.environ.setdefault("AIRPAINT_STATE_DIR", _tempfile.mkdtemp(prefix="airpaint-test-state-"))
+
 from server import api
 from server import lora as lora_module
 from server.lora import resolve_lora_selections

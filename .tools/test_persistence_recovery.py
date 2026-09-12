@@ -21,6 +21,11 @@ import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
+# 测试隔离：DB 指向临时 state，避免导入即触碰/迁移生产 server/state (P2A §3)。
+import os as _os
+import tempfile as _tempfile
+_os.environ.setdefault("AIRPAINT_STATE_DIR", _tempfile.mkdtemp(prefix="airpaint-test-state-"))
+
 from server import api, workflow_engine as workflow
 from server.maintenance import create_backup, restore_backup, verify_backup
 from server.persistence import AirPaintStore, OwnerIdentity

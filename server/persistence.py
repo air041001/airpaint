@@ -20,7 +20,7 @@ from pathlib import Path
 from typing import Any
 
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 RECOVERABLE_STATUSES = (
     "queued",
     "waiting_for_comfy",
@@ -209,6 +209,26 @@ _MIGRATIONS: tuple[str, ...] = (
         updated_at REAL NOT NULL,
         PRIMARY KEY(owner_id, usage_date)
     );
+    """,
+    # 2: LoRA 用法资料（不可变版本记录，P2A）
+    """
+    CREATE TABLE IF NOT EXISTS lora_usage (
+        usage_id    TEXT PRIMARY KEY,
+        asset_key   TEXT NOT NULL,
+        profile_id  TEXT NOT NULL DEFAULT '',
+        body        TEXT NOT NULL,
+        body_hash   TEXT NOT NULL,
+        source_kind TEXT NOT NULL,
+        source_url  TEXT NOT NULL DEFAULT '',
+        background_json TEXT NOT NULL DEFAULT '{}',
+        candidate_json  TEXT NOT NULL DEFAULT '{}',
+        advisory_json   TEXT NOT NULL DEFAULT '{}',
+        verified    TEXT NOT NULL DEFAULT 'unverified',
+        created_at  REAL NOT NULL
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_lora_usage_asset
+        ON lora_usage(asset_key, profile_id, created_at DESC);
     """,
 )
 
@@ -780,11 +800,107 @@ class AirPaintStore:
             ).fetchall()
             return [str(row[0]) for row in rows]
 
+    # ---- LoRA 用法资料：不可变版本记录 (P2A) ----
+
+    @staticmethod
+    def lora_usage_version_id(record: dict) -> str:
+        """版本ID = 规范化完整记录的 sha256。
+
+        覆盖参与应用与来源解释的字段（asset/profile/正文/来源/背景/候选/建议/验证），
+        因此更新结构化候选会得到新版本号，不会沿用旧版本 (P2A §3)。
+        """
+        payload = {
+            "asset_key": str(record.get("asset_key") or "").strip(),
+            "profile_id": str(record.get("profile_id") or "").strip(),
+            "body": str(record.get("body") or ""),
+            "body_hash": str(record.get("body_hash") or ""),
+            "source_kind": str(record.get("source_kind") or "inferred"),
+            "source_url": str(record.get("source_url") or ""),
+            "background": record.get("background") or {},
+            "candidate": record.get("candidate") or {},
+            "advisory": record.get("advisory") or {},
+            "verified": str(record.get("verified") or "unverified"),
+        }
+        canonical = json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+        return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+
+    @staticmethod
+    def _row_to_lora_usage(row: sqlite3.Row) -> dict:
+        return {
+            "usage_id": row["usage_id"],
+            "asset_key": row["asset_key"],
+            "profile_id": row["profile_id"],
+            "body": row["body"],
+            "body_hash": row["body_hash"],
+            "source_kind": row["source_kind"],
+            "source_url": row["source_url"],
+            "background": _loads(row["background_json"], {}),
+            "candidate": _loads(row["candidate_json"], {}),
+            "advisory": _loads(row["advisory_json"], {}),
+            "verified": row["verified"],
+            "created_at": row["created_at"],
+        }
+
+    def save_lora_usage(self, record: dict) -> tuple[dict, bool]:
+        """写入不可变版本记录；同版本ID已存在则返回既有记录（不覆盖，created=False）。"""
+        asset_key = str(record.get("asset_key") or "").strip()
+        if not asset_key:
+            raise ValueError("lora usage 需要 asset_key")
+        body = str(record.get("body") or "")
+        body_hash = str(record.get("body_hash") or hashlib.sha256(body.encode("utf-8")).hexdigest())
+        normalized = {
+            "asset_key": asset_key,
+            "profile_id": str(record.get("profile_id") or "").strip(),
+            "body": body,
+            "body_hash": body_hash,
+            "source_kind": str(record.get("source_kind") or "inferred"),
+            "source_url": str(record.get("source_url") or ""),
+            "background": record.get("background") or {},
+            "candidate": record.get("candidate") or {},
+            "advisory": record.get("advisory") or {},
+            "verified": str(record.get("verified") or "unverified"),
+        }
+        usage_id = self.lora_usage_version_id(normalized)
+        with self._lock:
+            existing = self._conn.execute(
+                "SELECT * FROM lora_usage WHERE usage_id=?", (usage_id,)
+            ).fetchone()
+            if existing:
+                return self._row_to_lora_usage(existing), False
+            self._conn.execute(
+                "INSERT INTO lora_usage(usage_id, asset_key, profile_id, body, body_hash, "
+                "source_kind, source_url, background_json, candidate_json, advisory_json, "
+                "verified, created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
+                (usage_id, normalized["asset_key"], normalized["profile_id"], normalized["body"],
+                 normalized["body_hash"], normalized["source_kind"], normalized["source_url"],
+                 _json(normalized["background"]), _json(normalized["candidate"]),
+                 _json(normalized["advisory"]), normalized["verified"], time.time()),
+            )
+            row = self._conn.execute(
+                "SELECT * FROM lora_usage WHERE usage_id=?", (usage_id,)
+            ).fetchone()
+        return self._row_to_lora_usage(row), True
+
+    def get_lora_usage(self, usage_id: str) -> dict | None:
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT * FROM lora_usage WHERE usage_id=?", (str(usage_id),)
+            ).fetchone()
+        return self._row_to_lora_usage(row) if row else None
+
+    def list_lora_usage(self, asset_key: str) -> list[dict]:
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT * FROM lora_usage WHERE asset_key=? ORDER BY created_at DESC, usage_id DESC",
+                (str(asset_key),),
+            ).fetchall()
+        return [self._row_to_lora_usage(row) for row in rows]
+
     def counts(self) -> dict[str, int]:
         with self._lock:
             return {
                 table: int(self._conn.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0])
-                for table in ("jobs", "sessions", "session_turns", "usage_daily")
+                for table in ("jobs", "sessions", "session_turns", "usage_daily", "lora_usage")
             }
 
     def asset_references(self) -> dict[str, list[str]]:

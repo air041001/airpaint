@@ -793,3 +793,74 @@ def _bindings_as_selections(bindings: list[dict] | None) -> list[dict]:
                 selection[field] = binding[field]
         result.append(selection)
     return result
+
+
+# ---- LoRA 用法资料：Registry 引用与关联解析 (P2A) ----
+
+USAGE_SOURCE_KINDS = ("author", "community", "user", "inferred")
+USAGE_VERIFIED_STATUSES = ("unverified", "source_confirmed", "image_verified")
+
+
+def lora_usage_refs(asset: dict) -> list[str]:
+    """读取 Registry asset 的用法资料引用（指向不可变记录 ID）。
+
+    支持 ``usage.ref`` 单值或 ``usage.refs`` 列表；Registry 只存引用与最小关联，
+    不重复保存 negative/template（避免两套真相，P2A §3）。
+    """
+    usage = asset.get("usage") if isinstance(asset, dict) else None
+    refs: list[str] = []
+    if isinstance(usage, dict):
+        single = usage.get("ref")
+        if isinstance(single, str) and single.strip():
+            refs.append(single.strip())
+        many = usage.get("refs")
+        if isinstance(many, list):
+            refs.extend(str(x).strip() for x in many if isinstance(x, str) and str(x).strip())
+    return list(dict.fromkeys(refs))
+
+
+def resolve_lora_usage(asset: dict, profile_ids, fetch) -> dict:
+    """解析某 asset 在给定 Profile 选择下可用的用法资料，返回明确状态（P2A §3/§4）。
+
+    ``fetch(usage_id) -> record | None``。规则：
+
+    - asset 级记录（``profile_id == ""``）为共享建议；profile 级记录归属其 Profile。
+    - 不属于当前选择的 Profile 资料**不返回**（也不算损坏）；不串用其他 Profile。
+    - 缺记录 / versionID 不符 / asset 不符分别报告为明确状态，不伪装成功。
+
+    状态：``no_ref``（该 asset 无资料）| ``ok`` | ``partial``（部分引用损坏）|
+    ``invalid``（全部引用损坏）。
+    """
+    refs = lora_usage_refs(asset)
+    if not refs:
+        return {"status": "no_ref", "shared": [], "profiles": {}, "errors": []}
+    asset_key = str(asset.get("key") or "")
+    allowed = {""} | {str(p) for p in (profile_ids or [])}
+    shared: list[dict] = []
+    profiles: dict[str, list[dict]] = {}
+    errors: list[dict] = []
+    for ref in refs:
+        record = fetch(ref)
+        if record is None:
+            errors.append({"ref": ref, "reason": "missing"})
+            continue
+        if record.get("usage_id") != ref:
+            errors.append({"ref": ref, "reason": "hash_mismatch"})
+            continue
+        if asset_key and str(record.get("asset_key") or "") != asset_key:
+            errors.append({"ref": ref, "reason": "asset_mismatch"})
+            continue
+        profile_id = str(record.get("profile_id") or "")
+        if profile_id not in allowed:
+            continue   # 不相关 Profile 的资料不返回，也不算损坏 (P2A §3)
+        if profile_id == "":
+            shared.append(record)
+        else:
+            profiles.setdefault(profile_id, []).append(record)
+    if errors and not (shared or profiles):
+        status = "invalid"
+    elif errors:
+        status = "partial"
+    else:
+        status = "ok"
+    return {"status": status, "shared": shared, "profiles": profiles, "errors": errors}
