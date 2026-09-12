@@ -4,6 +4,7 @@
 """
 import os
 import sqlite3
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -16,7 +17,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 # 测试隔离：DB 指向临时 state，避免导入即触碰/迁移生产 server/state (P2A §3)。
 os.environ.setdefault("AIRPAINT_STATE_DIR", tempfile.mkdtemp(prefix="airpaint-test-state-"))
 
-from server.lora import lora_usage_refs, resolve_lora_usage
+from server.lora import HotLoraRegistry, lora_usage_refs, resolve_lora_usage
 from server.maintenance import create_backup, restore_backup, verify_backup
 from server.persistence import SCHEMA_VERSION, AirPaintStore
 from server.settings import WORKFLOWS
@@ -105,7 +106,7 @@ class UsageStoreTests(unittest.TestCase):
         unrelated = resolve_lora_usage(
             {"key": "demo", "usage": {"refs": [white["usage_id"]]}}, ["sailor"],
             self.store.get_lora_usage)
-        self.assertEqual(unrelated["status"], "ok")
+        self.assertEqual(unrelated["status"], "not_applicable")
         self.assertEqual(unrelated["shared"], [])
         self.assertEqual(unrelated["profiles"], {})
 
@@ -236,6 +237,164 @@ class GenerationPathUnchangedTests(unittest.TestCase):
                          WORKFLOWS["anima"]["quality_prefix"] + "1girl, sitting")
         node_neg = str(WORKFLOWS["anima"]["negative_node"])
         self.assertIsInstance(payload["prompt"][node_neg]["inputs"]["text"], list)
+
+
+class UsageIntegrityTests(unittest.TestCase):
+    """P2A 修订：正文 hash 由服务端生成/核验，读取时核验完整版本ID与正文 hash。"""
+
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.store = AirPaintStore(Path(self.temp.name) / "airpaint.db")
+
+    def tearDown(self):
+        self.store.close()
+        self.temp.cleanup()
+
+    def test_save_rejects_body_hash_that_does_not_match_body(self):
+        with self.assertRaises(ValueError):
+            self.store.save_lora_usage({"asset_key": "demo", "body": "author text",
+                                        "body_hash": "incorrect"})
+        self.assertEqual(self.store.list_lora_usage("demo"), [])
+
+    def test_save_generates_body_hash_from_body(self):
+        import hashlib
+        digest = hashlib.sha256("author text".encode("utf-8")).hexdigest()
+        record, created = self.store.save_lora_usage(
+            {"asset_key": "demo", "body": "author text", "body_hash": digest})
+        self.assertTrue(created)
+        self.assertEqual(record["body_hash"], digest)
+        self.assertEqual(self.store.get_lora_usage(record["usage_id"])["body_hash"], digest)
+
+    def test_resolve_rejects_record_with_tampered_body(self):
+        record, _ = self.store.save_lora_usage({"asset_key": "demo", "body": "author text"})
+        tampered = dict(record, body="changed")
+        result = resolve_lora_usage({"key": "demo", "usage": {"ref": record["usage_id"]}},
+                                    [], lambda ref: tampered)
+        self.assertEqual(result["status"], "invalid")
+        self.assertEqual(result["errors"],
+                         [{"ref": record["usage_id"], "reason": "hash_mismatch"}])
+        self.assertEqual(result["shared"], [])
+
+    def test_resolve_rejects_forged_version_id(self):
+        record, _ = self.store.save_lora_usage({"asset_key": "demo", "body": "author text"})
+        forged_id = "0" * 64
+        forged = dict(record, usage_id=forged_id)
+        result = resolve_lora_usage({"key": "demo", "usage": {"ref": forged_id}},
+                                    [], lambda ref: forged)
+        self.assertEqual(result["status"], "invalid")
+        self.assertEqual(result["errors"][0]["reason"], "hash_mismatch")
+
+    def test_only_unselected_profile_records_are_not_applied(self):
+        white, _ = self.store.save_lora_usage(
+            {"asset_key": "demo", "profile_id": "white", "body": "white outfit"})
+        result = resolve_lora_usage({"key": "demo", "usage": {"refs": [white["usage_id"]]}},
+                                    ["sailor"], self.store.get_lora_usage)
+        self.assertEqual(result["status"], "not_applicable")
+        self.assertEqual(result["shared"], [])
+        self.assertEqual(result["profiles"], {})
+        self.assertEqual(result["errors"], [])
+
+
+class RegistryUsageRefValidationTests(unittest.TestCase):
+    """Registry 的 usage.ref/refs 类型错误必须报错，不能静默变成 no_ref。"""
+
+    @staticmethod
+    def _registry(usage=None, with_usage: bool = True) -> dict:
+        asset = {"name": "Demo", "type": "style", "file": "demo.safetensors",
+                 "trigger_policy": "none"}
+        if with_usage:
+            asset["usage"] = usage if usage is not None else {"ref": "a" * 64}
+        return {"schema_version": 1, "loras": {"demo": asset}}
+
+    def test_asset_without_usage_stays_valid_and_has_no_refs(self):
+        raw = self._registry(with_usage=False)
+        HotLoraRegistry.validate(raw)
+        self.assertEqual(lora_usage_refs(raw["loras"]["demo"]), [])
+
+    def test_valid_ref_and_refs_are_accepted(self):
+        HotLoraRegistry.validate(self._registry({"ref": "a" * 64}))
+        raw = self._registry({"refs": ["a" * 64, "b" * 64]})
+        HotLoraRegistry.validate(raw)
+        self.assertEqual(lora_usage_refs(raw["loras"]["demo"]), ["a" * 64, "b" * 64])
+
+    def test_broken_usage_fields_raise_instead_of_silently_becoming_no_ref(self):
+        for usage in ({"ref": ""}, {"ref": 5}, {"refs": "a" * 64}, {"refs": []},
+                      {"refs": [1]}, {}, ["a" * 64]):
+            with self.subTest(usage=usage):
+                with self.assertRaises(ValueError):
+                    HotLoraRegistry.validate(self._registry(usage))
+
+
+ROOT_DIR = Path(__file__).resolve().parents[1]
+TOOLS_DIR = Path(__file__).resolve().parent
+
+
+class OnboardingCliIsolationTests(unittest.TestCase):
+    """--help / --usage 必须不初始化生产 runtime，也不创建或迁移默认 state。"""
+
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp.cleanup)
+        self.state = Path(self.temp.name) / "state"
+        self.env = dict(os.environ)
+        self.env["AIRPAINT_STATE_DIR"] = str(self.state)
+        self.env.pop("AIRPAINT_LORA_REGISTRY", None)
+
+    def _run_cli(self, *argv):
+        return subprocess.run(
+            [sys.executable, str(TOOLS_DIR / "register_lora.py"), *argv],
+            cwd=str(ROOT_DIR), env=self.env, capture_output=True, text=True,
+            encoding="utf-8", errors="replace")
+
+    def _assert_no_state_database(self):
+        self.assertFalse((self.state / "airpaint.db").exists())
+
+    def test_importing_the_tool_does_not_load_production_runtime(self):
+        probe = (
+            "import sys;"
+            f"sys.path.insert(0, {str(ROOT_DIR)!r});"
+            f"sys.path.insert(0, {str(TOOLS_DIR)!r});"
+            "import register_lora;"
+            "loaded = sorted({'server.main', 'server.api', 'server.runtime'} & set(sys.modules));"
+            "print('runtime modules:', loaded);"
+            "sys.exit(1 if loaded else 0)"
+        )
+        result = subprocess.run([sys.executable, "-c", probe], cwd=str(ROOT_DIR),
+                                env=self.env, capture_output=True, text=True,
+                                encoding="utf-8", errors="replace")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+    def test_help_runs_and_creates_no_state_database(self):
+        result = self._run_cli("--help")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("--usage", result.stdout)
+        self._assert_no_state_database()
+
+    def test_usage_without_db_refuses_and_creates_no_database(self):
+        result = self._run_cli("--usage", "--asset-key", "demo", "--body", "text")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("--db", result.stdout + result.stderr)
+        self._assert_no_state_database()
+
+    def test_usage_with_explicit_db_writes_only_that_database(self):
+        db = Path(self.temp.name) / "onboarding.db"
+        result = self._run_cli("--usage", "--asset-key", "demo", "--body", "author text",
+                               "--db", str(db))
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertTrue(db.is_file())
+        self._assert_no_state_database()
+        store = AirPaintStore(db)
+        try:
+            self.assertEqual([r["body"] for r in store.list_lora_usage("demo")], ["author text"])
+        finally:
+            store.close()
+
+    def test_production_state_database_is_not_touched(self):
+        production_db = ROOT_DIR / "server" / "state" / "airpaint.db"
+        before = production_db.stat().st_mtime_ns if production_db.exists() else None
+        self._run_cli("--usage", "--asset-key", "demo", "--body", "text")
+        after = production_db.stat().st_mtime_ns if production_db.exists() else None
+        self.assertEqual(before, after)
 
 
 if __name__ == "__main__":

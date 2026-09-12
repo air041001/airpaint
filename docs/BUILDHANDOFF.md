@@ -127,9 +127,10 @@ docs/DEVLOG.md                开发演进
 ### P2A：LoRA 用法资料不可变入库与关联读取（2026-09-12）
 
 - 新增 `lora_usage` 不可变版本表（`SCHEMA_VERSION` 2，事务迁移）：版本ID = 规范化完整记录的 sha256；正文完整保存，结构化候选可空、不伪造。
-- Registry 只存 `usage.ref(s)` 引用；`resolve_lora_usage` 返回 `no_ref/ok/partial/invalid` 与 `shared`/`profiles[pid]`，不相关 Profile 不返回，缺失/不符分别报告。
+- Registry 只存 `usage.ref(s)` 引用；`resolve_lora_usage` 返回 `no_ref/not_applicable/ok/partial/invalid` 与 `shared`/`profiles[pid]`，不相关 Profile 不返回，缺失/不符分别报告。
 - `.tools/register_lora.py --usage`（必须显式 `--db`）写记录并打印可合并片段；示例见 `docs/lora_usage.example.yaml`；契约见 `docs/LORA_USAGE_CONTRACT.md` §9。
-- 验证：新增 `.tools/test_lora_usage.py` 10 项；既有套件与前端检查通过；测试使用临时库，**生产库未迁移/未触碰**（mtime 不变），真实 Registry 未写。零真实模型/GPU 调用；本批不改生成输出（P2B 再接运行时）。
+- 初次交付记录：测试使用临时库，当时报告生产库 mtime 不变、真实 Registry 未写；零真实模型/GPU 调用。2026-09-12 后续只读核对发现生产库已为 schema 2，迁移触发来源未核实，不能继续把“尚未迁移”作为当前状态。
+- 2026-09-13 审阅修补：资料读取核验正文与完整版本哈希，损坏内容不会被视为可用；无适用 Profile 与坏引用明确区分。入库工具按需加载依赖，`--help/--usage` 不再初始化生产 runtime。资料完整性、命令隔离及相关入库/恢复回归通过；未做真实模型/GPU 与实图验收，生成路径尚不消费资料（待 P2B）。
 
 ## 已知边界
 

@@ -4,9 +4,13 @@ import contextlib
 import importlib.util
 import io
 import json
+import os
 import tempfile
 from pathlib import Path
 
+
+# 测试隔离：本文件会经 tool.main 访问生产入口；DB 必须指向临时 state (P2A §9.3)。
+os.environ.setdefault("AIRPAINT_STATE_DIR", tempfile.mkdtemp(prefix="airpaint-test-state-"))
 
 TOOL_PATH = Path(__file__).with_name("register_lora.py")
 SPEC = importlib.util.spec_from_file_location("register_lora_tool", TOOL_PATH)

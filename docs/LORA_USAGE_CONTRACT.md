@@ -348,9 +348,9 @@ job 新字段落 `payload_json` 全量序列化（`_payload.excluded` 不含即�
 
 | 字段 | 含义 |
 |---|---|
-| `usage_id` | **版本ID = 规范化完整记录的 sha256**（见 9.2） |
+| `usage_id` | **版本ID = 规范化完整记录的 sha256**（含正文与正文 hash，见 9.2） |
 | `asset_key` / `profile_id` | 关联；`profile_id=''` = asset 级共享 |
-| `body` / `body_hash` | 原文（完整不截断）/ 原文字节 hash |
+| `body` / `body_hash` | 原文（完整不截断）/ 原文字节 hash；**hash 一律由服务端从正文生成**，写入时核对、读取时复核 |
 | `source_kind` | `author｜community｜user｜inferred`（社区样例不得标 author） |
 | `source_url` | 仅元数据，不抓取 |
 | `background_json` | 样例关联的模型/LoRA 版本/参数背景 |
@@ -358,26 +358,29 @@ job 新字段落 `payload_json` 全量序列化（`_payload.excluded` 不含即�
 | `advisory_json` | 应用条件/建议属性 |
 | `verified` | `unverified｜source_confirmed｜image_verified`（与 source_kind、来源可信度分开表达） |
 
-Registry 只存**引用**：`usage.ref`（单值）或 `usage.refs`（列表）→ 指向 `usage_id`；不重复保存 negative/template（避免两套真相）。
+Registry 只存**引用**：`usage.ref`（单值）或 `usage.refs`（列表）→ 指向 `usage_id`；不重复保存 negative/template（避免两套真相）。`HotLoraRegistry.validate` 校验引用形状：`usage` 必须是对象且提供非空 `ref` 或非空字符串数组 `refs`，**类型错误的字段直接拒绝加载，不会静默退化成「该 Asset 没有资料」**；完全没有 `usage` 的旧 Asset 照旧合法。
 
 ### 9.2 不变量
 
-1. **不可变**：`usage_id` 由 `asset_key/profile_id/body/body_hash/source_kind/source_url/background/candidate/advisory/verified` 规范化 JSON 的 sha256 决定；更新任一结构化候选都会得到**新版本号**，旧记录仍可读（`save_lora_usage` 同 ID 返回既有记录、不覆盖）。
+1. **不可变**：`usage_id` 由 `asset_key/profile_id/body/body_hash/source_kind/source_url/background/candidate/advisory/verified` 规范化 JSON 的 sha256 决定；更新正文或任一结构化候选都会得到**新版本号**，旧记录仍可读（`save_lora_usage` 同 ID 返回既有记录、不覆盖）。`body_hash` 由服务端从正文生成，调用方传入只作一致性核对，不符即拒绝写入（不静默修正、不落盘）。
 2. **正文优先**：`body` 完整保存；结构化提取失败不影响正文入库。
 3. **先记录后引用**：写入不可变记录成功后才产生可合并的 Registry 引用；引用不会指向不存在记录。
-4. **读取状态明确**（`resolve_lora_usage(asset, profile_ids, fetch)`）：`no_ref` / `ok` / `partial`（部分引用损坏）/ `invalid`（全部损坏）；`errors[]` 逐条给出 `missing` / `hash_mismatch` / `asset_mismatch`；**不属于当前 Profile 选择的资料不返回**（不算损坏）；asset 级记录为 `shared` 共享建议，profile 级记录归属 `profiles[pid]`。
-5. **坏资料不冒充成功**：任何缺失/不符状态都不会让使用方当作「已应用资料」。
+4. **读取状态明确**（`resolve_lora_usage(asset, profile_ids, fetch)`）：`no_ref` / `not_applicable`（有引用，但无一适用于当前 Profile 选择）/ `ok` / `partial`（部分引用损坏）/ `invalid`（全部损坏）；`errors[]` 逐条给出 `missing` / `hash_mismatch` / `asset_mismatch`；**不属于当前 Profile 选择的资料不返回**（不算损坏）；asset 级记录为 `shared` 共享建议，profile 级记录归属 `profiles[pid]`。
+5. **读取即核验**：除引用与 `usage_id` 相符外，还要核验记录的正文 hash 与**完整版本ID**；被改写正文、只改正文 hash、或伪造版本号的记录一律报 `hash_mismatch`，不进入 `shared`/`profiles`。
+6. **坏资料不冒充成功**：任何缺失/不符状态都不会让使用方当作「已应用资料」；`not_applicable` 明确表示「有引用但无适用资料」，仅存在未选 Profile 记录时**不得声称已应用**。
 
 ### 9.3 迁移、备份与回退
 
 - 迁移：`_MIGRATIONS` 第 2 项新增 `lora_usage` 表与索引；`executescript` 事务包裹，失败回滚且 `user_version` 不前进。
 - 备份：整库 online backup 含新表；`counts()` 增 `lora_usage`，manifest 与恢复一致性检查覆盖资料记录。
 - 回退：新表独立；代码回退到 v1 时 `user_version=2` 会被现有 `_migrate` 明确拒绝（需迁移前备份恢复），**不得只 DROP 表或手改 user_version 冒充完整回退**。
-- **测试隔离**：`AIRPAINT_STATE_DIR` / `AIRPAINT_LORA_REGISTRY` 环境变量可把 DB / Registry 指向临时位置；所有 import `server` 的测试已设临时 state，导入不再触碰或迁移生产 `server/state/airpaint.db`（本批验证其 mtime 不变）。
+- **测试隔离**：`AIRPAINT_STATE_DIR` / `AIRPAINT_LORA_REGISTRY` 环境变量可把 DB / Registry 指向临时位置；所有 import `server` 的测试已设临时 state，导入不再触碰或迁移生产 `server/state/airpaint.db`（本批验证其 mtime 不变）。`.tools/test_lora_usage.py` 另有子进程用例：`--help`、`--usage`（缺 `--db`）、`--usage --db <临时库>` 三种调用都不创建默认 state 库，且 `--help/--usage` 不加载 `server.main/api/runtime`。
 
 ### 9.4 维护者入口
 
 `python .tools/register_lora.py --usage --asset-key <KEY> --source-kind <...> --body-file <PATH> [--profile <PID>] [--candidate-file <JSON>] --db <PATH>`：写不可变记录并打印可合并的 Registry `usage` 片段；**必须显式 `--db`**，不自动写生产库或真实 Registry。字段形状示例见 `docs/lora_usage.example.yaml`。
+
+工具默认按需加载：`--help` 与 `--usage` 不导入生产 runtime（预览/入库/Agent 等路径也只在真正需要时才加载 `server.main` 与预览生成器），因此这些调用不初始化、不迁移、不创建默认 `server/state`。
 
 ### 9.5 供 P2B 读取的字段（本批不消费）
 

@@ -7,7 +7,17 @@ from pathlib import Path
 import yaml
 from fastapi import HTTPException
 
+from server.lora_usage import (
+    USAGE_SOURCE_KINDS as USAGE_SOURCE_KINDS,       # 兼容重导出（旧工具从 server.lora 读取）
+    USAGE_VERIFIED_STATUSES as USAGE_VERIFIED_STATUSES,
+    usage_refs as _parse_usage_refs,
+    verify_record as _verify_usage_record,
+)
 from server.settings import CFG, LORA_PREVIEWS, LORA_REGISTRY_PATH
+
+# 兼容重导出：保持 ``server.lora.USAGE_SOURCE_KINDS`` 与
+# ``server.lora.USAGE_VERIFIED_STATUSES`` 可用（onboarding CLI 等按此路径读取）。
+__all__ = ["USAGE_SOURCE_KINDS", "USAGE_VERIFIED_STATUSES"]
 
 
 MAX_CHARACTER_LORA_PROFILES = 3
@@ -52,6 +62,9 @@ class HotLoraRegistry:
                     raise ValueError(f"{key}.{field} 缺失或不是字符串")
             if asset["trigger_policy"] not in {"profile", "required", "none"}:
                 raise ValueError(f"{key}.trigger_policy 非法")
+            # 可选 usage 引用必须类型明确：坏字段不能静默退化成「该 Asset 没有资料」。
+            # 完全没有 usage 的旧 Asset 照旧合法 (P2A §9.1)。
+            _parse_usage_refs(asset, label=f"{key}.usage")
             strength = asset.get("default_strength") or {}
             if not isinstance(strength, dict):
                 raise ValueError(f"{key}.default_strength 必须是对象")
@@ -797,26 +810,14 @@ def _bindings_as_selections(bindings: list[dict] | None) -> list[dict]:
 
 # ---- LoRA 用法资料：Registry 引用与关联解析 (P2A) ----
 
-USAGE_SOURCE_KINDS = ("author", "community", "user", "inferred")
-USAGE_VERIFIED_STATUSES = ("unverified", "source_confirmed", "image_verified")
-
-
 def lora_usage_refs(asset: dict) -> list[str]:
     """读取 Registry asset 的用法资料引用（指向不可变记录 ID）。
 
     支持 ``usage.ref`` 单值或 ``usage.refs`` 列表；Registry 只存引用与最小关联，
-    不重复保存 negative/template（避免两套真相，P2A §3）。
+    不重复保存 negative/template（避免两套真相，P2A §3）。类型错误的引用会直接报错，
+    不会被静默当成「该 Asset 没有资料」。
     """
-    usage = asset.get("usage") if isinstance(asset, dict) else None
-    refs: list[str] = []
-    if isinstance(usage, dict):
-        single = usage.get("ref")
-        if isinstance(single, str) and single.strip():
-            refs.append(single.strip())
-        many = usage.get("refs")
-        if isinstance(many, list):
-            refs.extend(str(x).strip() for x in many if isinstance(x, str) and str(x).strip())
-    return list(dict.fromkeys(refs))
+    return _parse_usage_refs(asset, label=f"{asset.get('key') or '<asset>'}.usage")
 
 
 def resolve_lora_usage(asset: dict, profile_ids, fetch) -> dict:
@@ -826,9 +827,11 @@ def resolve_lora_usage(asset: dict, profile_ids, fetch) -> dict:
 
     - asset 级记录（``profile_id == ""``）为共享建议；profile 级记录归属其 Profile。
     - 不属于当前选择的 Profile 资料**不返回**（也不算损坏）；不串用其他 Profile。
-    - 缺记录 / versionID 不符 / asset 不符分别报告为明确状态，不伪装成功。
+    - 缺记录 / 引用与版本ID 不符 / asset 不符 / 正文 hash 或完整版本ID 不自洽，
+      分别报告为明确状态，不伪装成功。
 
-    状态：``no_ref``（该 asset 无资料）| ``ok`` | ``partial``（部分引用损坏）|
+    状态：``no_ref``（该 asset 无资料）| ``not_applicable``（有资料但无一适用于当前
+    Profile 选择，**不得声称已应用**）| ``ok`` | ``partial``（部分引用损坏）|
     ``invalid``（全部引用损坏）。
     """
     refs = lora_usage_refs(asset)
@@ -844,11 +847,16 @@ def resolve_lora_usage(asset: dict, profile_ids, fetch) -> dict:
         if record is None:
             errors.append({"ref": ref, "reason": "missing"})
             continue
-        if record.get("usage_id") != ref:
+        if str(record.get("usage_id") or "") != ref:
             errors.append({"ref": ref, "reason": "hash_mismatch"})
             continue
         if asset_key and str(record.get("asset_key") or "") != asset_key:
             errors.append({"ref": ref, "reason": "asset_mismatch"})
+            continue
+        # 记录必须自洽：正文 hash 与完整版本ID 都要对得上，被改写/伪造不算已应用 (P2A §9.2)。
+        broken = _verify_usage_record(record)
+        if broken:
+            errors.append({"ref": ref, "reason": broken})
             continue
         profile_id = str(record.get("profile_id") or "")
         if profile_id not in allowed:
@@ -861,6 +869,8 @@ def resolve_lora_usage(asset: dict, profile_ids, fetch) -> dict:
         status = "invalid"
     elif errors:
         status = "partial"
+    elif not (shared or profiles):
+        status = "not_applicable"
     else:
         status = "ok"
     return {"status": status, "shared": shared, "profiles": profiles, "errors": errors}

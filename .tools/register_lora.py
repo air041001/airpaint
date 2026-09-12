@@ -21,12 +21,43 @@ import yaml
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
-from server import main
-import generate_lora_previews as preview_generator
+from server import settings as airpaint_settings
 
 
-REGISTRY_PATH = main.LORA_REGISTRY_PATH
-LORA_DIR = main.LORA_DIR
+REGISTRY_PATH = airpaint_settings.LORA_REGISTRY_PATH
+LORA_DIR = airpaint_settings.LORA_DIR
+
+
+def _hot_lora_registry():
+    """惰性导入 Registry 校验器：--help/--usage 不为它初始化生产 runtime。"""
+    from server.lora import HotLoraRegistry
+    return HotLoraRegistry
+
+
+def _lora_module():
+    """惰性导入 LoRA 实现模块（读取它当前的 LORA_PREVIEWS 覆盖点）。"""
+    from server import lora as lora_module
+    return lora_module
+
+
+def _preview_generator():
+    """惰性导入预览生成器：它自身会导入生产 runtime，只有 --preview 需要。"""
+    tools_dir = str(Path(__file__).resolve().parent)
+    if tools_dir not in sys.path:
+        sys.path.insert(0, tools_dir)
+    import generate_lora_previews
+    return generate_lora_previews
+
+
+def __getattr__(name: str):
+    """兼容旧引用：``register_lora.main`` / ``register_lora.preview_generator`` 仍可访问，
+    但只在真正被用到时才加载。"""
+    if name == "main":
+        from server import main as main_module
+        return main_module
+    if name == "preview_generator":
+        return _preview_generator()
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 PREVIEW_STAGING_ROOT = ROOT / ".tools" / ".artifacts" / "lora_previews" / "onboarding"
 PREVIEW_SIZE = (448, 576)
 
@@ -34,12 +65,12 @@ PREVIEW_SIZE = (448, 576)
 def load_registry() -> dict:
     raw = yaml.safe_load(REGISTRY_PATH.read_text(encoding="utf-8")) if REGISTRY_PATH.exists() else None
     raw = raw or {"schema_version": 1, "loras": {}}
-    main.HotLoraRegistry.validate(raw)
+    _hot_lora_registry().validate(raw)
     return raw
 
 
 def atomic_write_registry(raw: dict) -> None:
-    main.HotLoraRegistry.validate(raw)
+    _hot_lora_registry().validate(raw)
     text = yaml.safe_dump(raw, allow_unicode=True, sort_keys=False, width=120)
     REGISTRY_PATH.parent.mkdir(parents=True, exist_ok=True)
     with tempfile.NamedTemporaryFile(
@@ -344,7 +375,7 @@ def apply_author_hard_facts(asset: dict, evidence: dict, description: str) -> tu
             "strength_value": explicit_strength,
             "strength": f"代码从作者原文提取到单一推荐强度 {explicit_strength:g}",
         })
-    main.HotLoraRegistry.validate({"schema_version": 1, "loras": {"candidate": asset}})
+    _hot_lora_registry().validate({"schema_version": 1, "loras": {"candidate": asset}})
     return asset, evidence
 
 
@@ -465,15 +496,16 @@ def normalize_agent_candidate(candidate: dict, filename: str) -> tuple[str, dict
             "legacy_keys": [],
         })
     test_registry = {"schema_version": 1, "loras": {"candidate": asset}}
-    main.HotLoraRegistry.validate(test_registry)
+    _hot_lora_registry().validate(test_registry)
     asset_id = _stable_id(candidate.get("asset_id") or Path(filename).stem, "lora")
     return asset_id, asset, evidence
 
 
 def call_onboard_agent(description: str, filename: str, previous: dict | None = None,
                        feedback: str = "") -> tuple[str, dict, dict]:
-    api_key = str(main.CFG.get("siliconflow_api_key") or "").strip()
-    model = str(main.CFG.get("siliconflow_model") or "deepseek-ai/DeepSeek-V4-Flash").strip()
+    api_key = str(airpaint_settings.CFG.get("siliconflow_api_key") or "").strip()
+    model = str(airpaint_settings.CFG.get("siliconflow_model")
+                or "deepseek-ai/DeepSeek-V4-Flash").strip()
     if not api_key:
         raise RuntimeError("config.yaml 未配置 siliconflow_api_key")
     payload = {
@@ -539,7 +571,7 @@ def _lora_manager_lists_file(comfy: str, filename: str) -> bool:
 
 def refresh_lora_manager(filename: str, *, full_rebuild: bool = False) -> bool:
     """刷新 Manager 索引，并以目标文件实际出现在列表中作为成功条件。"""
-    comfy = str(main.CFG.get("comfy_url") or "http://127.0.0.1:8188").rstrip("/")
+    comfy = str(airpaint_settings.CFG.get("comfy_url") or "http://127.0.0.1:8188").rstrip("/")
     mode = "全量重建" if full_rebuild else "增量扫描"
     try:
         response = httpx.get(
@@ -621,7 +653,7 @@ def generate_style_preview_candidate(asset_id: str) -> Path | None:
         raise ValueError(f"不安全的 Asset ID: {asset_id}")
     PREVIEW_STAGING_ROOT.mkdir(parents=True, exist_ok=True)
     run_dir = Path(tempfile.mkdtemp(prefix=f"{asset_id}-", dir=PREVIEW_STAGING_ROOT))
-    status = asyncio.run(preview_generator.render(
+    status = asyncio.run(_preview_generator().render(
         run_dir,
         (asset_id,),
         seed=20260828,
@@ -648,7 +680,7 @@ def install_style_preview(source: Path, asset_id: str,
         raise ValueError(f"不安全的 Asset ID: {asset_id}")
     from PIL import Image
 
-    destination_dir = destination_dir or main.lora_module.LORA_PREVIEWS
+    destination_dir = destination_dir or _lora_module().LORA_PREVIEWS
     destination_dir.mkdir(parents=True, exist_ok=True)
     target = destination_dir / f"{asset_id}.webp"
     temp_path = None
@@ -764,7 +796,7 @@ def run_agent_onboarding(raw: dict, filename: str | None, description_file: str 
             continue
         candidate = {"schema_version": 1, "loras": dict(raw["loras"])}
         candidate["loras"][final_id] = asset
-        main.HotLoraRegistry.validate(candidate)
+        _hot_lora_registry().validate(candidate)
         if ask_choice("最终确认写入 lora_registry.yaml?", ["y", "n"], "n") != "y":
             print("已取消，Registry 未修改。")
             return 1
@@ -1012,7 +1044,7 @@ def main_cli() -> int:
     new_id, asset = collect_asset(filename, asset_id, existing)
     candidate = {"schema_version": 1, "loras": dict(raw["loras"])}
     candidate["loras"][new_id] = asset
-    main.HotLoraRegistry.validate(candidate)
+    _hot_lora_registry().validate(candidate)
     print("\n--- 将写入的 Asset ---")
     print(yaml.safe_dump({new_id: asset}, allow_unicode=True, sort_keys=False, width=120))
     if ask_choice("确认原子写入 lora_registry.yaml?", ["y", "n"], "n") != "y":

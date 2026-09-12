@@ -19,6 +19,8 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+from server.lora_usage import normalize_record, version_id
+
 
 SCHEMA_VERSION = 2
 RECOVERABLE_STATUSES = (
@@ -804,25 +806,12 @@ class AirPaintStore:
 
     @staticmethod
     def lora_usage_version_id(record: dict) -> str:
-        """版本ID = 规范化完整记录的 sha256。
+        """版本ID = 规范化**完整**记录的 sha256（单一定义见 :mod:`server.lora_usage`）。
 
-        覆盖参与应用与来源解释的字段（asset/profile/正文/来源/背景/候选/建议/验证），
-        因此更新结构化候选会得到新版本号，不会沿用旧版本 (P2A §3)。
+        覆盖参与应用与来源解释的字段（asset/profile/正文/正文 hash/来源/背景/候选/建议/
+        验证），因此更新正文或任一结构化候选都会得到新版本号，不会沿用旧版本 (P2A §3)。
         """
-        payload = {
-            "asset_key": str(record.get("asset_key") or "").strip(),
-            "profile_id": str(record.get("profile_id") or "").strip(),
-            "body": str(record.get("body") or ""),
-            "body_hash": str(record.get("body_hash") or ""),
-            "source_kind": str(record.get("source_kind") or "inferred"),
-            "source_url": str(record.get("source_url") or ""),
-            "background": record.get("background") or {},
-            "candidate": record.get("candidate") or {},
-            "advisory": record.get("advisory") or {},
-            "verified": str(record.get("verified") or "unverified"),
-        }
-        canonical = json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
-        return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+        return version_id(record)
 
     @staticmethod
     def _row_to_lora_usage(row: sqlite3.Row) -> dict:
@@ -842,24 +831,12 @@ class AirPaintStore:
         }
 
     def save_lora_usage(self, record: dict) -> tuple[dict, bool]:
-        """写入不可变版本记录；同版本ID已存在则返回既有记录（不覆盖，created=False）。"""
-        asset_key = str(record.get("asset_key") or "").strip()
-        if not asset_key:
-            raise ValueError("lora usage 需要 asset_key")
-        body = str(record.get("body") or "")
-        body_hash = str(record.get("body_hash") or hashlib.sha256(body.encode("utf-8")).hexdigest())
-        normalized = {
-            "asset_key": asset_key,
-            "profile_id": str(record.get("profile_id") or "").strip(),
-            "body": body,
-            "body_hash": body_hash,
-            "source_kind": str(record.get("source_kind") or "inferred"),
-            "source_url": str(record.get("source_url") or ""),
-            "background": record.get("background") or {},
-            "candidate": record.get("candidate") or {},
-            "advisory": record.get("advisory") or {},
-            "verified": str(record.get("verified") or "unverified"),
-        }
+        """写入不可变版本记录；同版本ID已存在则返回既有记录（不覆盖，created=False）。
+
+        ``body_hash`` 由服务端从正文生成：调用方给出的值只用于一致性核对，不符即拒绝写入
+        （不静默修正、不落盘），避免正文与 hash 分叉 (P2A §9.2)。
+        """
+        normalized = normalize_record(record)
         usage_id = self.lora_usage_version_id(normalized)
         with self._lock:
             existing = self._conn.execute(
