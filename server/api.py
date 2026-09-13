@@ -20,11 +20,15 @@ from fastapi.staticfiles import StaticFiles
 from server.lora import (
     _bindings_as_selections,
     get_lora_registry,
+    lora_usage_refs,
     resolve_lora_selections,
 )
+from server.lora_usage import usage_template_catalog, verify_record as verify_lora_usage_record
 from server.prompt_engine import (
     _IR_FIELDS,
+    _collect_usage_records,
     _normalize_optional_concept,
+    _resolve_selected_usage_templates,
     _validate_prompt_ir,
     finalize_generation_text,
     translate,
@@ -465,8 +469,38 @@ async def list_workflows(token: str = Depends(auth)):
 async def list_loras(token: str = Depends(auth)):
     """LoRA Asset 列表；Registry Profiles 优先，unknown/incomplete 放 other。"""
     reg = get_lora_registry()
-    items = [
-        {
+    items = []
+    for v in reg.values():
+        public_templates = []
+        default_template = None
+        seen_templates = set()
+        for usage_id in lora_usage_refs(v):
+            record = STORE.get_lora_usage(usage_id)
+            if not record or verify_lora_usage_record(record):
+                continue
+            try:
+                catalog = usage_template_catalog(record)
+            except ValueError:
+                continue
+            if catalog.get("default") and default_template is None:
+                default_template = catalog["default"]
+            for template in catalog["templates"]:
+                if template["id"] in seen_templates:
+                    continue
+                seen_templates.add(template["id"])
+                layout = template.get("layout") or {}
+                public_templates.append({
+                    "id": template["id"], "name": template["name"],
+                    "description": template.get("description", ""),
+                    "profile": template.get("profile_id") or None,
+                    "positive": list(template.get("positive") or []),
+                    "layout_positive": list(layout.get("positive") or []),
+                    "layout": layout.get("kind"),
+                    "negative_add": list(template.get("negative_add") or []),
+                    "pose_options": list(template.get("pose_options") or []),
+                    "recommended_size": template.get("recommended_size", ""),
+                })
+        item = {
             "key": v["key"],
             "type": v["type"],
             "name": v["name"],
@@ -498,8 +532,13 @@ async def list_loras(token: str = Depends(auth)):
                 for pid, profile in (v.get("profiles") or {}).items()
             ],
         }
-        for v in reg.values()
-    ]
+        if public_templates:
+            item["usage_templates"] = public_templates
+            # 仅 Registry 资料明确声明默认值时才公开；前端仍要求用户显式选择，
+            # 避免“选择物理 LoRA”被偷换成“采用某个作者样例”。
+            if default_template in seen_templates:
+                item["default_usage_template"] = default_template
+        items.append(item)
     stackable_detail_types = {"style", "action", "expression"}
     return {"characters": [i for i in items if i["type"] == "character"],
             "styles": [i for i in items if i["type"] in stackable_detail_types],
@@ -589,7 +628,7 @@ _SNAPSHOT_FIELDS = (
     "generation_mode", "denoise", "fit_mode", "crop_position", "change_fields",
     "reference_contract", "reference_scope", "detailer",
     "prompt_mode", "prompt_state", "final_prompt_en", "final_negative", "negative_source",
-    "usage_refs", "usage_warnings", "usage_revision",
+    "usage_refs", "usage_warnings", "usage_revision", "usage_templates",
 )
 
 
@@ -603,7 +642,7 @@ def _public_job(job: dict) -> dict:
     keys = ("id", "status", "prompt_raw", "prompt_en", "workflow", "concept", "completion_level",
             "lora_bindings", "lora_warnings", "registry_revision", "prompt_ir", "seed",
             "prompt_mode", "prompt_state", "final_prompt_en", "final_negative", "negative_source",
-            "usage_refs", "usage_warnings", "usage_revision",
+            "usage_refs", "usage_warnings", "usage_revision", "usage_templates",
             "parent_job_id", "generation_mode", "denoise", "fit_mode", "crop_position",
             "width", "height", "state_snapshot", "change_fields", "image_warnings",
             "reference_contract", "reference_scope", "image", "error", "error_kind",
@@ -749,6 +788,8 @@ async def translate_prompt(req: Request, token: str = Depends(verify_token)):
         "usage_negative": prompt_ir_meta.get("usage_negative"),
         "usage_evidence_model": prompt_ir_meta.get("usage_evidence_model", ""),
         "usage_limits_model": prompt_ir_meta.get("usage_limits_model", ""),
+        "usage_templates": prompt_ir_meta.get("usage_templates", []),
+        "usage_template_refs": prompt_ir_meta.get("usage_template_refs", []),
     }
 
 def _dialog_usage_refs(source, action, delta, body, meta):
@@ -797,6 +838,14 @@ def _verify_usage_refs(bindings: list[dict], requested):
     warnings = [] if len(refs) == len(set(requested_ids)) else [
         "部分用法 ID 与当前服务端资料不符，未记录"]
     return refs, warnings
+
+
+def _verify_usage_templates(bindings: list[dict]) -> list[dict]:
+    """服务端校验 binding 携带的模板 ID，并返回当前不可变记录中的执行快照。"""
+    selections = _bindings_as_selections(bindings)
+    records, _provided, _rejected, _warnings, _revision = _collect_usage_records(
+        selections, STORE.get_lora_usage)
+    return _resolve_selected_usage_templates(selections, records)
 
 
 async def _enqueue(owner_id: str, wf_name: str, prompt_en: str, prompt_raw: str,
@@ -887,7 +936,14 @@ async def _enqueue(owner_id: str, wf_name: str, prompt_en: str, prompt_raw: str,
     # 最终化（前缀+trigger），但负面返回 None 以保留工作流 wildcard 行为。
     default_negative, default_static = (default_negative_text(wf_name)
                                         if prompt_state is not None else (None, False))
-    verified_usage_refs, usage_warnings = _verify_usage_refs(resolved_bindings, usage_refs)
+    verified_usage_templates = _verify_usage_templates(resolved_bindings)
+    template_refs = [
+        str(item.get("usage_id") or "") for item in verified_usage_templates
+        if str(item.get("usage_id") or "")
+    ]
+    requested_usage_refs = list(usage_refs or []) + template_refs
+    verified_usage_refs, usage_warnings = _verify_usage_refs(
+        resolved_bindings, list(dict.fromkeys(requested_usage_refs)))
     finalized = finalize_generation_text(
         prompt_mode=prompt_mode, prompt_state=prompt_state, prompt_en=prompt_en,
         bindings=resolved_bindings, quality_prefix=wcfg.get("quality_prefix", ""),
@@ -933,6 +989,7 @@ async def _enqueue(owner_id: str, wf_name: str, prompt_en: str, prompt_raw: str,
         "prompt_ir": prompt_ir, "prompt_edited": bool(prompt_edited), "seed": seed,
         "usage_refs": verified_usage_refs, "usage_warnings": usage_warnings,
         "usage_revision": resolved_revision,
+        "usage_templates": verified_usage_templates,
         "prompt_mode": finalized["prompt_mode"], "prompt_state": finalized["prompt_state"],
         "final_prompt_en": finalized["final_prompt_en"],
         "final_negative": finalized["final_negative"],

@@ -380,6 +380,7 @@ failed (失败):
 ### P2B 用法资料字段（2026-09-13）
 
 - `/api/dialog/turn` 的 `action=start` 接收中文并现场编译，因此固定按 `assisted/body` 最终化；客户端的 `manual/final` 声明不适用于此入口。直接英文生成继续使用 `/api/jobs`。
-- `/api/translate` 新增：`usage_provided`（本次提供摘要）、`usage_applied`（**模型本次声明采用**的 ID，已按服务端允许集合校验）、`usage_warnings`、`usage_evidence`（服务端记录依据）、`usage_evidence_model` / `usage_limits_model`（模型给出的中文依据/限制）、`usage_negative`（模型给出的完整负面：`null`=保持默认、`""`=清空、非空=替换）、`usage_revision`。
+- `GET /api/loras` 对含结构化模板的 Asset additive 返回 `usage_templates[]`：`id/name/description/profile/positive/layout_positive/layout/negative_add/pose_options/recommended_size`。`pose_options` 供用户用中文指定，不作为未展开语法注入。这只是可选目录；选择物理 LoRA 不等于选择模板。
+- `lora_selections[]` 可带 `usage_template`（模板 ID），与 `profile(s)` 独立。`/api/translate` 新增 `usage_templates`（本次确定执行快照）与 `usage_template_refs`（模板来源记录），同时保留 `usage_provided`、`usage_applied`（**仅为模型声明采用**）、`usage_warnings`、依据/限制、`usage_negative` 和 `usage_revision`。
 - `POST /api/jobs`、`POST /api/dialog/turn` 新增可选 `usage_refs`（字符串数组）：客户端提交的**参考资料**；服务端按当前选择重新校验，只保留确实适用的 ID 并落库为 `usage_refs`，**不代表模型实际采用**。类型错误返回 400。
-- 任务/历史响应新增 `usage_refs`、`usage_warnings`、`usage_revision`。
+- 入队会重新解析 binding 中的 `usage_template`，自动把模板来源并入已核验 `usage_refs`，并保存 `usage_templates` 快照。任务/历史响应提供 `usage_refs`、`usage_warnings`、`usage_revision`、`usage_templates`。

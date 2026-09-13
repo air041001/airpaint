@@ -738,6 +738,8 @@ function makeLoraSelection(item) {
   return {
     key:item.key, profiles:selectedProfiles, mode:selectedProfiles.length ? 'explicit' : 'auto',
     optional:[], optional_by_profile:{},
+    // 用法模板是独立的用户选择；选择物理 LoRA 本身不隐式套用作者样例。
+    usage_template:null,
     strength_model:strengthModel, strength_clip:strengthClip,
   };
 }
@@ -848,6 +850,7 @@ function getSelectedLoraSelections(includeStrength = true) {
   return [...selLora.char, ...selLora.style].map(selection => {
     const profileIds = loraProfileIds(selection);
     const result = { key:selection.key, mode:selection.mode, optional:selection.optional || [] };
+    if (selection.usage_template) result.usage_template = selection.usage_template;
     if (profileIds.length === 1) result.profile = profileIds[0];
     else if (profileIds.length > 1) result.profiles = [...profileIds];
     if (selection.optional_by_profile && Object.keys(selection.optional_by_profile).length) {
@@ -905,6 +908,18 @@ function setLoraProfile(group, key, profile) {
   markTranslationStale('LoRA');
   renderAllLoraUI();
 }
+function setLoraUsageTemplate(group, key, templateId) {
+  const selected = loraSelection(group, key);
+  const item = loraItems(group).find(x => x.key === key);
+  if (!selected || !item) return;
+  const profiles = loraProfileIds(selected);
+  const available = (item.usage_templates || []).filter(t => !t.profile || profiles.includes(t.profile));
+  if (templateId && !available.some(t => t.id === templateId)) return;
+  selected.usage_template = templateId || null;
+  loraNotice = '';
+  markTranslationStale('LoRA 用法模板');
+  renderAllLoraUI();
+}
 function removeLoraSelection(group, key) {
   selLora[group] = selLora[group].filter(x => x.key !== key);
   loraNotice = '';
@@ -933,6 +948,11 @@ function updateLoraPreview() {
     const profiles = item.profiles || [];
     const profileIds = loraProfileIds(state);
     const activeProfiles = profiles.filter(p => profileIds.includes(p.id));
+    const usageTemplates = (item.usage_templates || []).filter(t => !t.profile || profileIds.includes(t.profile));
+    if (state.usage_template && !usageTemplates.some(t => t.id === state.usage_template)) {
+      state.usage_template = null;
+    }
+    const activeUsageTemplate = usageTemplates.find(t => t.id === state.usage_template);
     const capabilityItems = activeProfiles.length
       ? activeProfiles.flatMap(p => p.provides || [])
       : (item.provides || []);
@@ -945,6 +965,20 @@ function updateLoraPreview() {
       ${profiles.map(p => `<button class="chip ${profileIds.includes(p.id)?'active':''}" data-profile="${escapeHtml(p.id)}" data-profile-group="${group}" data-profile-key="${escapeHtml(item.key)}" aria-pressed="${profileIds.includes(p.id)}">${escapeHtml(p.name)}</button>`).join('')}
       <div class="lora-profile-note">可多选；请在画面描述中写清各主体的形态、位置与关系。同一权重文件仍只加载一次</div>
     </div>` : '';
+    const usageTemplateButtons = usageTemplates.length ? `<div class="lora-usage-template mt-2">
+      <div class="lora-profile-note">用法模板（独立于 LoRA Profile）</div>
+      <div class="flex flex-wrap gap-1 mt-1.5">
+        <button class="chip ${!state.usage_template?'active':''}" data-usage-template="" data-usage-template-group="${group}" data-usage-template-key="${escapeHtml(item.key)}">不套模板</button>
+        ${usageTemplates.map(t => `<button class="chip ${state.usage_template===t.id?'active':''}" data-usage-template="${escapeHtml(t.id)}" data-usage-template-group="${group}" data-usage-template-key="${escapeHtml(item.key)}" aria-pressed="${state.usage_template===t.id}">${escapeHtml(t.name)}</button>`).join('')}
+      </div>
+      ${activeUsageTemplate ? `<details class="lora-template-details"><summary>查看本次模板骨架</summary>
+        ${activeUsageTemplate.description ? `<div>${escapeHtml(activeUsageTemplate.description)}</div>` : ''}
+        <div><b>正向：</b>${escapeHtml([...(activeUsageTemplate.positive||[]), ...(activeUsageTemplate.layout_positive||[])].join(', '))}</div>
+        <div><b>负面追加：</b>${escapeHtml((activeUsageTemplate.negative_add||[]).join(', ') || '无')}</div>
+        ${(activeUsageTemplate.pose_options||[]).length ? `<div><b>姿势选项：</b>${escapeHtml(activeUsageTemplate.pose_options.join(' / '))}（可直接用中文描述指定）</div>` : ''}
+        ${activeUsageTemplate.recommended_size ? `<div><b>建议尺寸：</b>${escapeHtml(activeUsageTemplate.recommended_size)}（仅建议，不自动修改）</div>` : ''}
+      </details>` : ''}
+    </div>` : '';
     const verified = activeProfiles.find(p => p.verified === 'candidate')?.verified || item.verified || (!activeProfiles.length && profiles.some(p => p.verified === 'candidate') ? 'candidate' : null);
     const capabilityText = activeProfiles.length
       ? `已提供：${capabilitySummary || '所选 LoRA 概念'}`
@@ -955,9 +989,9 @@ function updateLoraPreview() {
       ? `<img class="lora-stack-thumb" src="${escapeHtml(item.preview)}" alt="" loading="lazy" decoding="async">`
       : '';
     return `<div class="lora-stack-item ${preview ? 'has-preview' : ''}">${preview}<div class="lora-stack-copy">
-      <div class="lora-stack-title"><div class="lora-stack-name"><span class="lora-stack-type">${typeLabels[group]}</span>${escapeHtml(item.name)}${verified==='candidate'?' <span class="lora-stack-candidate">待验证</span>':''}${item.trigger_policy==='none'?' <span class="text-emerald-300/70 text-[9px]">无需触发词</span>':''}</div><button class="lora-stack-remove" data-remove-lora="${escapeHtml(item.key)}" data-remove-group="${group}" title="移除 ${escapeHtml(item.name)}" aria-label="移除 ${escapeHtml(item.name)}">×</button></div>
+      <div class="lora-stack-title"><div class="lora-stack-name"><span class="lora-stack-type">${typeLabels[group]}</span>${escapeHtml(item.name)}${verified==='candidate'?' <span class="lora-stack-candidate">待验证</span>':''}${item.trigger_policy==='none'?' <span class="text-emerald-300/70 text-[9px]">无已登记触发词</span>':''}</div><button class="lora-stack-remove" data-remove-lora="${escapeHtml(item.key)}" data-remove-group="${group}" title="移除 ${escapeHtml(item.name)}" aria-label="移除 ${escapeHtml(item.name)}">×</button></div>
       <div class="lora-stack-capability" title="${escapeHtml(provided)}">${escapeHtml(capabilityText)}</div>
-      <div class="lora-profile-list">${profileButtons}</div>
+      <div class="lora-profile-list">${profileButtons}${usageTemplateButtons}</div>
       <label class="lora-strength-control"><span>强度</span><input type="range" min="0" max="2" step="0.05" value="${state.strength_model}" data-lora-strength="${escapeHtml(item.key)}" data-strength-group="${group}"><span class="mono" data-strength-value="${group}:${escapeHtml(item.key)}">${formatLoraStrength(state.strength_model)}</span></label>
     </div></div>`;
   }).join('');
@@ -971,6 +1005,11 @@ function updateLoraPreview() {
   $('lora-desc').innerHTML = `<div class="lora-stack-head"><span>当前叠加栈</span><span>${selected.length} 个文件</span></div>${stackItems}${stackWarning ? `<div class="lora-stack-warning">${escapeHtml(stackWarning)}</div>` : ''}`;
   $('lora-desc').querySelectorAll('[data-profile-group]').forEach(button => {
     button.onclick = () => setLoraProfile(button.dataset.profileGroup, button.dataset.profileKey, button.dataset.profile || null);
+  });
+  $('lora-desc').querySelectorAll('[data-usage-template-group]').forEach(button => {
+    button.onclick = () => setLoraUsageTemplate(
+      button.dataset.usageTemplateGroup, button.dataset.usageTemplateKey,
+      button.dataset.usageTemplate || null);
   });
   $('lora-desc').querySelectorAll('[data-remove-lora]').forEach(button => {
     button.onclick = () => removeLoraSelection(button.dataset.removeGroup, button.dataset.removeLora);
@@ -1189,8 +1228,12 @@ function jobsBody(promptEn, promptRaw, translation = null) {
     prompt_mode: 'assisted', prompt_state: 'final' };
   const neg = negativeForSubmit();
   if (neg !== undefined) body.negative_prompt = neg;
-  if (translation && Array.isArray(translation.usage_applied) && translation.usage_applied.length) {
-    body.usage_refs = translation.usage_applied.slice();
+  if (translation) {
+    const refs = Array.isArray(translation.usage_applied) ? translation.usage_applied.slice() : [];
+    for (const ref of (translation.usage_template_refs || [])) {
+      if (!refs.includes(ref)) refs.push(ref);
+    }
+    if (refs.length) body.usage_refs = refs;
   }
   body.completion_level = translation?._completionLevel || completionLevel;
   if (translation?.concept) body.concept = translation.concept;
@@ -1227,6 +1270,10 @@ async function doTranslate(opts = {}) {
   const requestImageMode = isImg2Img() ? 'img2img' : 'txt2img';
   const json = { prompt: sourcePrompt, completion_level: requestCompletionLevel,
     workflow: $('workflow').value || undefined };
+  if ($('negativeEdit')?.dataset.touched === 'true') {
+    const negative = negativeForSubmit();
+    if (negative !== undefined) json.negative_prompt = negative;
+  }
   const selections = getSelectedLoraSelections();
   if (selections.length) json.lora_selections = selections;
   if (opts.reroll) json.reroll = true;
@@ -1264,6 +1311,9 @@ function renderUsageNotes(result) {
   if (result && Array.isArray(result.usage_applied) && result.usage_applied.length) {
     parts.push('本次模型声明采用 ' + result.usage_applied.length + ' 条资料');
   }
+  if (result && Array.isArray(result.usage_templates) && result.usage_templates.length) {
+    parts.push('已执行用法模板：' + result.usage_templates.map(item => item.name).join('、'));
+  }
   body.textContent = parts.join('\n');
   box.hidden = parts.length === 0;
 }
@@ -1285,8 +1335,9 @@ function renderTranslation(result) {
   $('promptEnEdit').value = (typeof result.final_prompt_en === 'string' && result.final_prompt_en)
     ? result.final_prompt_en : (result.prompt_en || '');
   if (typeof result.final_negative === 'string' && $('negativeEdit')) {
+    const negativeWasTouched = $('negativeEdit').dataset.touched === 'true';
     setNegativeEditor(result.final_negative, true);
-    delete $('negativeEdit').dataset.touched;
+    if (!negativeWasTouched) delete $('negativeEdit').dataset.touched;
   }
   renderBreakdown(result.breakdown);
   renderUsageNotes(result);

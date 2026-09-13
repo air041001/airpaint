@@ -191,6 +191,20 @@ def test_binding_roundtrip_keeps_profiles_and_strength():
     }], selections
 
 
+def test_usage_template_roundtrip_is_independent_of_profile():
+    registry = registry_fixture()
+    with use_registry(registry):
+        normalized = main.normalize_lora_selections([{
+            "key": "style_0", "mode": "explicit", "usage_template": "comic_base",
+        }])
+        assert normalized[0]["usage_template"] == "comic_base", normalized
+        bindings, warnings, _ = main.resolve_lora_selections(normalized)
+        assert not warnings and bindings[0]["usage_template"] == "comic_base", bindings
+        roundtrip = main._bindings_as_selections(bindings)
+        assert roundtrip[0]["usage_template"] == "comic_base", roundtrip
+        assert roundtrip[0].get("profile") is None, roundtrip
+
+
 def main_test():
     tests = [
         test_same_file_multi_profile_is_one_binding_and_one_loader_entry,
@@ -199,6 +213,7 @@ def main_test():
         test_style_stack_has_no_product_cap_and_keeps_per_asset_strength,
         test_same_physical_file_cannot_hide_conflicting_strengths,
         test_binding_roundtrip_keeps_profiles_and_strength,
+        test_usage_template_roundtrip_is_independent_of_profile,
     ]
     for test in tests:
         test()

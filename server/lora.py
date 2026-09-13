@@ -253,6 +253,7 @@ def normalize_lora_selections(raw, registry: dict[str, dict] | None = None) -> l
         if isinstance(item, str):
             key, profiles, mode, optional = item.strip(), [], "auto", []
             optional_by_profile = {}
+            usage_template = None
             strength_model = strength_clip = None
         elif isinstance(item, dict):
             key = str(item.get("key") or "").strip()
@@ -261,6 +262,12 @@ def normalize_lora_selections(raw, registry: dict[str, dict] | None = None) -> l
             optional = item.get("optional") or []
             optional_by_profile = _normalize_optional_by_profile(
                 item.get("optional_by_profile"), key)
+            raw_usage_template = item.get("usage_template")
+            if raw_usage_template is not None and not isinstance(raw_usage_template, str):
+                raise HTTPException(400, f"LoRA {key} usage_template 必须是字符串")
+            usage_template = str(raw_usage_template or "").strip() or None
+            if usage_template and not re.fullmatch(r"[a-z0-9][a-z0-9_-]{0,63}", usage_template):
+                raise HTTPException(400, f"LoRA {key} usage_template 非法")
             strength_model = _normalize_lora_strength(
                 item.get("strength_model"), f"LoRA {key} model 强度")
             strength_clip = _normalize_lora_strength(
@@ -299,6 +306,7 @@ def normalize_lora_selections(raw, registry: dict[str, dict] | None = None) -> l
             entry = {
                 "key": asset_key, "profiles": [], "mode": mode,
                 "optional": [], "optional_by_profile": {},
+                "usage_template": usage_template,
                 "strength_model": strength_model, "strength_clip": strength_clip,
             }
             merged[asset_key] = entry
@@ -313,6 +321,10 @@ def normalize_lora_selections(raw, registry: dict[str, dict] | None = None) -> l
         for profile_id, option_ids in optional_by_profile.items():
             current = entry["optional_by_profile"].setdefault(profile_id, [])
             entry["optional_by_profile"][profile_id] = list(dict.fromkeys(current + option_ids))
+        if usage_template:
+            if entry["usage_template"] and entry["usage_template"] != usage_template:
+                raise HTTPException(400, f"LoRA {asset_key} 被重复选择且 usage_template 冲突")
+            entry["usage_template"] = usage_template
         for field, value in (("strength_model", strength_model), ("strength_clip", strength_clip)):
             if value is None:
                 continue
@@ -338,6 +350,9 @@ def normalize_lora_selections(raw, registry: dict[str, dict] | None = None) -> l
         optional_by_profile = entry.pop("optional_by_profile")
         if optional_by_profile:
             normalized["optional_by_profile"] = optional_by_profile
+        usage_template = entry.pop("usage_template")
+        if usage_template:
+            normalized["usage_template"] = usage_template
         for field in ("strength_model", "strength_clip"):
             value = entry.pop(field)
             if value is not None:
@@ -528,6 +543,8 @@ def resolve_lora_selections(selections, llm_choices=None, *, allow_unresolved_au
             "injected_tags": tags, "provides": list(dict.fromkeys(provides)),
             "strength_model": strength_model, "strength_clip": strength_clip,
         })
+        if selection.get("usage_template"):
+            bindings[-1]["usage_template"] = selection["usage_template"]
         if asset.get("type") == "character":
             character_count += len(profile_ids) if profile_ids else 1
     if character_count > MAX_CHARACTER_LORA_PROFILES:
@@ -804,6 +821,8 @@ def _bindings_as_selections(bindings: list[dict] | None) -> list[dict]:
         for field in ("strength_model", "strength_clip"):
             if binding.get(field) is not None:
                 selection[field] = binding[field]
+        if binding.get("usage_template"):
+            selection["usage_template"] = binding["usage_template"]
         result.append(selection)
     return result
 

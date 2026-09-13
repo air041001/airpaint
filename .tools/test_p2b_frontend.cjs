@@ -38,14 +38,44 @@ function stubElement() {
     vm.runInContext(section('function setNegativeEditor(', 'function initNegativeEditorForWorkflow'), context);
     vm.runInContext(section('function jobsBody(', 'async function doTranslate'), context);
     context.setNegativeEditor('', true);
-    const body = context.jobsBody('Q, 1girl', '少女', { usage_applied: ['u1', 'u2'], final_prompt_en: 'Q, 1girl' });
+    const body = context.jobsBody('Q, 1girl', '少女', {
+      usage_applied: ['u1'], usage_template_refs: ['u1', 'u2'], final_prompt_en: 'Q, 1girl'
+    });
     assert.equal(body.prompt_state, 'final');
     assert.deepEqual(body.usage_refs, ['u1', 'u2']);
     assert.equal(context.jobsBody('x', 'y', null).usage_refs, undefined);
     console.log('jobsBody: final semantics + usage refs OK');
   }
 
-  // 2) go 一键必须提交 final_prompt_en（不是 body）
+  // 2) 用法模板是独立显式选择，不冒充 Profile，也不随物理 LoRA 自动套用。
+  {
+    const context = vm.createContext({
+      selLora: { char: [], style: [] },
+      loraData: { characters: [], styles: [{
+        key: 'comic', profiles: [], usage_templates: [{ id:'comic_base' }],
+      }] },
+      lastTranslation: null,
+      normalizeUiStrength: value => Number(value),
+      markTranslationStale: () => {}, renderAllLoraUI: () => {},
+    });
+    vm.runInContext(section('function loraItems(', 'function loraSelectionSignature'), context);
+    context.renderAllLoraUI = () => {};
+    vm.runInContext(section('function setLoraUsageTemplate(', 'function removeLoraSelection'), context);
+    const selection = context.makeLoraSelection({
+      key: 'comic', profiles: [], default_usage_template: 'comic_base',
+      strength_model: 1, strength_clip: 1,
+    });
+    context.selLora.style.push(selection);
+    let sent = context.getSelectedLoraSelections(false)[0];
+    assert.equal(sent.usage_template, undefined);
+    context.setLoraUsageTemplate('style', 'comic', 'comic_base');
+    sent = context.getSelectedLoraSelections(false)[0];
+    assert.equal(sent.usage_template, 'comic_base');
+    assert.equal(sent.profile, undefined);
+    console.log('usage template: independent explicit selection OK');
+  }
+
+  // 3) go 一键必须提交 final_prompt_en（不是 body）
   {
     const elements = {};
     const context = vm.createContext({
@@ -67,7 +97,7 @@ function stubElement() {
     console.log('go handler: submits final_prompt_en OK');
   }
 
-  // 3) manual 直出：提交给后端的是用户原文（不套用资料文本）
+  // 4) manual 直出：提交给后端的是用户原文（不套用资料文本）
   {
     const elements = {};
     const context = vm.createContext({

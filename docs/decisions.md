@@ -1046,3 +1046,11 @@ LoRA 用户可见名称以 versioned `server/lora_registry.yaml` 为单一真相
 **修订关系**：补充 D60 的“图片留文件系统”边界；保留 D61 的作品/草稿分离和 D59 的整图重绘结论。
 
 **相关文件**：`server/persistence.py`、`server/api.py`、`.tools/test_persistence_recovery.py`、`README.md`、`docs/api.md`、`docs/architecture.md`、`docs/operations.md`、`docs/BUILDHANDOFF.md`。
+
+## D63. 特殊 LoRA 用法模板独立选择并确定性执行
+
+**决定与原因**：物理 LoRA、语义 Profile 与作者用法模板是三个不同概念。Registry 继续只保存资料引用；不可变用法记录可提供多个模板及公共骨架继承，前端默认不套用，用户显式选择后由 Composer 围绕骨架规划人物/场景，再由代码把正向、负面和主体计数写进最终文本。一次输出允许画布内部多格；只有明确单格要求会停用多格布局。这样既不把作者案例伪装成 trigger/provides，也不再依赖模型自由决定是否采用。
+
+**代价与边界**：模板 schema 是稀有能力的窄结构，不升级为通用规则语言；无资料或未选模板的 LoRA 保持原路径。模板能保证文本执行，不能保证模型画质；尺寸只提示。当前正向进入普通 `CLIPTextEncode`，不展开作者 `{a|b}`，所以这类姿势候选只展示并交 Composer 按中文意图选用。人工编辑后的 final 与用户负面优先，删除内容不会被补回。`usage_applied` 仍只表示模型声明，模板实际执行以 `usage_templates`、`usage_template_refs` 和最终文本为准。
+
+**修订关系与证据**：补充 P2B 原文参考路径；真实失败任务为 `0c520c5e5f`。相关实现与验收见 `server/lora_usage.py`、`server/prompt_engine.py`、`server/api.py`、`web/index.html` 及 P2B 回归。

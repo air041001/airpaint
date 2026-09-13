@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 from typing import Any
 
 
@@ -15,6 +16,122 @@ USAGE_SOURCE_KINDS = ("author", "community", "user", "inferred")
 USAGE_VERIFIED_STATUSES = ("unverified", "source_confirmed", "image_verified")
 
 HASH_MISMATCH = "hash_mismatch"
+_TEMPLATE_ID_RE = re.compile(r"^[a-z0-9][a-z0-9_-]{0,63}$")
+
+
+def _template_text_list(value: Any, label: str) -> list[str]:
+    if value is None:
+        return []
+    if not isinstance(value, list) or any(not isinstance(item, str) for item in value):
+        raise ValueError(f"{label} 必须是字符串数组")
+    return list(dict.fromkeys(item.strip() for item in value if item.strip()))
+
+
+def usage_template_catalog(record: dict) -> dict:
+    """读取一条用法记录中的可选模板，并解析 ``extends`` 继承。
+
+    模板是用法资料的一部分，不是 LoRA Profile 或 trigger。旧记录没有 ``templates``
+    时返回空目录，保持 P2A/P2B 原文路径兼容。
+    """
+    candidate = record.get("candidate") if isinstance(record, dict) else None
+    candidate = candidate if isinstance(candidate, dict) else {}
+    raw_templates = candidate.get("templates")
+    if raw_templates is None:
+        return {"templates": [], "default": None}
+    if not isinstance(raw_templates, list):
+        raise ValueError("candidate.templates 必须是数组")
+
+    raw_by_id: dict[str, dict] = {}
+    order: list[str] = []
+    for index, raw in enumerate(raw_templates):
+        if not isinstance(raw, dict):
+            raise ValueError(f"candidate.templates[{index}] 必须是对象")
+        template_id = str(raw.get("id") or "").strip()
+        if not _TEMPLATE_ID_RE.fullmatch(template_id):
+            raise ValueError(f"candidate.templates[{index}].id 非法")
+        if template_id in raw_by_id:
+            raise ValueError(f"candidate.templates 存在重复 id: {template_id}")
+        raw_by_id[template_id] = raw
+        order.append(template_id)
+
+    resolved: dict[str, dict] = {}
+    resolving: set[str] = set()
+
+    def resolve(template_id: str) -> dict:
+        if template_id in resolved:
+            return resolved[template_id]
+        if template_id in resolving:
+            raise ValueError(f"candidate.templates 继承形成循环: {template_id}")
+        raw = raw_by_id[template_id]
+        resolving.add(template_id)
+        parent_id = str(raw.get("extends") or "").strip()
+        if parent_id:
+            if parent_id not in raw_by_id:
+                raise ValueError(f"模板 {template_id} extends 未知模板 {parent_id}")
+            parent = resolve(parent_id)
+        else:
+            parent = {
+                "positive": [], "negative_add": [], "subject_tags": [],
+                "pose_options": [], "layout": None,
+            }
+        name = str(raw.get("name") or "").strip()
+        if not name:
+            raise ValueError(f"模板 {template_id} 缺少 name")
+        positive = list(dict.fromkeys(
+            parent["positive"]
+            + _template_text_list(raw.get("positive"), f"模板 {template_id}.positive")
+        ))
+        negative_add = list(dict.fromkeys(
+            parent["negative_add"]
+            + _template_text_list(raw.get("negative_add"), f"模板 {template_id}.negative_add")
+        ))
+        own_subjects = _template_text_list(
+            raw.get("subject_tags"), f"模板 {template_id}.subject_tags")
+        subject_tags = own_subjects or list(parent["subject_tags"])
+        own_pose_options = _template_text_list(
+            raw.get("pose_options"), f"模板 {template_id}.pose_options")
+        pose_options = own_pose_options or list(parent["pose_options"])
+        layout = parent["layout"]
+        if "layout" in raw:
+            raw_layout = raw.get("layout")
+            if raw_layout is None:
+                layout = None
+            elif not isinstance(raw_layout, dict):
+                raise ValueError(f"模板 {template_id}.layout 必须是对象")
+            else:
+                kind = str(raw_layout.get("kind") or "").strip()
+                if kind not in {"multi_panel"}:
+                    raise ValueError(f"模板 {template_id}.layout.kind 非法")
+                layout = {
+                    "kind": kind,
+                    "positive": _template_text_list(
+                        raw_layout.get("positive"), f"模板 {template_id}.layout.positive"),
+                }
+        resolved[template_id] = {
+            "id": template_id,
+            "name": name,
+            "description": str(raw.get("description") or "").strip(),
+            "extends": parent_id or None,
+            "positive": positive,
+            "negative_add": negative_add,
+            "subject_tags": subject_tags,
+            "pose_options": pose_options,
+            "layout": layout,
+            "usage_id": str(record.get("usage_id") or ""),
+            "asset_key": str(record.get("asset_key") or ""),
+            "profile_id": str(record.get("profile_id") or ""),
+            "recommended_size": str(
+                (record.get("advisory") or {}).get("recommended_size") or ""
+            ).strip() if isinstance(record.get("advisory"), dict) else "",
+        }
+        resolving.remove(template_id)
+        return resolved[template_id]
+
+    templates = [resolve(template_id) for template_id in order]
+    default = str(candidate.get("default_template") or "").strip() or None
+    if default and default not in raw_by_id:
+        raise ValueError(f"candidate.default_template 不存在: {default}")
+    return {"templates": templates, "default": default}
 
 
 def body_hash(body: Any) -> str:
@@ -38,7 +155,7 @@ def normalize_record(record: dict) -> dict:
     declared = str(record.get("body_hash") or "").strip()
     if declared and declared != expected:
         raise ValueError("body_hash 与正文不符；请省略该字段，由服务端从正文生成")
-    return {
+    normalized = {
         "asset_key": asset_key,
         "profile_id": str(record.get("profile_id") or "").strip(),
         "body": body,
@@ -50,6 +167,9 @@ def normalize_record(record: dict) -> dict:
         "advisory": record.get("advisory") or {},
         "verified": str(record.get("verified") or "unverified"),
     }
+    # 新模板结构在写入不可变记录前即校验；旧 candidate 形状保持兼容。
+    usage_template_catalog(normalized)
+    return normalized
 
 
 def _versioned_payload(record: dict) -> dict:

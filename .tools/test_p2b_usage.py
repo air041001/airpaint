@@ -14,7 +14,11 @@ os.environ.setdefault("AIRPAINT_STATE_DIR", tempfile.mkdtemp(prefix="airpaint-te
 
 from server import lora as lora_module
 from server import prompt_engine as prompt
-from server.lora_usage import body_hash as _body_hash, version_id as _version_id
+from server.lora_usage import (
+    body_hash as _body_hash,
+    usage_template_catalog,
+    version_id as _version_id,
+)
 from server.prompt_engine import (
     _collect_usage_records,
     _parse_usage_object,
@@ -89,6 +93,28 @@ class UsageObjectSchemaTests(unittest.TestCase):
                       prompt.USAGE_NEGATIVE_UNSET)
         self.assertEqual(_validate_usage_object({"applied": ["known"], "negative": ""}, provided)[1], "")
         self.assertEqual(_validate_usage_object({"applied": ["known"], "negative": "N"}, provided)[1], "N")
+
+
+class UsageTemplateSchemaTests(unittest.TestCase):
+    def test_templates_are_separate_from_profiles_and_resolve_inheritance(self):
+        record = make_record(candidate={
+            "default_template": "base",
+            "templates": [
+                {"id": "base", "name": "漫画基础", "positive": ["comic style"],
+                 "negative_add": ["standing portrait"],
+                 "layout": {"kind": "multi_panel", "positive": ["3-5 comic panels"]}},
+                {"id": "group", "name": "群体场景", "extends": "base",
+                 "subject_tags": ["1girl", "2boys"], "positive": ["group scene"],
+                 "pose_options": ["missionary", "cowgirl position"]},
+            ],
+        }, advisory={"recommended_size": "832x1216"})
+        catalog = usage_template_catalog(record)
+        self.assertEqual(catalog["default"], "base")
+        group = catalog["templates"][1]
+        self.assertEqual(group["positive"], ["comic style", "group scene"])
+        self.assertEqual(group["layout"]["positive"], ["3-5 comic panels"])
+        self.assertEqual(group["pose_options"], ["missionary", "cowgirl position"])
+        self.assertEqual(group["recommended_size"], "832x1216")
 
 
 class FinalizeNegativeTests(unittest.TestCase):
@@ -185,6 +211,7 @@ class TranslateUsageTests(unittest.TestCase):
     def _fake(self, usage_object=None):
         async def fake(context, reroll=False, prior_state=None, usage_expected=False):
             self.captured["usage_expected"] = usage_expected
+            self.captured["context"] = context
             lines = ["CONCEPT: 用户锁定：少女｜模型补全：坐姿",
                      "IR: " + json.dumps(IR, ensure_ascii=False),
                      "CHAR: none"]
@@ -235,6 +262,72 @@ class TranslateUsageTests(unittest.TestCase):
         self.assertEqual(meta["usage_applied"], [])
         self.assertIsNone(meta["usage_negative"])
         self.assertTrue(meta["usage_warnings"])
+
+    def test_selected_template_is_deterministic_and_repairs_multi_panel_conflict(self):
+        record = make_record(candidate={
+            "default_template": "comic_base",
+            "templates": [{
+                "id": "comic_base", "name": "漫画基础",
+                "positive": ["Hentai comic style", "focus lines"],
+                "negative_add": ["stand", "(full body standing)"],
+                "layout": {"kind": "multi_panel", "positive": [
+                    "3-5 or more comic panels", "text and speech bubbles"]},
+            }],
+        })
+        lora_module.get_lora_registry = lambda: {"demo": asset_with_refs([record["usage_id"]])}
+
+        async def conflicting(context, reroll=False, prior_state=None, usage_expected=False):
+            self.captured.update({"usage_expected": usage_expected, "context": context})
+            ir = dict(IR)
+            ir["composition"] = ["single illustration"]
+            ir["constraints"] = ["no multiple panels", "no text or speech bubbles"]
+            return ("1girl, solo, sitting", None, "A maid reacts across the panels", ir, [], {},
+                    "用户锁定：漫画风格｜模型补全：单幅插画", False, [],
+                    {"applied": [], "negative": None, "evidence": "", "limits": ""})
+
+        prompt.siliconflow_translate = conflicting
+        with unittest.mock.patch.object(prompt, "_default_usage_fetch",
+                                        lambda uid: record if uid == record["usage_id"] else None):
+            result, _, prompt_ir, meta = asyncio.run(prompt.translate(
+                "随便画画", lora_selections=[{
+                    "key": "demo", "mode": "explicit", "usage_template": "comic_base"}],
+                include_meta=True, usage_baseline_negative=(
+                    "worst quality, multiple views, split view, grid view, text")))
+        self.assertIn("Hentai comic style", result)
+        self.assertIn("3-5 or more comic panels", result)
+        self.assertIn("text and speech bubbles", result)
+        self.assertLess(result.index("Hentai comic style"),
+                        result.index("A maid reacts across the panels"))
+        self.assertNotIn("no multiple panels", prompt_ir["constraints"])
+        self.assertNotIn("single illustration", prompt_ir["composition"])
+        self.assertTrue(any("3-5 or more panels" in item for item in prompt_ir["composition"]))
+        self.assertEqual(meta["usage_negative"],
+                         "worst quality, stand, (full body standing)")
+        self.assertEqual(meta["usage_template_refs"], [record["usage_id"]])
+        self.assertEqual(meta["usage_templates"][0]["id"], "comic_base")
+        self.assertIn("多格漫画", meta["concept"])
+        self.assertIn("One output image may contain multiple comic panels", self.captured["context"])
+
+    def test_explicit_single_panel_disables_only_layout_part(self):
+        record = make_record(candidate={
+            "default_template": "comic_base",
+            "templates": [{
+                "id": "comic_base", "name": "漫画基础", "positive": ["comic style"],
+                "layout": {"kind": "multi_panel", "positive": ["3-5 comic panels"]},
+            }],
+        })
+        lora_module.get_lora_registry = lambda: {"demo": asset_with_refs([record["usage_id"]])}
+        prompt.siliconflow_translate = self._fake(
+            {"applied": [], "negative": None, "evidence": "", "limits": ""})
+        with unittest.mock.patch.object(prompt, "_default_usage_fetch",
+                                        lambda uid: record if uid == record["usage_id"] else None):
+            result, _, _, meta = asyncio.run(prompt.translate(
+                "画成单格漫画", lora_selections=[{
+                    "key": "demo", "mode": "explicit", "usage_template": "comic_base"}],
+                include_meta=True))
+        self.assertIn("comic style", result)
+        self.assertNotIn("3-5 comic panels", result)
+        self.assertTrue(any("明确要求单格" in item for item in meta["usage_warnings"]))
 
 
 if __name__ == "__main__":

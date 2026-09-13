@@ -33,7 +33,7 @@ def make_record(**kw):
         "body": body, "source_kind": "author", "source_url": "",
         "background": kw.get("background", {"checkpoint": "demo"}),
         "candidate": kw.get("candidate", {"template": "{character}", "negative": ["blurry"]}),
-        "advisory": {}, "verified": "unverified",
+        "advisory": kw.get("advisory", {}), "verified": "unverified",
     }
     record["body_hash"] = _body_hash(body)
     record["usage_id"] = _version_id(record)
@@ -43,6 +43,7 @@ def make_record(**kw):
 def asset(key, refs=None):
     result = {"key": key, "type": "style", "name": key, "file": key + ".safetensors",
               "trigger_policy": "none", "profiles": {}, "provides": [],
+              "source": "test fixture", "verified": "candidate",
               "strength_model": 1.0, "strength_clip": 1.0, "configured": True,
               "registry_revision": "rev-1"}
     if refs:
@@ -288,6 +289,80 @@ class ApiIntegrationTests(unittest.IsolatedAsyncioTestCase):
         request = api._job_request(stored, None)
         self.assertEqual(request["prompt"][PROMPT_NODE]["inputs"]["text"], preview["final_prompt_en"])
         self.assertEqual(request["prompt"][NEG_NODE]["inputs"]["text"], "NEG-NEW")
+
+    async def test_usage_template_survives_list_preview_job_and_workflow(self):
+        record = make_record(
+            candidate={
+                "default_template": "comic_base",
+                "templates": [{
+                    "id": "comic_base", "name": "漫画基础",
+                    "description": "单张画布内的多格漫画布局",
+                    "positive": ["Hentai comic style"],
+                    "negative_add": ["stand", "(full body standing)"],
+                    "pose_options": ["missionary", "cowgirl position"],
+                    "layout": {"kind": "multi_panel", "positive": [
+                        "3-5 or more comic panels", "text and speech bubbles"]},
+                }],
+            },
+            advisory={"recommended_size": "832x1216"},
+        )
+        record, _ = self.store.save_lora_usage(record)
+
+        async def fake_translate(context, reroll=False, prior_state=None, usage_expected=False):
+            ir = dict(IR)
+            ir["subject"] = ["1girl", "solo"]
+            ir["composition"] = ["single illustration"]
+            ir["constraints"] = ["no multiple panels", "no text or speech bubbles"]
+            return ("1girl, solo, sitting", None, "", ir, [], {},
+                    "用户锁定：漫画风格｜模型补全：单幅插画", False, [],
+                    {"applied": [], "negative": None, "evidence": "", "limits": ""})
+
+        lora_module.get_lora_registry = lambda: {
+            "demo": asset("demo", [record["usage_id"]])}
+        with patch.object(prompt, "siliconflow_translate", fake_translate), \
+                patch.object(prompt, "_default_usage_fetch", self.store.get_lora_usage), \
+                patch.object(api, "get_lora_registry", lora_module.get_lora_registry):
+            listed = await api.list_loras(token="t")
+            listed_asset = next(item for item in listed["styles"] if item["key"] == "demo")
+            self.assertEqual(listed_asset["usage_templates"][0]["id"], "comic_base")
+            self.assertEqual(listed_asset["usage_templates"][0]["recommended_size"], "832x1216")
+            self.assertEqual(listed_asset["usage_templates"][0]["pose_options"],
+                             ["missionary", "cowgirl position"])
+
+            selection = {"key": "demo", "mode": "explicit", "usage_template": "comic_base"}
+            preview = await api.translate_prompt(
+                Request(prompt="随便画画", workflow="anima", lora_selections=[selection]),
+                token="t")
+            refs = list(dict.fromkeys(
+                list(preview["usage_applied"]) + list(preview["usage_template_refs"])))
+            job = await api.create_job(
+                Request(
+                    workflow="anima", prompt_en=preview["final_prompt_en"], prompt="随便画画",
+                    prompt_mode="assisted", prompt_state="final",
+                    negative_prompt=preview["final_negative"], usage_refs=refs,
+                    lora_selections=[selection], lora_bindings=preview["lora_bindings"],
+                    registry_revision=preview["registry_revision"],
+                ), owner_id=OWNER)
+
+        self.assertIn("Hentai comic style", preview["final_prompt_en"])
+        self.assertIn("3-5 or more comic panels", preview["final_prompt_en"])
+        self.assertIn("text and speech bubbles", preview["final_prompt_en"])
+        self.assertIn("stand", preview["final_negative"])
+        self.assertEqual(preview["usage_applied"], [])
+        self.assertEqual(preview["usage_template_refs"], [record["usage_id"]])
+        self.assertEqual(preview["lora_bindings"][0]["usage_template"], "comic_base")
+        self.assertIn("多格漫画", preview["concept"])
+        self.assertNotIn("single illustration", preview["prompt_ir"]["composition"])
+
+        stored = self.store.get_job(job["id"], OWNER)
+        self.assertEqual(stored["usage_refs"], [record["usage_id"]])
+        self.assertEqual(stored["usage_templates"][0]["id"], "comic_base")
+        self.assertEqual(stored["prompt_en"], preview["final_prompt_en"])
+        request = api._job_request(stored, None)
+        self.assertEqual(request["prompt"][PROMPT_NODE]["inputs"]["text"],
+                         preview["final_prompt_en"])
+        self.assertEqual(request["prompt"][NEG_NODE]["inputs"]["text"],
+                         preview["final_negative"])
 
     async def test_dialog_start_is_always_assisted_body(self):
         record = make_record()

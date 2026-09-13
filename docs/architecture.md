@@ -41,6 +41,7 @@ ComfyUI  127.0.0.1:8188  (不对公网开放)
 | `persistence.py` | SQLite schema/migration、任务/会话/用量事务、owner 身份与历史查询 |
 | `knowledge.py` | 词典热加载、角色匹配、Danbooru 候选与本地缓存 |
 | `lora.py` | Registry 热加载、selection/context、binding 编译与预览解析 |
+| `lora_usage.py` | 不可变用法记录校验、版本 ID 与可选模板目录/继承解析 |
 | `prompt_engine.py` | Reasoning/Vision 调用、Composer 协议、IR 与 Prompt compiler |
 | `workflow_engine.py` | Workflow 清洗/注入、ComfyUI 上传、提交、轮询与取图 |
 | `api.py` | FastAPI app、中间件、鉴权、路由、worker 与静态托管 |
@@ -73,6 +74,8 @@ ComfyUI  127.0.0.1:8188  (不对公网开放)
 正向 `quality_prefix` 由工作流代码统一提供 (`masterpiece, best quality, newest, absurdres`)；rating 只保留用户在英文 Prompt 中的明确输入。负面 Prompt 是 `AnimaFull.json` 节点 4 的固定常量，不随输入变化，包含 WAI-Anima 质量项、构图否定词，以及 `bad hands / missing fingers / extra fingers / fused fingers / extra arms / extra legs / bad feet / malformed feet` 的人体防御项。它只能降低部分常见失败概率，不代表人体问题已解决。见 D44/D46。
 
 Active LoRA 时，Reasoning Model 只看 Asset/Profile 的 `provides` 与允许选择的 ID，不看文件名、强度或 exact trigger；Vision 只观察图片，不接收 LoRA 或用户文字。严格文本协议要求 `LORA` JSON 语义选择，代码再解析 Profile/optional ID 并确定性注入 exact binding。Profile 的 `black/white/swim` 不用于猜发色、瞳色；只有用户显式外观覆盖及既有迭代状态中的外观锁可进入 Composer，越权项修复一次。缓存包含 selection 与 registry revision。
+
+有用法资料仍按同一次 Composer 调用提供不可信原文；另外，用户可显式选择一个结构化 `usage_template`。模板选择独立于 Asset/Profile，代码确定性注入其正向骨架、负面追加和可选主体计数，并将模板来源/快照随任务保存。一次输出允许画布内部多格，只有明确单格意图会停用 `multi_panel` 部分；多格会移除默认负面中的精确布局冲突。作者 `{a|b}` 姿势表达不会由当前普通 CLIP 节点展开，因此只作为 `pose_options` 展示并交 Composer 按中文意图选用。人工 final 与用户负面仍是最高优先级；未选模板的普通路径保持原行为。
 
 ### 参考契约与独立 Img2Img
 
@@ -109,6 +112,7 @@ Active LoRA 时，Reasoning Model 只看 Asset/Profile 的 `provides` 与允许�
 - `get_lora_registry()` 只合并 versioned Registry 与尚未迁移的 legacy config；新文件不会由服务启动扫描或 Civitai trainedWords 自动升格。`.tools/register_lora.py --agent` 直接枚举本地未注册文件，先验收 LoRA Manager 已索引目标，再由维护者确认候选并原子写入 Registry。
 - `resolve_lora_selections()` 只接受 registry key/Profile/optional ID；explicit 锁定，auto 由 LLM 在候选 ID 中选择，失败只可使用显式 default。角色按语义 Profile 计数、最多 3 个；风格/动作/表情不设硬上限。任何含多个 Profile 的 Asset 都可由用户同时选择，随后合并为一条 immutable-style binding；旧 `selection.allow_multiple_profiles` 只读兼容、不再限制能力。
 - `compile_lora_bindings()` 将 registry exact tags 幂等合入 Prompt；客户端回传的文件名/tags 不作为真相，逐 Asset 强度则作为用户参数重新校验。`jobs` 根据 key/profile(s)/optional 重新解析，并在 revision 变化时返回 409。
+- Registry 的 `usage.refs` 只指向 SQLite 不可变资料。资料可包含独立的用法模板目录；前端只在用户显式点击后发送模板 ID，服务端预览和入队均按当前引用重验，不把模板塞进 `required_tags` 或 `provides`。
 - text、vision、reroll、jobs、dialog redo/tweak/vibe 与 `start-image` 都携带同一 binding snapshot。角色别名同时进入 Character Knowledge 去重，避免 LoRA 人物又被当未知角色查询。
 - SiliconFlow/Vision 实际调用失败时请求以 502 fail closed，不使用缺少 LoRA-aware 语义规划的 Prompt 继续生成；`none/google` 配置降级路径只注入确定性 binding 并向前端显示 warning。首版通过 context 约束避免身份/服装/风格冲突，不实现独立 semantic conflict detector。
 - 本地 onboarding 入口为 `.tools/start_lora_onboard_agent.bat`（或 `python .tools/register_lora.py --agent`）：先尝试刷新 LoRA Manager 增量索引，再让维护者粘贴作者说明。Reasoning Model 只生成候选 Profile/provides；代码固定本地文件名、candidate 状态，从原文恢复 exact trigger 转义并提取明确的单一推荐强度。候选支持自然语言修订，只有双重确认后才原子写 Registry。
@@ -169,7 +173,7 @@ Img2Img 节点 31 的 `keep_proportion` 与 `crop_position` 依据本机 KJNodes
 当前作品记录（`viewedJob/viewedTurn`）和编辑草稿分别保存。选择历史只更新图像、下载链接、实际参数与源图会话，不覆盖草稿、LoRA、画幅或编译来源；作品参数中的显式入口可把中文描述载入下一次构思。后台生成任务不替换仍在显示的源图 ID；新版尚未完成而暂显父图时，参数入口对应父图，并标出源图预览。
 对话框使用原生 dialog，支持 Escape、焦点约束、键盘页签与大图；现有轻量视图过渡保留，`prefers-reduced-motion` 下停用动画。错误与进度在收起后的底栏和打开的编辑面板内均可见。
 出图两步走 (翻译与生成解耦, 见 D17/D46)：中文 + 补全模式 + `lora_selections` -> `/api/translate` 拿 concept/prompt_en/breakdown/prompt_ir + binding/revision -> 可选编辑中文构思或英文 Prompt -> `/api/jobs` 回传 concept/completion/binding/revision。中文构思编辑后以 `concept_override` 重新调用翻译，不能直接把中文送入工作流；原文、补全模式、构思或 LoRA/Profile 改变都会使当前翻译过期，确认生成前必须应用或重翻译，避免新意图配旧 Prompt。
-描述区提供 `自动 / 忠于描述 / 自由补全` 三档；Prompt 检查区在五项 breakdown 上方显示可编辑的 `用户锁定｜模型补全` 中文构思。成像设置栏保留当前工作流 / 文生图与图生图 / 精修 / 尺寸 / LoRA。LoRA 使用角色与风格/细节两个连续多选菜单和“当前叠加栈”：角色最多 3 个语义 Profile，风格/动作/表情不设硬上限；所有多 Profile Asset 都可多选，同一文件只加载一次。前端提示用户在画面描述中明确多个主体的形态、位置与互动关系，但不替用户禁止组合；每个 Asset 有独立 0~2 强度、provides/verified 展示与移除操作。角色菜单保持文字列表；风格/细节菜单使用两栏“人物印样”卡片，展示固定预览、名称和默认强度，选中栈同步显示小图，缺图时安全降级为文字占位。菜单在成像设置页内展开并独立限制高度，避免浮层被编辑器边缘裁切。参考图入口保留在画面描述区。尺寸为点击展开的画幅选择器，标准档与高分辨率实验档分组；选择后自动收起。当前开放标准 `832x1216 / 896x1152 / 1024x1024 / 1344x768`，高分辨率 `1024x1536 / 1536x864`。
+描述区提供 `自动 / 忠于描述 / 自由补全` 三档；Prompt 检查区在五项 breakdown 上方显示可编辑的 `用户锁定｜模型补全` 中文构思。成像设置栏保留当前工作流 / 文生图与图生图 / 精修 / 尺寸 / LoRA。LoRA 使用角色与风格/细节两个连续多选菜单和“当前叠加栈”：角色最多 3 个语义 Profile，风格/动作/表情不设硬上限；所有多 Profile Asset 都可多选，同一文件只加载一次。前端提示用户在画面描述中明确多个主体的形态、位置与互动关系，但不替用户禁止组合；每个 Asset 有独立 0~2 强度、provides/verified 展示与移除操作。含用法模板的 Asset 在叠加栈提供独立按钮，默认“不套模板”，选中后可查看实际正向骨架、负面追加与仅供参考的尺寸。角色菜单保持文字列表；风格/细节菜单使用两栏“人物印样”卡片，展示固定预览、名称和默认强度，选中栈同步显示小图，缺图时安全降级为文字占位。菜单在成像设置页内展开并独立限制高度，避免浮层被编辑器边缘裁切。参考图入口保留在画面描述区。尺寸为点击展开的画幅选择器，标准档与高分辨率实验档分组；选择后自动收起。当前开放标准 `832x1216 / 896x1152 / 1024x1024 / 1344x768`，高分辨率 `1024x1536 / 1536x864`。
 轮询 `/api/jobs/{id}` 每 2s，连接异常会显示“恢复查询”且继续查询原 ID，不吞错或重复 POST；界面只使用不确定进度条，不展示虚假百分比。刷新后先由 `/api/requests/{client_request_id}` 恢复响应丢失的点击，再从分页 `/api/history` 找到进行中任务。完成后显示实际 seed、参数和父节点；已有 `session_ids` 可重新打开暗房分支。`result_ready/reconcile_pending` 提供“重新核对”，只调用 recover。
 
 参考图有三档范围，图生图显示低/中/高重绘强度、适配方式和比例提示。出图后「继续创作」进入本次迭代；源图选择不会覆盖其他历史分支。换一版默认新 seed，「基于此图重绘」默认继承；暗房固定源链 LoRA，不读取工坊当前选择。工坊独立上传不自动继承原图 LoRA。教程、占位文字、进行中状态和历史标签统一描述整图重绘，不承诺指定修改生效或其他内容不变，文字留空也不是原图直出。保留既有功能 DOM ID 与请求协议；已退役的布局包装层不再保留。

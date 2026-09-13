@@ -255,7 +255,7 @@ loras:
 ### 4.8 普通路径隔离（R1）
 
 - **无 usage 的 LoRA**：完全走现状——既有语义上下文、trigger/Profile/optional、质量预设、默认负面；**不增加模型调用、不加入特殊模板**。
-- **有 usage ≠ 全文强制**：只根据当前中文意图应用相关说明（如用户明确要单幅，不能因资料含多格配方而强行改多格）。
+- **有 usage ≠ 全文强制**：未选模板时只根据当前中文意图参考相关说明；选定模板后才执行其骨架。一次输出不等于单格，只有用户明确要求单格/单面板时才覆盖多格布局部分。
 - **必需 / 建议分离**：无法判定是必要条件时标建议（§4.4）。
 - **P2 协议向后兼容扩展**：不得迫使**无资料请求**重新生成全部负面或额外调用模型。
 - **替身校对**（验证方式，不用真实模型差异判兼容）：用**同一份替身 Composer 输出**分别跑普通路径的新旧代码，比对有效正负文本与物理 bindings 一致；**不得用两次真实模型输出的文字差异直接判定兼容失败**（模型有随机性）。
@@ -401,3 +401,11 @@ Registry 只存**引用**：`usage.ref`（单值）或 `usage.refs`（列表）�
 - **缓存**：key 覆盖完整上下文（含默认负面基线/工作流/资料段），条目保存 applied/negative/evidence/limits/warnings，命中时完整恢复。
 - **暗房**：各 `translate` 调用都传 workflow 上下文；start 一律按 `assisted/body` 处理（不接受客户端声称 final/manual）；无 delta 继承源任务 `usage_refs` 与最终负面，delta/vibe/tweak 重编译使用本次服务端校验过的 refs，其 Composer 基线与最终负面按 `显式用户负面 > 源任务已保存最终负面（合法空串保持为空） > 当前默认` 决定。
 - **前端**：`go` 一键与确认提交的都是**最终正向文本**（`final_prompt_en`）；可折叠说明只展示依据/限制/告警（`textContent`，不展示原始 ID）；manual 不自动应用资料文本。
+
+### 10.1 特殊 LoRA 用法模板执行（2026-09-13）
+
+- `candidate.templates[]` 是可选的**用法模板**，不属于物理 LoRA、Profile、trigger 或 `provides`。模板可用 `extends` 复用公共骨架，并分别声明 `positive`、`negative_add`、可选 `subject_tags`、`pose_options` 与 `layout`；`pose_options` 是供中文构思选择的作者候选，不把未展开的 `{a|b}` 语法送入普通 CLIP 节点。`advisory.recommended_size` 只展示建议，不修改任务尺寸。
+- 选择 LoRA 本身不会自动选择模板；客户端以 `lora_selections[].usage_template` 显式选择一个当前 Asset/Profile 可用模板。服务端在预览与入队时都按当前 Registry 引用的不可变记录重新校验 ID，未知或越界模板返回 400。
+- 选定模板后，Composer 仍负责人物、服装、场景、关系及可选姿势，但代码会把模板正向骨架和负面追加确定性写入最终文本；多格模板会先移除默认负面中 `multiple views / split view / grid view / text` 等精确冲突项。模板引用与执行快照分别以 `usage_template_refs` / `usage_templates` 保存，不能用模型的 `usage_applied` 代替。
+- “生成一张图片”只表示一次输出，**不等于单格画布**。只有用户明确写出“单格/单面板/single-panel”等要求时，才停用模板的 `multi_panel` 布局部分；模板其余骨架和负面要求保留，用户明确要求优先。
+- 已进入 `prompt_state=final` 的人工文本原样提交；增量链上 `prompt_edited=true` 或 `negative_source=user` 时不恢复用户删除的模板正向/负面。无资料或未选模板的普通 LoRA 路径不增加模型调用、不改变原行为。
