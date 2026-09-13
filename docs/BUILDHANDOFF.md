@@ -9,6 +9,8 @@ AirPaint 是 ComfyUI 上层的 Prompt / Intent / Knowledge Intelligence Layer。
 
 它不替代 ComfyUI，也不是局部修图器。`v1.0.0` 基线仍封存在 `9af5604`（历史验证与 D59 结论见下文，不移动旧 tag）；用户随后解除封版并依次授权 P1（最终正负文本）、P2A（用法资料入库）、P2B（中文编译消费用法资料）三条有限实验线，它们才是当前在做的事。**P2 工程交付后按用户要求暂停**：真实 LoRA 文本入库、真实模型/GPU 调用与图像质量待用户之后自行验收；后续由 5.6sol 接手，本仓库不自动启动下一阶段。
 
+当前接手计划：[`SOL_HANDOFF.md`](SOL_HANDOFF.md)。2026-09-13 只读核对用户新登记的 FComic 资产及用法引用通过，待用户浏览器实测；已发现的候选加载标签误提取问题交由 sol 定向修复，不由本 Agent 自动继续开发。
+
 ## 当前能力
 
 ### Prompt / Knowledge / LoRA

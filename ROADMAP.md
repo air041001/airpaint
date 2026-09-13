@@ -1,12 +1,16 @@
 # AirPaint Roadmap
 
-> 当前版本进入封版维护。本文件只保留仍有效的维护边界；完成证据见 `docs/BUILDHANDOFF.md`，历史取舍见 `docs/decisions.md` 与 `docs/DEVLOG.md`。
+> v1.0.0 仍为历史封版基线；用户随后授权的 P1/P2 工程已交付，现在暂停扩展。完成证据见 `docs/BUILDHANDOFF.md`，sol 的有限维护与用户实测计划见 `docs/SOL_HANDOFF.md`。
 
 ## 当前状态
 
 Prompt Composer、角色知识、LoRA Binding、单一 Anima workflow、参考契约、整图 Img2Img、历史分支和 SQLite 恢复链已经组成可长期保存的最终版本。
 
 D59 的工程链路已经验证，但参考图/Img2Img 五张定向样本的人眼结果没有全部通过。封版保留功能并准确说明限制，不继续用增加 Prompt、提高 denoise 或重复抽图解决图像编辑质量。
+
+## P2 后的有限验收
+
+等待用户自行浏览器测试已登记的 LoRA；sol 处理已复现的入库候选错误及实测暴露的问题。修复通过后继续暂停，不自动开启新阶段。原主 Agent 仅在多次定向修复仍未解决时协助。
 
 ## 封版后的维护范围
 

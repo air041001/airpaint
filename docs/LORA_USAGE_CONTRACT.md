@@ -1,6 +1,6 @@
 # AirPaint 「中文意图 + LoRA 用法」P0 契约（rev.2）
 
-> 阅读说明（2026-09-13）：前文 P0 为历史设计，实际实施修订见 §8、§9；不能把历史“未实现”状态当作全部当前能力。直接 CLI 协作启用后，旧搬运文件已移至本机忽略目录 `.local-backups/handoffs-20260913/`：原 `docs/LORA_USAGE_EXECUTION_PLAN.md`、`docs/LORA_USAGE_CONTRACT_REVIEW.md`、`docs/LORA_USAGE_P1_TASK.md`、`docs/LORA_USAGE_P2_TASK.md` 均以同名文件保留；根目录的 `comfy-web - 开发1.md` 对话导出也在该目录。下面这些文件名仅为历史依据，不是新接手者的必读依赖，clone 不包含此本机归档。当前接手入口为 AGENTS 与 BUILDHANDOFF。
+> 阅读说明（2026-09-13）：P0 为历史设计，当前实施以 §8–10 与代码为准。旧执行计划、审阅意见、P1/P2 搬运任务书及对话导出已按用户要求清理，不再是可打开的依赖；下文提及这些文件仅保留历史出处。当前接手入口为 AGENTS、BUILDHANDOFF 和 docs/SOL_HANDOFF.md（含清理映射与实际入库检查结论）。
 
 日期：2026-09-11（rev.2，逐条回应 `docs/LORA_USAGE_CONTRACT_REVIEW.md` R1–R6）
 状态：**设计契约，不代表功能已实现或验证**。
