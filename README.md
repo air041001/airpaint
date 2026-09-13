@@ -126,4 +126,33 @@ python .tools/inspect_wf.py
 
 ## 维护状态
 
-`v1.0.0`（`9af5604`）为最终封版基线，旧 tag 保持不变。2026-09-09 按用户授权完成沉浸展台前端收尾，功能范围不扩展。此后只接受阻止正常使用的数据丢失、兼容或安全修复。Prompt 新方案、新模型、RAG、微调、多 Agent、自动改图、新 workflow、微服务和前端框架迁移都不属于当前维护范围。
+`v1.0.0`（`9af5604`）保持为历史封版基线，旧 tag 不变。2026-09-09 按用户授权完成沉浸展台前端收尾；此后用户解除封版并授权有限实验线：最终正负文本控制、LoRA 用法资料入库、中文编译消费用法资料、用法资料接入 onboarding。**P2 工程交付后按用户要求暂停**：真实 LoRA 文本入库、真实模型/GPU 与图像质量待用户自行验收，后续由 5.6sol 接手。新模型、RAG、微调、多 Agent、自动改图、新 workflow、微服务和前端框架迁移仍不在范围内。
+
+
+## LoRA 用法登记（给使用者）
+
+AirPaint 可以在登记 LoRA 时同时保存“仅适用于当前模型版本”的用法说明，之后生成时会自动带上，不需要手工复制 ID 或执行 SQL。
+
+1. 双击 `.tools\start_lora_onboard_agent.bat` 启动向导。
+2. 向导先问 `要做什么 (new/attach/cancel)`：
+   - `new` = 新注册；`attach` = 为已注册资产补用法（会列出资产按可读名称选择，不重跑候选/预览）；
+   - `cancel` 直接退出。
+3. 补用法时会问是否添加用法说明：
+   - 选 `n` 可整段跳过（不写资料库）；
+   - 选 `y` 后选择录入方式 `paste`（粘贴，单独一行 `::end` 结束）或 `file`（输入 UTF-8 文件路径）；
+   - 无论哪种方式，都会再问来源（author / community / user）、可选来源地址与作用域
+     （留空 = 该资产共享；或填该资产已存在的 Profile ID）。
+4. 向导会在最终确认前完整列出待关联资料与目标资料库，确认后自动写入不可变记录并把引用合并进资产。
+5. 确认写入后，刷新浏览器即可在生成时选择该 LoRA。
+
+命令行等价入口：
+
+```text
+python .tools/register_lora.py --agent                 # 向导（新注册或补用法）
+python .tools/register_lora.py --attach-usage <ASSET>  # 只为已注册资产补用法（不重跑候选/预览）
+python .tools/register_lora.py --usage --asset-key <KEY> --body-file <PATH> --db <PATH>
+```
+
+`--usage` 是低层入口，**必须显式 `--db`**；向导与 `--attach-usage` 缺省使用项目 `state`（可用 `--db` 覆盖）。
+
+注意：登记原文只表示“保存了这份资料”，不等于资料有效，也不等于已实图验证；验证状态默认 `unverified`。

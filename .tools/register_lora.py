@@ -742,7 +742,8 @@ def run_style_preview_flow(asset_id: str, asset: dict, *, ask_before: bool = Tru
 
 
 def run_agent_onboarding(raw: dict, filename: str | None, description_file: str | None,
-                         scan_manager: bool = True) -> int:
+                         scan_manager: bool = True, db_path: str | None = None,
+                         usage_file: str | None = None) -> int:
     filename = filename or choose_unregistered_file(raw)
     if not filename:
         return 1
@@ -797,11 +798,29 @@ def run_agent_onboarding(raw: dict, filename: str | None, description_file: str 
         candidate = {"schema_version": 1, "loras": dict(raw["loras"])}
         candidate["loras"][final_id] = asset
         _hot_lora_registry().validate(candidate)
-        if ask_choice("最终确认写入 lora_registry.yaml?", ["y", "n"], "n") != "y":
-            print("已取消，Registry 未修改。")
+        # 可选：为“当前模型版本”补充用法资料；跳过时下面这段完全不生效、也不建库。
+        if usage_file:
+            entries = [_usage_entry_from_file(usage_file)]
+        else:
+            entries = collect_usage_entries(final_id, asset)
+        usage_db = resolve_usage_db(db_path)
+        if entries:
+            summarize_usage_entries(entries, db_path=usage_db)
+        if ask_choice("最终确认写入 lora_registry.yaml（并写入上面的用法资料）?", ["y", "n"], "n") != "y":
+            print("已取消；Registry 与资料库均未修改。")
             return 1
-        atomic_write_registry(candidate)
-        print(f"已写入 {REGISTRY_PATH}。刷新 AirPaint 页面后即可选择；请先真实生图再提升验证状态。")
+        if entries:
+            try:
+                result = persist_usage_and_registry(final_id, candidate, entries,
+                                                    db_path=usage_db, previous_raw=raw)
+            except SystemExit as exc:
+                print(str(exc))
+                return 1
+            print(f"已写入 {REGISTRY_PATH}，并关联 {len(result['records'])} 条用法资料"
+                  f"（新增引用 {result['refs_added']}；资料库 {result['db_path']}）。")
+        else:
+            atomic_write_registry(candidate)
+            print(f"已写入 {REGISTRY_PATH}。刷新 AirPaint 页面后即可选择；请先真实生图再提升验证状态。")
         run_style_preview_flow(final_id, asset)
         return 0
 
@@ -861,7 +880,9 @@ def collect_asset(filename: str, asset_id: str | None, existing: dict | None = N
                            existing.get("type", "character"))
     policy = ask_choice("Trigger policy", ["profile", "required", "none"],
                         existing.get("trigger_policy", "profile" if lora_type == "character" else "required"))
-    asset = {
+    # 保留既有资产的全部字段（含 usage 与其他未知元数据），只覆盖本次收集到的项。
+    asset = dict(existing)
+    asset.update({
         "name": ask("显示名称", existing.get("name", Path(filename).stem)),
         "type": lora_type,
         "file": filename,
@@ -870,7 +891,7 @@ def collect_asset(filename: str, asset_id: str | None, existing: dict | None = N
             "model": float(ask("默认 model strength", str((existing.get("default_strength") or {}).get("model", 1.0)))),
             "clip": float(ask("默认 clip strength", str((existing.get("default_strength") or {}).get("clip", 1.0)))),
         },
-    }
+    })
     if policy == "profile":
         profiles = {}
         old_profiles = existing.get("profiles") or {}
@@ -911,6 +932,191 @@ def _read_optional_json(path: str | None, label: str) -> dict:
     if not isinstance(value, dict):
         raise SystemExit(f"{label} 必须是 JSON 对象")
     return value
+
+
+USAGE_ENTRY_KINDS = ("author", "community", "user")
+
+
+def default_state_db_path() -> Path:
+    """派生与运行服务一致的默认资料库路径；不导入 runtime，也不创建文件。"""
+    state = os.environ.get("AIRPAINT_STATE_DIR")
+    base = Path(state) if state else (ROOT / "server" / "state")
+    return base / "airpaint.db"
+
+
+def resolve_usage_db(explicit: str | None) -> Path:
+    """``--db`` 覆盖优先，否则使用项目 state（与实际运行的服务一致）。"""
+    return Path(explicit) if explicit else default_state_db_path()
+
+
+def _clean_path_input(value: str) -> str:
+    """清理粘贴进来的路径：去首尾空白，并剥掉资源管理器复制时带的外层成对引号。"""
+    text = (value or "").strip()
+    if len(text) >= 2 and text[0] == text[-1] and text[0] in ("'", '\"'):
+        text = text[1:-1].strip()
+    return text
+
+
+def collect_usage_entries(asset_id: str, asset: dict, *,
+                          label: str = "用法说明") -> list[dict]:
+    """向导内可选收集“仅适用于当前模型版本”的用法说明（可整段跳过）。
+
+    - 跳过时返回空列表：原注册流程不变、不写数据库、不新增模型调用。
+    - 不导入 description / .civitai.info 内容；正文由用户显式粘贴或从 UTF-8 文件读入。
+    - 来源限 author/community/user；作用域默认资产共享，可指定该资产真实存在的 Profile。
+    """
+    entries: list[dict] = []
+    profiles = list((asset.get("profiles") or {}).keys())
+    while True:
+        question = (f"要为 {asset_id} 添加一条{label}吗？" if not entries
+                    else "继续添加下一条吗？")
+        if ask_choice(question, ["y", "n"], "n") != "y":
+            break
+        mode = ask_choice("正文录入方式", ["paste", "file"], "paste")
+        if mode == "file":
+            path = _clean_path_input(ask(
+                "UTF-8 文件路径（留空取消本条；可直接粘贴资源管理器复制的路径）", ""))
+            if not path:
+                print("本条已取消。")
+                continue
+            try:
+                body = Path(path).read_text(encoding="utf-8-sig")
+            except OSError as exc:
+                print(f"读取失败，本条已取消：{exc}")
+                continue
+            except UnicodeDecodeError:
+                print("该文件不是有效的 UTF-8 文本，本条已取消；请另存为 UTF-8 后重试。")
+                continue
+            if not body.strip():
+                print("文件为空，本条已取消。")
+                continue
+        else:
+            body = read_multiline(f"粘贴当前模型版本的{label}；单独一行 ::end 结束：")
+            if not body.strip():
+                print("本条为空，已跳过。")
+                continue
+        source_kind = ask_choice("来源", ["author", "community", "user"], "user")
+        source_url = ask("来源地址（可留空）", "").strip()
+        scope = ask("作用域（留空 = 该资产共享；或填写已存在的 Profile ID）", "").strip()
+        if scope and scope not in profiles:
+            raise SystemExit(
+                f"未知 Profile: {scope}；该资产可用 Profile 为 {', '.join(profiles) or '（无）'}")
+        entries.append({"asset_key": asset_id, "profile_id": scope, "body": body,
+                        "source_kind": source_kind, "source_url": source_url})
+    return entries
+
+
+def summarize_usage_entries(entries: list[dict], *, db_path) -> None:
+    """在最终确认前展示待关联资料的**完整原文**与目标库（不截断、不做摘要伪装）。"""
+    print("\n--- 待关联用法资料（完整原文；默认未验证）---")
+    for index, entry in enumerate(entries, 1):
+        print(f"[{index}] 来源={entry['source_kind']} "
+              f"作用域={entry['profile_id'] or '资产共享'} URL={entry['source_url'] or '-'}")
+        print(">>> 正文开始")
+        print(entry["body"])
+        print("<<< 正文结束")
+    print(f"目标资料库：{db_path}")
+
+
+def merge_usage_refs(asset: dict, usage_ids: list[str]) -> int:
+    """把不可变记录 ID 合并进 ``asset.usage.refs``（去重、保留旧引用）。返回新增数量。"""
+    usage = dict(asset.get("usage")) if isinstance(asset.get("usage"), dict) else {}
+    refs = [str(x).strip() for x in (usage.get("refs") or []) if str(x).strip()]
+    single = usage.get("ref")
+    if isinstance(single, str) and single.strip() and single.strip() not in refs:
+        refs.append(single.strip())
+    added = 0
+    for usage_id in usage_ids:
+        if usage_id and usage_id not in refs:
+            refs.append(usage_id)
+            added += 1
+    if refs:
+        usage["refs"] = refs        # 保留 usage 下其它未知元数据
+        asset["usage"] = usage
+    return added
+
+
+def validate_usage_entries(asset_id: str, asset: dict, entries: list[dict]) -> list[dict]:
+    """规范化并校验全部条目（复用 lora_usage.normalize_record 的语义），非法即拒绝。
+
+    在任何库/文件写入之前完成，保证“第二条不合法”时数据库零创建。
+    """
+    from server.lora_usage import normalize_record
+    profiles = set((asset.get("profiles") or {}).keys())
+    normalized: list[dict] = []
+    for index, entry in enumerate(entries, 1):
+        scope = str(entry.get("profile_id") or "").strip()
+        if scope and scope not in profiles:
+            raise SystemExit(
+                f"第 {index} 条用法资料的作用域 {scope!r} 不是该资产的 Profile；未写入任何内容。")
+        try:
+            normalized.append(normalize_record({
+                "asset_key": asset_id, "profile_id": scope,
+                "body": entry.get("body") or "",
+                "source_kind": entry.get("source_kind", "user"),
+                "source_url": entry.get("source_url", ""),
+                "candidate": entry.get("candidate") or {},
+                "advisory": entry.get("advisory") or {},
+                "background": entry.get("background") or {},
+                "verified": entry.get("verified", "unverified"),
+            }))
+        except ValueError as exc:
+            raise SystemExit(f"第 {index} 条用法资料不合法（{exc}）；未写入任何内容。")
+    return normalized
+
+
+def persist_usage_and_registry(asset_id: str, candidate: dict, entries: list[dict], *,
+                               db_path, previous_raw: dict) -> dict:
+    """先写不可变记录、再原子写 Registry（跨库/文件无原子事务，失败语义如实）。
+
+    - DB 写失败：中止，Registry 不变。
+    - Registry 校验失败 / 期间被并发修改：不写 Registry；已写入的记录保留可复用，不谎称已回滚。
+    """
+    from server.lora_usage import version_id as _version_id
+    from server.persistence import AirPaintStore
+
+    asset = candidate["loras"][asset_id]
+    # 1) 全部输入校验（候选 + 条目 shape/scope）完成之后才允许任何写入。
+    normalized = validate_usage_entries(asset_id, asset, entries)
+    refs_added = merge_usage_refs(asset, [_version_id(record) for record in normalized])
+    try:
+        _hot_lora_registry().validate(candidate)
+    except Exception as exc:
+        raise SystemExit(f"候选 Registry 校验失败，未写入任何文件：{exc}")
+    # 2) 并发检查：确认期间 Registry 被改写就整体放弃（此时尚未写入任何东西）。
+    if load_registry() != previous_raw:
+        raise SystemExit("Registry 在确认期间被其他进程修改；未写入任何记录或文件。")
+    # 3) 写不可变记录。
+    try:
+        store = AirPaintStore(Path(db_path))
+    except Exception as exc:
+        raise SystemExit(f"无法打开资料库 {db_path}：{exc}")
+    records: list[dict] = []
+    reused: list[str] = []
+    try:
+        for record in normalized:
+            saved, created = store.save_lora_usage(record)
+            records.append(saved)
+            if not created:
+                reused.append(saved["usage_id"])
+    except Exception as exc:
+        raise SystemExit(
+            f"资料库写入失败（{exc}）；Registry 未改动，已写入的记录可能保留可复用。")
+    finally:
+        store.close()
+    # 4) 持久化期间若他人改写了 Registry，放弃本次写入，保留他人版本（记录可复用）。
+    if load_registry() != previous_raw:
+        raise SystemExit(
+            f"Registry 在写入资料期间被其他进程修改；已写入 {len(records)} 条不可变记录保留可复用，"
+            "Registry 保持他人版本未改动。")
+    # 5) 原子写 Registry；失败时如实说明已写记录保留。
+    try:
+        atomic_write_registry(candidate)
+    except Exception as exc:
+        raise SystemExit(
+            f"Registry 写入失败（{exc}）；已写入 {len(records)} 条不可变记录保留可复用，Registry 未改动。")
+    return {"records": records, "reused": reused,
+            "refs_added": refs_added, "db_path": str(db_path)}
 
 
 def register_usage(asset_key: str, *, db_path: str, body: str = "", profile_id: str = "",
@@ -969,6 +1175,97 @@ def run_usage_cli(args) -> int:
     return 0
 
 
+def _usage_entry_from_file(path: str) -> dict:
+    """从 UTF-8 文件读入一条用法说明（原文完整保留；不解析成结构化字段）。"""
+    cleaned = _clean_path_input(path)
+    try:
+        body = Path(cleaned).read_text(encoding="utf-8-sig")
+    except OSError as exc:
+        raise SystemExit(f"读取用法说明文件失败: {cleaned}：{exc}")
+    except UnicodeDecodeError:
+        raise SystemExit(f"用法说明文件不是有效的 UTF-8 文本: {cleaned}")
+    if not body.strip():
+        raise SystemExit(f"用法说明文件为空: {cleaned}")
+    return {"body": body, "source_kind": "user", "source_url": "", "profile_id": ""}
+
+
+def run_attach_usage(raw: dict, asset_id: str, usage_file: str | None = None,
+                     db_path: str | None = None) -> int:
+    """为已注册 Asset 补录用法资料：不重跑候选 LLM、不重填 trigger/weights、不生成预览。"""
+    asset = raw["loras"].get(asset_id)
+    if not asset:
+        raise SystemExit(f"未知 Asset: {asset_id}")
+    entries = ([_usage_entry_from_file(usage_file)] if usage_file
+               else collect_usage_entries(asset_id, asset))
+    if not entries:
+        print("没有要录入的用法资料；Registry 与资料库均未修改。")
+        return 0
+    candidate = {"schema_version": 1, "loras": dict(raw["loras"])}
+    candidate["loras"][asset_id] = dict(asset)
+    usage_db = resolve_usage_db(db_path)
+    summarize_usage_entries(entries, db_path=usage_db)
+    if ask_choice(f"确认把以上资料关联到 {asset_id}?", ["y", "n"], "n") != "y":
+        print("已取消；Registry 与资料库均未修改。")
+        return 1
+    try:
+        result = persist_usage_and_registry(asset_id, candidate, entries,
+                                            db_path=usage_db, previous_raw=raw)
+    except SystemExit as exc:
+        print(str(exc))
+        return 1
+    print(f"已关联 {len(result['records'])} 条用法资料到 {asset_id}"
+          f"（新增引用 {result['refs_added']}；资料库 {result['db_path']}）。")
+    return 0
+
+
+def choose_registered_asset(raw: dict) -> str | None:
+    """列出已注册资产（可读名称 + ID）供“补用法”选择；无资产或未知选择返回 None。"""
+    keys = list(raw.get("loras") or {})
+    if not keys:
+        print("Registry 中还没有已注册资产；请改选 new 新注册。")
+        return None
+    print("\n已注册资产：")
+    for index, key in enumerate(keys, 1):
+        name = (raw["loras"][key] or {}).get("name") or key
+        print(f"  [{index}] {name}（ID: {key}）")
+    answer = ask("选择要补充用法的资产（编号或 ID；留空取消）", "").strip()
+    if not answer:
+        return None
+    if answer.isdigit() and 1 <= int(answer) <= len(keys):
+        return keys[int(answer) - 1]
+    if answer in raw["loras"]:
+        return answer
+    print(f"未知选择：{answer}")
+    return None
+
+
+def run_agent_menu(raw: dict, filename: str | None, description_file: str | None,
+                   scan_manager: bool, db_path: str | None,
+                   usage_file: str | None) -> int:
+    """``--agent`` 的统一入口：带 filename 时保持原新注册路径，否则给出 new/attach/cancel。
+
+    attach 只调 ``run_attach_usage``：不跑候选 LLM、不刷新 Manager 索引、不生成预览。
+    """
+    if filename:
+        return run_agent_onboarding(raw, filename, description_file, scan_manager,
+                                    db_path, usage_file)
+    print("\n可选操作：")
+    print("  new    = 注册一个新的 LoRA")
+    print("  attach = 为已注册的 LoRA 补充/更新用法说明（不重跑候选、不刷新 Manager、不生成预览）")
+    print("  cancel = 直接退出，不做任何修改")
+    action = ask_choice("要做什么", ["new", "attach", "cancel"], "cancel")
+    if action == "new":
+        return run_agent_onboarding(raw, None, description_file, scan_manager,
+                                    db_path, usage_file)
+    if action == "attach":
+        asset_id = choose_registered_asset(raw)
+        if not asset_id:
+            return 1
+        return run_attach_usage(raw, asset_id, usage_file, db_path)
+    print("已取消；Registry 与资料库均未修改。")
+    return 0
+
+
 def main_cli() -> int:
     parser = argparse.ArgumentParser(description="注册/编辑 AirPaint LoRA semantic profiles")
     parser.add_argument("filename", nargs="?", help="models/loras 下的 safetensors 文件名")
@@ -992,13 +1289,21 @@ def main_cli() -> int:
     parser.add_argument("--advisory-file", metavar="PATH", help="--usage: 适用条件/建议 JSON")
     parser.add_argument("--background-file", metavar="PATH", help="--usage: 样例背景 JSON（模型/版本/参数）")
     parser.add_argument("--verified", default="unverified", choices=["unverified", "source_confirmed", "image_verified"], help="--usage: 验证状态")
-    parser.add_argument("--db", metavar="PATH", help="--usage: 目标数据库（必填，避免误写生产库）")
+    parser.add_argument("--db", metavar="PATH",
+                        help="--usage 必填显式路径；--attach-usage/向导可省略（缺省用项目 state）")
+    parser.add_argument("--attach-usage", metavar="ASSET_ID",
+                        help="为已注册 Asset 补录用法资料（不重跑候选、不填 trigger/weights、不生成预览）")
+    parser.add_argument("--usage-file", metavar="PATH",
+                        help="用法说明 UTF-8 文件（跳过交互式正文输入；仍是用户显式提供的内容）")
     args = parser.parse_args()
     if args.usage:
         return run_usage_cli(args)
     raw = load_registry()
+    if args.attach_usage:
+        return run_attach_usage(raw, args.attach_usage, args.usage_file, args.db)
     if args.agent:
-        return run_agent_onboarding(raw, args.filename, args.description_file, not args.no_manager_scan)
+        return run_agent_menu(raw, args.filename, args.description_file,
+                              not args.no_manager_scan, args.db, args.usage_file)
     if args.preview:
         asset = raw["loras"].get(args.preview)
         if not asset:
@@ -1042,16 +1347,35 @@ def main_cli() -> int:
         return 1
     show_local_civitai_candidate(filename)
     new_id, asset = collect_asset(filename, asset_id, existing)
+    if existing is not None and new_id != args.edit and (existing.get("usage") or {}):
+        raise SystemExit(
+            "该资产的用法资料按旧 Asset ID 关联；改名会留下坏引用。请保持 ID 不变，"
+            "或先在 Registry 中清除其 usage 再改名。")
     candidate = {"schema_version": 1, "loras": dict(raw["loras"])}
     candidate["loras"][new_id] = asset
     _hot_lora_registry().validate(candidate)
     print("\n--- 将写入的 Asset ---")
     print(yaml.safe_dump({new_id: asset}, allow_unicode=True, sort_keys=False, width=120))
-    if ask_choice("确认原子写入 lora_registry.yaml?", ["y", "n"], "n") != "y":
-        print("已取消")
+    entries = ([_usage_entry_from_file(args.usage_file)] if args.usage_file
+               else collect_usage_entries(new_id, asset))
+    usage_db = resolve_usage_db(args.db)
+    if entries:
+        summarize_usage_entries(entries, db_path=usage_db)
+    if ask_choice("确认原子写入 lora_registry.yaml（并写入上面的用法资料）?", ["y", "n"], "n") != "y":
+        print("已取消；Registry 与资料库均未修改。")
         return 1
-    atomic_write_registry(candidate)
-    print(f"已写入 {REGISTRY_PATH}；后端下次访问会热更新。")
+    if entries:
+        try:
+            result = persist_usage_and_registry(new_id, candidate, entries,
+                                                db_path=usage_db, previous_raw=raw)
+        except SystemExit as exc:
+            print(str(exc))
+            return 1
+        print(f"已写入 {REGISTRY_PATH}，并关联 {len(result['records'])} 条用法资料"
+              f"（新增引用 {result['refs_added']}；资料库 {result['db_path']}）。")
+    else:
+        atomic_write_registry(candidate)
+        print(f"已写入 {REGISTRY_PATH}；后端下次访问会热更新。")
     if existing is None:
         run_style_preview_flow(new_id, asset)
     return 0

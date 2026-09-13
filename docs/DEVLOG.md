@@ -977,20 +977,24 @@ SQLite 历史原先只信任 `output_image_ref`，人工删掉实际 PNG 后仍�
 
 ## 第 70 条 2026-09-11 - P1：主采样最终正负文本可接管与恢复
 
-用户解除封版后进入有限实验阶段，P1 交付「稳定默认预设 + 主采样完整正负可见/可编辑 + 一次最终化」。新增唯一最终化入口 `prompt_engine.finalize_generation_text`：`assisted/manual` 与 `body/final` 显式区分文本来源与状态，不用字符串猜测；质量前缀与 trigger 只组装一次，用户删除后不被补回。请求新增 `prompt_mode/prompt_state/negative_prompt`（三态：缺省 / 空串清空 / 非空覆盖）。负面写入点固定为覆盖负面节点 `CLIPTextEncode.text`（`config.workflows.anima.negative_node`=55），绕开 ImpactWildcardProcessor 的 `onprompt` populate 与 seed 波动；缺省负面取负面节点上游 `wildcard_text` 的真实文字（`workflow_engine.default_negative_text`），不使用会被覆盖的静态 `populated_text`。旧客户端与旧内部调用保持兼容（不传新字段 → 做一次最终化且不覆盖默认负面）。`/api/dialog/turn` 分支：无 delta 继承已保存 final、零 Composer 调用；有 delta/vibe 明确重编译并默认继承源负面。排队恢复只用已落盘 final；Registry/配置在排队期间变化时以 `pipeline_config_changed` 明确失败，不静默改用最新 binding。前端最小接入：最终正向/负面编辑框、手动英文直出、填入默认预设与恢复默认。
+`v1.0.0` 封版后用户解除封版，第一条有限实验线：主采样正负文本可预览、可编辑、可接管，并且只做**一次**最终化——辅助模式由代码组装质量前缀与 trigger，手动模式原文即最终，用户删除的内容不补回；请求用显式 `assisted/manual`、`body/final` 区分来源与状态，不用字符串猜测。负面固定写入负面 `CLIPTextEncode` 节点、绕开 ImpactWildcardProcessor 的 populate，缺省值取上游 `wildcard_text` 的真实文字；暗房无 delta 继承已保存文本、有 delta/vibe 重编译，排队恢复不重编译，配置变化以明确失败结束。审阅后补齐「确认必须提交用户看到的完整负面（自动填入但未编辑的也要发）」，编号见第 71 条。
+验证：最终化三态与状态区分、前缀只加一次、负面提交完整性等用例通过；既有 prompt unit、image iteration、persistence/recovery、LoRA Composition 与前端检查保持通过。零真实模型/GPU；未做实图与浏览器视口验收。
 
-验证：新增 `.tools/test_final_text.py` 15 项通过（最终化三态与状态区分、默认负面与 workflow 文件一致、final 文本字面写入与旧路径保留 wildcard、前缀仅一次、空负面进入幂等指纹）；既有 58 prompt unit、19 image iteration、18 persistence/recovery、LoRA Composition 及前端脚本/状态检查保持通过；Python compileall 与 pyflakes 通过。未调用真实模型/GPU/ComfyUI，无实图验收；UI 改动未做浏览器视口实测（列为未验项）。
+## 第 71 条 2026-09-12 - P1.1（并入第 70 条）
 
-## 第 71 条 2026-09-12 - P1.1：确认文本必须完整提交
-
-主 Agent 审阅发现：`jobsBody` 仅在 `negativeEdit.dataset.touched` 为真时才发送负面，导致「自动填入但未手动编辑」的负面被丢弃——用户看到 A，提交却可能落回服务端默认 B，且 P2 的自动负面也会被丢。修复：负面框改用显式 `ready` 状态——`ready=true`（预览填入 / 恢复默认 / 填入默认预设 / 用户编辑）即按显示值提交（含空串）；仅「从未初始化」才不发送、交由后端默认，`touched` 只记录编辑来源。`loadWorkflows` 后按当前工作流初始化默认值（动态默认不支持预览时置未就绪并提示），不覆盖用户已修改。测试：新增 `.tools/test_negative_submit.cjs`（6 例：未编辑的自动值、显式空串、恢复默认、首次未初始化、用户编辑、final 语义）与 `.tools/test_final_request.py`（6 例：manual+LoRA 物理加载与正向原文无 trigger、final 负面前缀不回落默认、`_enqueue`→落盘→读取→`_job_request` 一致、body 注入前缀与 trigger、重编译分支继承负面、旧路径保留 wildcard）。全部既有回归保持通过；未调用真实模型/GPU。
+内容并入第 70 条：确认生成时必须提交用户已看到的完整负面（含空串），「已填入但未手动编辑」不得被丢弃——`ready` 决定是否发送，`touched` 只记录来源。编号与日期保留，作为指向第 70 条的映射。
 
 ## 第 72 条 2026-09-12 - P2A：LoRA 用法资料不可变入库、关联读取与备份恢复
 
-复用现有 onboarding/Registry，新增作者/社区用法资料的**不可变版本记录**与关联读取。`AirPaintStore` 增加 `lora_usage` 表（`SCHEMA_VERSION` 1→2，`_MIGRATIONS` 第 2 项，`executescript` 事务、失败回滚）：版本ID = 规范化完整记录（asset/profile/正文/来源/背景/候选/建议/验证）的 sha256，因此更新结构化候选必得新版本号、旧记录不变；正文 `body` 完整保存且结构化提取失败不丢。Registry 只存引用（`usage.ref`/`usage.refs`），不重复保存 negative/template。`server/lora.py` 新增 `lora_usage_refs` 与 `resolve_lora_usage(asset, profile_ids, fetch)`：asset 级记录为 `shared`、profile 级归属 `profiles[pid]`，不相关 Profile 不返回；`missing`/`hash_mismatch`/`asset_mismatch` 分别报告，状态 `no_ref/ok/partial/invalid`，坏资料不冒充成功。`.tools/register_lora.py` 新增 `--usage` 入口（**必须显式 `--db`**，写不可变记录并打印可合并的 Registry 片段，不自动写生产库或真实 Registry）。`counts()` 增 `lora_usage`，整库备份/恢复覆盖资料记录。为杜绝导入即迁移生产库，`settings` 支持 `AIRPAINT_STATE_DIR`/`AIRPAINT_LORA_REGISTRY` 注入，全部 import `server` 的测试已设临时 state。
-
-验证：新增 `.tools/test_lora_usage.py` 10 项（无资料 asset 不变、正文/模板/否定往返、同正文不同候选得不同版本且旧版不变、asset+多 Profile 不串用、missing/hash_mismatch/asset_mismatch/partial、v1→2 迁移与重复启动幂等、部分迁移失败保持旧版本、在线备份→verify→restore 后正文/版本/背景可核对、onboarding 保留正文原文且拒绝越界指令、生成路径输出不变）；既有 58/19/18/composition/onboarding 与前端检查保持通过；compileall+pyflakes 通过。测试全程使用临时库，**生产 `server/state/airpaint.db` mtime 未变**（未迁移、未触碰）；真实 `server/lora_registry.yaml` 未写。零真实模型/GPU 调用。本批不改变生成输出、不自动应用模板，P2B 再接入运行时。
+新增不可变版本记录表：版本ID 由规范化完整记录派生，正文完整保存、结构化候选可空、旧版本不可覆盖。Registry 只保存引用；解析层区分「无资料 / 可用 / 部分损坏 / 全部损坏」与 asset 级共享、profile 级归属，坏引用与损坏正文不进入使用。`--usage` 作为显式 `--db` 的低层入库入口，整库备份与恢复覆盖资料记录；`settings` 支持临时 `AIRPAINT_STATE_DIR` / `AIRPAINT_LORA_REGISTRY`，避免测试触碰生产库与真实 Registry。
+验证：资料往返、版本区分、profile 边界、迁移与备份恢复等用例通过；当批报告记录生产库未迁移、真实 Registry 未写；此为当时的验证记录，不代表当前库版本。零真实模型/GPU，无实图验收；证据入口见 `.tools/test_lora_usage.py` 与契约 §9。
 
 ## 第 73 条 2026-09-13 - P2B：中文编译消费 LoRA 用法资料
 
-在 P2A 资料层之上接入运行时：选中 LoRA 时服务端解析适用资料并注入 UNTRUSTED 用法上下文，模型在**同一次**调用内以严格 `USAGE:` JSON 对象声明采用的资料 ID、完整负面与中文依据/限制；`null` 精确保留默认负面（取消自动追加）、`""` 清空、非空整体替换，用户显式负面最高优先；未知 ID/坏 schema 不采用也不使用其负面覆盖。单条/总上下文预算 20000/60000 字符，超限整条拒绝。提交端只保存服务端校验过的 `usage_refs`（参考资料，不声称模型采用）。前端补可折叠依据说明，`go` 一键改为提交最终正向文本。新增 `.tools/test_p2b_usage.py`，既有 prompt/usage/onboarding/composition/final/persistence 与前端检查全部通过；未做真实模型/GPU 与实图验收。
+选中 LoRA 时把适用资料以 UNTRUSTED 上下文注入**同一次** Composer 调用，模型以严格 `USAGE` 对象声明采用条目与完整负面（`null` 保留默认、`""` 清空、非空整体替换；用户显式负面最高优先；未知 ID 或坏 schema 不采用），超出预算整条拒绝而不是截断。提交端只保存服务端校验过的参考资料引用，不声称模型实际采用；无资料路径不新增调用、不改负面。
+限制：未验证真实模型是否稳定输出该对象；预算为工程约定；未做实图验收。
+
+## 第 74 条 2026-09-13 - 用法资料接入 LoRA onboarding（用户入口）
+
+向导（`start_lora_onboard_agent.bat` → `--agent`）提供 `new / attach / cancel`：可新注册，也可为已注册资产补用法（不重跑候选、不刷新 Manager、不生成预览）；正文可粘贴（`::end` 结束）或从 UTF-8 文件读入，来源、URL、作用域可选，最终确认前打印完整原文与目标资料库。写入顺序为「校验候选与全部条目 → 并发检查 → 写不可变记录 → 再次并发检查 → 原子写 Registry」，失败返回非零并说明已写记录可复用（跨库无原子事务）。跳过用法时原流程不变、不写库、不新增模型调用。
+验证：`.tools/test_lora_onboarding_usage.py` 的 18 项及相关 onboarding、资料回归通过。未验：真实 LoRA 文本由用户之后自行在向导粘贴测试，本轮不代做真实入库或生图。
