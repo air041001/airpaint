@@ -444,7 +444,7 @@ def test_siliconflow_composer_bypasses_ordinary_dict_and_isolates_completion_cac
     def fail_dict(_):
         raise AssertionError("SiliconFlow text Composer must not call ordinary dict")
 
-    async def fake_translate(context, reroll=False):
+    async def fake_translate(context, reroll=False, **kwargs):
         calls.append(context)
         output = (
             "CONCEPT: 用户锁定：黑发少女｜模型补全：玻璃花温室与晨光\n"
@@ -484,7 +484,7 @@ def test_concept_override_is_authoritative_and_validated():
     old_cache = dict(prompt_module._TRANSLATE_CACHE)
     override = "用户锁定：黑发少女｜模型补全：雨后荷塘、青色薄纱裙与侧逆光"
 
-    async def fake_translate(context, reroll=False):
+    async def fake_translate(context, reroll=False, **kwargs):
         assert override in context, context
         output = (
             "CONCEPT: 用户锁定：错误｜模型补全：错误\n"
@@ -692,7 +692,7 @@ def test_unknown_character_fallback_on_unavailable():
     old_dict = prompt_module.match_dict_words
     old_cache = dict(prompt_module._TRANSLATE_CACHE)
 
-    async def fake_translate(context, reroll=False):
+    async def fake_translate(context, reroll=False, **kwargs):
         out = (
             "CONCEPT: 用户锁定：雪之下雪乃坐在教室里｜模型补全：无\n"
             'IR: {"subject":["1girl","yukinoshita_yukino"],"appearance":[],'
@@ -734,7 +734,7 @@ def test_ir_subject_alone_never_triggers_character_lookup():
     old_lookup = prompt_module.lookup_character
     old_cache = dict(prompt_module._TRANSLATE_CACHE)
 
-    async def fake_translate(context, reroll=False):
+    async def fake_translate(context, reroll=False, **kwargs):
         out = (
             "CONCEPT: 用户锁定：雪之下雪乃坐在教室里｜模型补全：无\n"
             'IR: {"subject":["1girl","yukinoshita_yukino"],"appearance":[],'
@@ -1123,7 +1123,7 @@ def test_active_lora_forces_painter_and_compiles_binding():
     old_cache = dict(prompt_module._TRANSLATE_CACHE)
     calls = []
 
-    async def fake_translate(context, reroll=False):
+    async def fake_translate(context, reroll=False, **kwargs):
         calls.append(context)
         out = (
             'IR: {"subject":["1girl"],"appearance":[],"clothing":[],"action":["standing"],"pose":[],"interaction":[],"scene":["beach"],"composition":["full body"],"lighting":["sunset"],"mood":["calm"],"style":[],"constraints":[]}\n'
@@ -1162,7 +1162,7 @@ def test_active_lora_is_present_in_vision_path():
         fields.update(scene=["beach"], lighting=["sunset"])
         return {"scope": kwargs["reference_scope"], "fields": fields, "source_model": "test"}
 
-    async def fake_translate(context, reroll=False):
+    async def fake_translate(context, reroll=False, **kwargs):
         calls.append(("composer", context))
         ir = {field: [] for field in main._IR_FIELDS}
         ir.update(subject=["1girl"], scene=["beach"], lighting=["sunset"])
@@ -1195,7 +1195,7 @@ def test_lora_cache_isolated_by_profile():
     old_cache = dict(prompt_module._TRANSLATE_CACHE)
     calls = 0
 
-    async def fake_translate(context, reroll=False):
+    async def fake_translate(context, reroll=False, **kwargs):
         nonlocal calls
         calls += 1
         profile = "black" if "Locked profile: black" in context else "white"

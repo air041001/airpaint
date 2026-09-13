@@ -1,5 +1,7 @@
 # AirPaint 「中文意图 + LoRA 用法」P0 契约（rev.2）
 
+> 阅读说明（2026-09-13）：前文 P0 为历史设计，实际实施修订见 §8、§9；不能把历史“未实现”状态当作全部当前能力。直接 CLI 协作启用后，旧搬运文件已移至本机忽略目录 `.local-backups/handoffs-20260913/`：原 `docs/LORA_USAGE_EXECUTION_PLAN.md`、`docs/LORA_USAGE_CONTRACT_REVIEW.md`、`docs/LORA_USAGE_P1_TASK.md`、`docs/LORA_USAGE_P2_TASK.md` 均以同名文件保留；根目录的 `comfy-web - 开发1.md` 对话导出也在该目录。下面这些文件名仅为历史依据，不是新接手者的必读依赖，clone 不包含此本机归档。当前接手入口为 AGENTS 与 BUILDHANDOFF。
+
 日期：2026-09-11（rev.2，逐条回应 `docs/LORA_USAGE_CONTRACT_REVIEW.md` R1–R6）
 状态：**设计契约，不代表功能已实现或验证**。
 依据：`docs/LORA_USAGE_EXECUTION_PLAN.md` + 审阅文件 R1–R6；代码以本次只读定位为准（HEAD `f8981da`）。真实事实与设计判断分开标注；找不到证据处明确写「未知」。
@@ -385,3 +387,17 @@ Registry 只存**引用**：`usage.ref`（单值）或 `usage.refs`（列表）�
 ### 9.5 供 P2B 读取的字段（本批不消费）
 
 `resolve_lora_usage` 返回的 `shared`（asset 级共享建议）与 `profiles[pid]`（Profile 专属）记录中的 `body`、`candidate`（negative/template 候选）、`advisory`、`verified`、`source_kind`。本批**生成路径未读取资料**，`build_prompt` 输出不变。
+
+## 10. P2B 实施契约：中文编译消费用法资料（2026-09-13）
+
+> 记录 P2B 的**实际**行为；与 §9.5 的「本批不消费」描述冲突处以本节为准。
+
+- **启用条件**：只有本次确实提供适用资料时（`usage_expected=True` 显式传入 `siliconflow_translate`），才要求模型输出一行 `USAGE:` JSON 对象；普通无资料路径完全不变、不新增模型调用。
+- **USAGE 对象**：`{"applied": [...], "negative": null|""|"<完整负面>", "evidence": "...", "limits": "..."}`。缺行、坏 JSON、类型/长度不符一律不采用，且**不使用其负面覆盖**；未知 `applied` ID 不采用并告警。
+- **负面语义**：`null` 精确保留当前默认基线（**不做任何自动追加**）；`""` 清空；非空字符串整体替换（允许移除与资料冲突的默认项）。用户显式 `negative_prompt` 始终最高优先。资料 `candidate.negative` 只作为上下文中的 `suggested_negative` 呈现，不再由代码自动拼接。
+- **来源可信度**：`/api/translate` 可展示"模型本次声明采用"（`usage_applied`）与证据/限制；提交端只保存**服务端校验过的 `usage_refs`**（= 客户端选择提交的参考资料，**不代表模型实际采用**）+ `usage_warnings` + `usage_revision`。历史/归档只保存并由 API 提供已核验引用与是否手工编辑（当前 UI 不展示原始引用 ID）。
+- **预算**：单条正文 > `MAX_USAGE_BODY_CHARS(20000)` 或总上下文 > `MAX_USAGE_CONTEXT_CHARS(60000)` 时**整条拒绝并在上下文/告警中说明**，不做静默截断；`background`（模型/参数）仅作适用性背景，不得据此改参数。
+- **作用域**：asset 级 `shared` 与已锁定 Profile 级资料才提供；未选 Profile 不返回（`not_applicable`）。
+- **缓存**：key 覆盖完整上下文（含默认负面基线/工作流/资料段），条目保存 applied/negative/evidence/limits/warnings，命中时完整恢复。
+- **暗房**：各 `translate` 调用都传 workflow 上下文；start 一律按 `assisted/body` 处理（不接受客户端声称 final/manual）；无 delta 继承源任务 `usage_refs` 与最终负面，delta/vibe/tweak 重编译使用本次服务端校验过的 refs，其 Composer 基线与最终负面按 `显式用户负面 > 源任务已保存最终负面（合法空串保持为空） > 当前默认` 决定。
+- **前端**：`go` 一键与确认提交的都是**最终正向文本**（`final_prompt_en`）；可折叠说明只展示依据/限制/告警（`textContent`，不展示原始 ID）；manual 不自动应用资料文本。

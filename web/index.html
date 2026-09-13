@@ -174,6 +174,10 @@ dialog{color:var(--ap-text);background:var(--ap-surface);border:1px solid var(--
 <button class="chip text-[11px] px-2 py-1 rounded-md border border-ink-600 text-white/70" id="negativeReset" type="button">恢复默认</button>
 </div>
 <textarea aria-label="最终负面提示词" class="w-full min-h-[80px] bg-ink-900 border border-ink-600 rounded-lg text-xs p-2.5 resize-y font-mono leading-relaxed" id="negativeEdit" placeholder="显示本次将实际生效的完整负面提示词，可修改或清空" rows="3"></textarea>
+<details class="border-t border-ink-700 pt-3 shrink-0" id="usageNotes" hidden>
+<summary class="cursor-pointer text-xs text-white/50">LoRA 用法资料说明</summary>
+<div class="text-[11px] text-white/50 mt-2 leading-relaxed" id="usageNotesBody"></div>
+</details>
 <div class="text-[11px] text-white/40 mt-1.5">清空即不发送负面；确认生成后不会自动补回被删除的内容。开启精修（detailer）时，各检测区域还会追加固定的局部增强文字（手/脸/眼等），不在此文本框内。</div>
 </div>
 </aside><aside aria-labelledby="settingsEditorTab" class="editor-pane" hidden="" id="paramsPanel" role="tabpanel">
@@ -1185,6 +1189,9 @@ function jobsBody(promptEn, promptRaw, translation = null) {
     prompt_mode: 'assisted', prompt_state: 'final' };
   const neg = negativeForSubmit();
   if (neg !== undefined) body.negative_prompt = neg;
+  if (translation && Array.isArray(translation.usage_applied) && translation.usage_applied.length) {
+    body.usage_refs = translation.usage_applied.slice();
+  }
   body.completion_level = translation?._completionLevel || completionLevel;
   if (translation?.concept) body.concept = translation.concept;
   if (translation?.prompt_ir) body.prompt_ir = translation.prompt_ir;
@@ -1240,6 +1247,26 @@ async function doTranslate(opts = {}) {
 function rememberTranslation(result) {
   lastTranslation = result;
 }
+function renderUsageNotes(result) {
+  const box = $('usageNotes');
+  const body = $('usageNotesBody');
+  if (!box || !body) return;
+  const parts = [];
+  if (result && typeof result.usage_evidence_model === 'string' && result.usage_evidence_model.trim()) {
+    parts.push('采用依据：' + result.usage_evidence_model.trim());
+  }
+  if (result && typeof result.usage_limits_model === 'string' && result.usage_limits_model.trim()) {
+    parts.push('限制：' + result.usage_limits_model.trim());
+  }
+  if (result && Array.isArray(result.usage_warnings) && result.usage_warnings.length) {
+    parts.push('提示：' + result.usage_warnings.join('；'));
+  }
+  if (result && Array.isArray(result.usage_applied) && result.usage_applied.length) {
+    parts.push('本次模型声明采用 ' + result.usage_applied.length + ' 条资料');
+  }
+  body.textContent = parts.join('\n');
+  box.hidden = parts.length === 0;
+}
 function renderBreakdown(bd) {
   const box = $('breakdownRows');
   if (!bd || typeof bd !== 'object') { box.innerHTML = ''; return; }
@@ -1262,6 +1289,7 @@ function renderTranslation(result) {
     delete $('negativeEdit').dataset.touched;
   }
   renderBreakdown(result.breakdown);
+  renderUsageNotes(result);
   $('reroll').classList.toggle('hidden', !(concept || result.breakdown));
 }
 $('conceptEdit').addEventListener('input', () => {
@@ -1335,7 +1363,7 @@ $('go').onclick = async () => {
       $('status').className = 'text-amber-300';
       return;
     }
-    await submitJob(r.prompt_en, prompt, r);
+    await submitJob(r.final_prompt_en || r.prompt_en, prompt, r);
   }
   catch (e) { done('⚠ ' + e.message, true); }
 };
@@ -1450,6 +1478,7 @@ $('manualGo').onclick = async () => {
 };
 $('editCancel').onclick = () => {
   lastTranslation = null;
+  renderUsageNotes(null);
   $('conceptEdit').value = '';
   $('conceptEdit').dataset.compiledValue = '';
   $('conceptBlock').classList.add('hidden');

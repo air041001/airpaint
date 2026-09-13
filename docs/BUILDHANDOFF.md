@@ -1,13 +1,13 @@
 # AirPaint Build Handoff
 
-> 更新：2026-09-09
+> 更新：2026-09-13（P2B 审查修订）
 > 用途：新 Agent 只读本文件即可了解当前产品、验证状态、边界和接手路线。开发规约仍以根目录 `AGENTS.md` 为准；代码和本地配置优先于本文。
 
 ## 一句话定位
 
 AirPaint 是 ComfyUI 上层的 Prompt / Intent / Knowledge Intelligence Layer。它把中文意图、参考范围、角色知识、LoRA 选择和成像参数编译成当前 Anima workflow 可执行的请求，同时保留 Concept、Prompt、LoRA Binding、尺寸与 seed 的可见控制权。
 
-它不替代 ComfyUI，也不是局部修图器。当前进入最终封版：停止主动功能开发，只处理阻止使用的数据丢失、兼容或安全问题。
+它不替代 ComfyUI，也不是局部修图器。`v1.0.0` 基线仍封存在 `9af5604`（历史验证与 D59 结论见下文，不移动旧 tag）；用户随后解除封版并依次授权 P1（最终正负文本）、P2A（用法资料入库）、P2B（中文编译消费用法资料）三条有限实验线，它们才是当前在做的事。
 
 ## 当前能力
 
@@ -157,3 +157,12 @@ docs/DEVLOG.md                开发演进
 4. Prompt/角色读 `prompt_engine.py`、`knowledge.py` 和相关 ADR；LoRA 读 `lora.py`、onboarding 工具和 Registry。
 5. workflow 改动必须读 `docs/workflow-anatomy.md`、实际 JSON 和本机节点 `INPUT_TYPES/execute()`。
 6. 仅在真实阻断问题范围内修改，运行最小相关验证、同步文档、显式暂存并 push。
+
+### P2B：中文编译消费 LoRA 用法资料（2026-09-13）
+
+- 选中 LoRA + 中文 → 服务端按选择解析适用资料（asset 共享 + 已锁定 Profile），注入 UNTRUSTED `USAGE CONTEXT`（含默认负面基线、正文/模板/建议负面/背景/告警），并在**同一次** Composer 调用中要求一行 `USAGE:` JSON 对象。
+- 负面：`null` 精确保留默认基线（不再自动追加）、`""` 清空、非空整体替换；用户显式负面最高优先。未知 ID/坏 schema 不采用且不使用其负面覆盖。
+- 预算：单条 20000 / 总 60000 字符，超限整条拒绝并提示（不静默截断）。
+- 提交端只落库**服务端校验过的 `usage_refs`**（参考资料，不声称模型采用）；`/api/translate` 展示模型本次声明与依据/限制；前端可折叠说明 + `go`/确认提交最终正向。
+- 验证：`.tools/test_p2b_usage.py` + `.tools/test_p2b_runtime.py`（严格 schema、system/user 协议载荷、API translate→job→workflow 字面一致、dialog 规划）+ 既有 prompt/usage/onboard/composition/final/persistence/前端检查全部通过；未做真实模型/GPU 与实图验收（测试使用安全虚构资料，不写入真实 Registry/生产 DB）。
+- 独立复核通过 P2B 36 项后端测试、前端 handler 行为测试及相关 Prompt、最终文本、迭代和恢复回归。只读视口 QA 因环境无 Playwright 未执行；本批不作桌面/手机视觉验收结论。

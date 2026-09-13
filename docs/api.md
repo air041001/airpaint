@@ -376,3 +376,10 @@ failed (失败):
 | 429 | 当日已达上限 |
 | 500 | 服务器内部错误 / 未知 translate 后端 |
 | 502 | 翻译失败 (LLM/Google 返回异常或超时) |
+
+### P2B 用法资料字段（2026-09-13）
+
+- `/api/dialog/turn` 的 `action=start` 接收中文并现场编译，因此固定按 `assisted/body` 最终化；客户端的 `manual/final` 声明不适用于此入口。直接英文生成继续使用 `/api/jobs`。
+- `/api/translate` 新增：`usage_provided`（本次提供摘要）、`usage_applied`（**模型本次声明采用**的 ID，已按服务端允许集合校验）、`usage_warnings`、`usage_evidence`（服务端记录依据）、`usage_evidence_model` / `usage_limits_model`（模型给出的中文依据/限制）、`usage_negative`（模型给出的完整负面：`null`=保持默认、`""`=清空、非空=替换）、`usage_revision`。
+- `POST /api/jobs`、`POST /api/dialog/turn` 新增可选 `usage_refs`（字符串数组）：客户端提交的**参考资料**；服务端按当前选择重新校验，只保留确实适用的 ID 并落库为 `usage_refs`，**不代表模型实际采用**。类型错误返回 400。
+- 任务/历史响应新增 `usage_refs`、`usage_warnings`、`usage_revision`。

@@ -589,6 +589,7 @@ _SNAPSHOT_FIELDS = (
     "generation_mode", "denoise", "fit_mode", "crop_position", "change_fields",
     "reference_contract", "reference_scope", "detailer",
     "prompt_mode", "prompt_state", "final_prompt_en", "final_negative", "negative_source",
+    "usage_refs", "usage_warnings", "usage_revision",
 )
 
 
@@ -602,6 +603,7 @@ def _public_job(job: dict) -> dict:
     keys = ("id", "status", "prompt_raw", "prompt_en", "workflow", "concept", "completion_level",
             "lora_bindings", "lora_warnings", "registry_revision", "prompt_ir", "seed",
             "prompt_mode", "prompt_state", "final_prompt_en", "final_negative", "negative_source",
+            "usage_refs", "usage_warnings", "usage_revision",
             "parent_job_id", "generation_mode", "denoise", "fit_mode", "crop_position",
             "width", "height", "state_snapshot", "change_fields", "image_warnings",
             "reference_contract", "reference_scope", "image", "error", "error_kind",
@@ -701,25 +703,28 @@ async def translate_prompt(req: Request, token: str = Depends(verify_token)):
         body.get("concept_override"), "concept_override")
     if concept_override:
         check_banned(concept_override)
+    preview_wf = body.get("workflow") or next(iter(WORKFLOWS), "")
+    if preview_wf not in WORKFLOWS:
+        raise HTTPException(400, "未知工作流")
+    _baseline_negative, _baseline_static = default_negative_text(preview_wf)
     prompt_en, breakdown, prompt_ir, prompt_ir_meta = await translate(
         prompt, reroll=reroll, image_b64=(image or None),
         lora_selections=_extract_lora_selections(body), include_meta=True,
         completion_level=completion_level, concept_override=concept_override,
         reference_scope=scope, source_image=bool(source_image),
+        usage_baseline_negative=(_baseline_negative or "") if _baseline_static else "",
+        usage_workflow=preview_wf,
     )
     check_banned(prompt_en)
     # 最终文本预览：与提交共用同一最终化函数，返回可展示/编辑的完整正负 (P1 §4.3)
-    preview_wf = body.get("workflow") or next(iter(WORKFLOWS), "")
-    if preview_wf not in WORKFLOWS:
-        raise HTTPException(400, "未知工作流")
-    preview_negative, preview_static = default_negative_text(preview_wf)
     preview = finalize_generation_text(
         prompt_mode=_normalize_prompt_mode(body.get("prompt_mode")),
         prompt_state="body", prompt_en=prompt_en,
         bindings=prompt_ir_meta.get("lora_bindings") or [],
         quality_prefix=WORKFLOWS[preview_wf].get("quality_prefix", ""),
-        default_negative=preview_negative, default_negative_dynamic=not preview_static,
+        default_negative=_baseline_negative, default_negative_dynamic=not _baseline_static,
         negative_prompt=_normalize_negative_prompt(body.get("negative_prompt")),
+        usage_negative=prompt_ir_meta.get("usage_negative"),
     )
     return {
         "prompt_en": prompt_en,
@@ -736,7 +741,63 @@ async def translate_prompt(req: Request, token: str = Depends(verify_token)):
         "final_negative": preview["final_negative"],
         "negative_source": preview["negative_source"],
         "prompt_mode": preview["prompt_mode"],
+        "usage_provided": prompt_ir_meta.get("usage_provided", []),
+        "usage_applied": prompt_ir_meta.get("usage_applied", []),
+        "usage_warnings": prompt_ir_meta.get("usage_warnings", []),
+        "usage_evidence": prompt_ir_meta.get("usage_evidence", []),
+        "usage_revision": prompt_ir_meta.get("usage_revision"),
+        "usage_negative": prompt_ir_meta.get("usage_negative"),
+        "usage_evidence_model": prompt_ir_meta.get("usage_evidence_model", ""),
+        "usage_limits_model": prompt_ir_meta.get("usage_limits_model", ""),
     }
+
+def _dialog_usage_refs(source, action, delta, body, meta):
+    """暗房分支的用法资料引用：本次重编译用服务端校验过的 applied，否则继承源任务（P2B §C/§4）。"""
+    explicit = _normalize_usage_refs(body.get("usage_refs"))
+    if explicit is not None:
+        return explicit
+    if source is None:
+        return list(meta.get("usage_applied") or []) or None
+    if action == "vibe" or bool(delta):
+        return list(meta.get("usage_applied") or [])
+    return list(source.get("usage_refs") or [])
+
+
+def _normalize_usage_refs(value):
+    """客户端提交的用法资料引用（仅"参考资料"，不是模型实际采用的证明，P2B §C）。"""
+    if value is None:
+        return None
+    if not isinstance(value, list) or any(not isinstance(x, str) for x in value):
+        raise HTTPException(400, "usage_refs 必须是字符串数组")
+    return [x.strip() for x in value if x.strip()]
+
+
+def _verify_usage_refs(bindings: list[dict], requested):
+    """服务端独立校验客户端提交的用法资料引用（P2B §C）。
+
+    只保留**当前选择下确实适用且完整可读**的记录 ID；它们只作为"客户端选择提交的参考资料"
+    保存，**不代表模型实际采用过**（模型声明只在本次预览响应中展示）。
+    返回 (refs, warnings)。
+    """
+    if not requested:
+        return [], []
+    try:
+        from server.prompt_engine import (
+            _collect_usage_records,
+            _default_usage_fetch,
+        )
+        selections = _bindings_as_selections(bindings)
+        _records, provided, _rejected, _unused, _revision = _collect_usage_records(
+            selections, _default_usage_fetch)
+    except Exception:
+        return [], ["用法资料校验失败，本次不记录采用来源"]
+    allowed = {str(item.get("id") or "") for item in provided}
+    requested_ids = [str(x) for x in requested]
+    refs = [x for x in requested_ids if x in allowed]
+    warnings = [] if len(refs) == len(set(requested_ids)) else [
+        "部分用法 ID 与当前服务端资料不符，未记录"]
+    return refs, warnings
+
 
 async def _enqueue(owner_id: str, wf_name: str, prompt_en: str, prompt_raw: str,
                    size, lora_selections, strength_char, strength_style,
@@ -759,7 +820,9 @@ async def _enqueue(owner_id: str, wf_name: str, prompt_en: str, prompt_raw: str,
                    turn: dict | None = None,
                    prompt_mode: str = "assisted",
                    prompt_state: str | None = None,
-                   negative_prompt=None) -> str:
+                   negative_prompt=None,
+                   usage_refs=None,
+                   usage_negative=None) -> str:
     """Validate and atomically persist one generation before scheduling it."""
     completion_level = _normalize_completion_level(completion_level)
     concept = _normalize_optional_concept(concept, "concept")
@@ -824,11 +887,12 @@ async def _enqueue(owner_id: str, wf_name: str, prompt_en: str, prompt_raw: str,
     # 最终化（前缀+trigger），但负面返回 None 以保留工作流 wildcard 行为。
     default_negative, default_static = (default_negative_text(wf_name)
                                         if prompt_state is not None else (None, False))
+    verified_usage_refs, usage_warnings = _verify_usage_refs(resolved_bindings, usage_refs)
     finalized = finalize_generation_text(
         prompt_mode=prompt_mode, prompt_state=prompt_state, prompt_en=prompt_en,
         bindings=resolved_bindings, quality_prefix=wcfg.get("quality_prefix", ""),
         default_negative=default_negative, default_negative_dynamic=not default_static,
-        negative_prompt=negative_prompt,
+        negative_prompt=negative_prompt, usage_negative=usage_negative,
     )
     prompt_en = finalized["final_prompt_en"]
     if len(prompt_en) > MAX_COMPILED_PROMPT_CHARS:
@@ -867,6 +931,8 @@ async def _enqueue(owner_id: str, wf_name: str, prompt_en: str, prompt_raw: str,
         "comfy_image_filename": image_filename, "denoise": denoise,
         "detailer": detailer,
         "prompt_ir": prompt_ir, "prompt_edited": bool(prompt_edited), "seed": seed,
+        "usage_refs": verified_usage_refs, "usage_warnings": usage_warnings,
+        "usage_revision": resolved_revision,
         "prompt_mode": finalized["prompt_mode"], "prompt_state": finalized["prompt_state"],
         "final_prompt_en": finalized["final_prompt_en"],
         "final_negative": finalized["final_negative"],
@@ -989,7 +1055,8 @@ async def create_job(req: Request, owner_id: str = Depends(auth)):
                             request_fingerprint=request_fingerprint,
                             prompt_mode=_normalize_prompt_mode(body.get("prompt_mode")),
                             prompt_state=_normalize_prompt_state(body.get("prompt_state")),
-                            negative_prompt=_normalize_negative_prompt(body.get("negative_prompt")))
+                            negative_prompt=_normalize_negative_prompt(body.get("negative_prompt")),
+                            usage_refs=_normalize_usage_refs(body.get("usage_refs")))
     replayed = bool(JOBS.get(job_id, {}).get("idempotent_replay"))
     job = _load_job(job_id, owner_id)
     if replayed:
@@ -1157,9 +1224,13 @@ async def dialog_turn(req: Request, owner_id: str = Depends(verify_token)):
             raise HTTPException(400, f"提示词为空或过长(>{MAX_USER_PROMPT_CHARS})")
         check_banned(prompt)
         completion_level = _normalize_completion_level(body.get("completion_level"))
+        _start_wf = body.get("workflow") or next(iter(WORKFLOWS))
+        _start_neg, _start_static = default_negative_text(_start_wf)
+        _usage_baseline = (_start_neg or "") if _start_static else ""
         prompt_en, _, prompt_ir, meta = await translate(
             prompt, lora_selections=_extract_lora_selections(body), include_meta=True,
-            completion_level=completion_level)
+            completion_level=completion_level, usage_baseline_negative=_usage_baseline,
+            usage_workflow=_start_wf)
         session = _new_session(owner_id)
         raw = prompt
         wf_name = body.get("workflow") or next(iter(WORKFLOWS))
@@ -1191,6 +1262,16 @@ async def dialog_turn(req: Request, owner_id: str = Depends(verify_token)):
             "reference_contract": state.get("reference_contract"),
             "reference_scope": state.get("reference_scope"),
         }
+        _dn_text, _dn_static = default_negative_text(wf_name)
+        _explicit_negative = body.get("negative_prompt")
+        _source_negative = source.get("final_negative")
+        if isinstance(_explicit_negative, str):
+            _usage_baseline = _explicit_negative
+        elif isinstance(_source_negative, str):
+            # 审查 B：合法空串必须保持为空，不得回落到默认负面。
+            _usage_baseline = _source_negative
+        else:
+            _usage_baseline = (_dn_text or "") if _dn_static else ""
         seed_strategy = body.get("seed_strategy") or ("fixed" if seed is not None else
                                                      "inherit" if action == "tweak" else "random")
         if seed_strategy not in {"inherit", "random", "fixed"}:
@@ -1211,12 +1292,14 @@ async def dialog_turn(req: Request, owner_id: str = Depends(verify_token)):
             image_b64 = "data:image/png;base64," + base64.b64encode(image_path.read_bytes()).decode()
             prompt_en, _, prompt_ir, meta = await translate(
                 delta or raw, image_b64=image_b64, reference_scope="composition_vibe",
-                lora_selections=selections, include_meta=True, completion_level=completion_level)
+                lora_selections=selections, include_meta=True, completion_level=completion_level,
+                usage_baseline_negative=_usage_baseline, usage_workflow=wf_name)
             prompt_edited = False
         elif delta:
             prompt_en, _, prompt_ir, meta = await translate(
                 delta, prior_state=state, lora_selections=selections, include_meta=True,
-                completion_level=completion_level)
+                completion_level=completion_level, usage_baseline_negative=_usage_baseline,
+                usage_workflow=wf_name)
             prompt_edited = False
         if action == "tweak":
             fit_mode, crop_position = normalize_image_fit(
@@ -1244,8 +1327,9 @@ async def dialog_turn(req: Request, owner_id: str = Depends(verify_token)):
             prompt_mode, prompt_state = "assisted", "body"
         negative_prompt = body.get("negative_prompt", inherited_negative)
     else:
-        prompt_mode = _normalize_prompt_mode(body.get("prompt_mode"))
-        prompt_state = _normalize_prompt_state(body.get("prompt_state"))
+        # 审查 A：start 的输入是中文刚编译出的 body，不接受客户端 final/manual 声明。
+        prompt_mode = "assisted"
+        prompt_state = "body"
         negative_prompt = _normalize_negative_prompt(body.get("negative_prompt"))
     job_id = await _enqueue(
         owner_id, wf_name, prompt_en, raw, size, None,
@@ -1263,6 +1347,8 @@ async def dialog_turn(req: Request, owner_id: str = Depends(verify_token)):
         client_request_id=client_request_id,
         request_fingerprint=request_fingerprint,
         prompt_mode=prompt_mode, prompt_state=prompt_state, negative_prompt=negative_prompt,
+        usage_refs=_dialog_usage_refs(source, action, delta, body, meta),
+        usage_negative=(meta.get("usage_negative") if source is None else None),
         session=session,
         turn={"action": action, "delta": delta},
     )
