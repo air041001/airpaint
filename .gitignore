@@ -10,10 +10,8 @@ server/lora_cache.json
 server/knowledge_cache/
 server/state/
 server/backups/
-.tools/eval_set/candidate*.yaml
-.tools/eval_set/nsfw/candidate*.yaml
-.tools/eval_set/nsfw/output/
-.tools/eval_set/render_exp/output/
+# 旧批量评测资产已清理，不再入仓库（结论见 docs/decisions.md 与 DEVLOG）
+.tools/eval_set/
 
 # 便携版 gh CLI (大文件, 自行下载即可, 非源码)
 .tools/gh/
