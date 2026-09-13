@@ -211,6 +211,10 @@ Semantic rules:
 - provides describes what the LoRA weights/profile already supply; it is semantic
   context and is not copied wholesale into the final prompt.
 - required_tags are exact triggers that must always be injected.
+- A LoRA loading expression such as <lora:model_name:1> (or the same text
+  without angle brackets) is loader syntax, not an exact trigger. Never put it
+  in required_tags. If the source does not prove a real trigger, report that as
+  an uncertainty; do not claim that the author explicitly requires no trigger.
 - default_tags are only the minimal, explicitly supported tags needed by default.
 - Every comma-separated prompt/tag item must become a separate JSON array item.
   Do not return strings such as "tag one, tag two" inside a tag array.
@@ -291,6 +295,27 @@ def _clean_tag_list(value) -> list[str]:
     for item in _clean_string_list(value):
         result.extend(part.strip() for part in re.split(r"[,，]", item) if part.strip())
     return list(dict.fromkeys(result))
+
+
+_LORA_LOADING_EXPRESSION = re.compile(
+    r"lora\s*:\s*[^:<>\r\n]+?\s*:\s*[+-]?(?:\d+(?:\.\d*)?|\.\d+)"
+    r"(?:\s*:\s*[+-]?(?:\d+(?:\.\d*)?|\.\d+))?",
+    re.IGNORECASE,
+)
+
+
+def _reject_lora_loading_expressions(tags: list[str], field: str) -> None:
+    """加载权重的语法不是模型 trigger；发现时拒绝整个候选并要求修订。"""
+    for tag in tags:
+        value = tag.strip()
+        if value.startswith("<") and value.endswith(">"):
+            value = value[1:-1].strip()
+        if _LORA_LOADING_EXPRESSION.fullmatch(value):
+            raise ValueError(
+                f"{field} 包含 LoRA 加载表达式 {tag!r}；它只负责加载权重，不是 exact trigger。"
+                "请依据作者原文填写真正触发词；没有触发词证据时应把结论标记为未知并修订候选，"
+                "不能宣称作者明确无需 trigger。"
+            )
 
 
 def _clean_profile_aliases(value) -> list[str]:
@@ -460,11 +485,14 @@ def normalize_agent_candidate(candidate: dict, filename: str) -> tuple[str, dict
             provides = _clean_string_list(raw_profile.get("provides"))
             if not provides:
                 raise ValueError(f"Profile {pid} 缺少 provides，无法建立 LoRA 语义上下文")
+            required_tags = _clean_tag_list(raw_profile.get("required_tags"))
+            _reject_lora_loading_expressions(
+                required_tags, f"Profile {pid} 的 required_tags")
             profiles[pid] = {
                 "name": str(raw_profile.get("name") or pid).strip(),
                 "aliases": _clean_profile_aliases(raw_profile.get("aliases")),
                 "provides": provides,
-                "required_tags": _clean_tag_list(raw_profile.get("required_tags")),
+                "required_tags": required_tags,
                 "default_tags": _clean_tag_list(raw_profile.get("default_tags")),
                 "optional_tags": optional,
                 "source": "user-provided author description",
@@ -483,6 +511,7 @@ def normalize_agent_candidate(candidate: dict, filename: str) -> tuple[str, dict
         })
     else:
         tags = [] if policy == "none" else _clean_tag_list(raw_asset.get("required_tags"))
+        _reject_lora_loading_expressions(tags, "required_tags")
         if policy == "required" and not tags:
             raise ValueError("required policy 缺少 required_tags")
         provides = _clean_string_list(raw_asset.get("provides"))

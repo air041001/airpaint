@@ -190,6 +190,74 @@ def test_required_style_needs_exact_trigger():
         raise AssertionError("required policy 不应接受空 trigger")
 
 
+def test_lora_loading_expression_is_rejected_as_required_trigger():
+    for loading_text in (
+            "<lora:FComic1to1000_Anima_V1:1>",
+            "lora:FComic1to1000_Anima_V1.safetensors:1.0"):
+        candidate = {
+            "asset": {
+                "name": "Comic Style",
+                "type": "style",
+                "trigger_policy": "required",
+                "default_strength": {"model": 1.0, "clip": 1.0},
+                "required_tags": [loading_text],
+                "provides": ["comic illustration style"],
+            },
+        }
+        try:
+            tool.normalize_agent_candidate(candidate, "comic.safetensors")
+        except ValueError as exc:
+            message = str(exc)
+            assert "LoRA 加载表达式" in message
+            assert "不是 exact trigger" in message
+            assert "标记为未知" in message
+        else:
+            raise AssertionError("LoRA 加载表达式不应进入 required_tags")
+
+
+def test_profile_loading_expression_is_rejected_without_dropping_it_silently():
+    candidate = {
+        "asset": {
+            "name": "Demo Character",
+            "type": "character",
+            "trigger_policy": "profile",
+            "default_strength": {"model": 1.0, "clip": 1.0},
+            "selection": {"default_profile": "base"},
+            "profiles": {
+                "base": {
+                    "name": "Base",
+                    "aliases": ["Demo Character"],
+                    "provides": ["Demo Character identity"],
+                    "required_tags": ["<lora:demo_character:0.8>"],
+                    "default_tags": [],
+                    "optional_tags": {},
+                },
+            },
+        },
+    }
+    try:
+        tool.normalize_agent_candidate(candidate, "demo_character.safetensors")
+    except ValueError as exc:
+        assert "Profile base 的 required_tags" in str(exc)
+    else:
+        raise AssertionError("Profile 的加载表达式不应被静默保留或删除")
+
+
+def test_real_required_trigger_is_preserved():
+    candidate = {
+        "asset": {
+            "name": "Comic Style",
+            "type": "style",
+            "trigger_policy": "required",
+            "default_strength": {"model": 1.0, "clip": 1.0},
+            "required_tags": ["fcomic_style"],
+            "provides": ["comic illustration style"],
+        },
+    }
+    _, asset, _ = tool.normalize_agent_candidate(candidate, "comic.safetensors")
+    assert asset["required_tags"] == ["fcomic_style"]
+
+
 def test_civitai_url_branch_is_reachable():
     class FakeResponse:
         status_code = 200
