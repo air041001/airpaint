@@ -4,6 +4,9 @@ const path = require("path");
 const root = path.resolve(__dirname, "..");
 const htmlPath = process.argv[2] ? path.resolve(process.argv[2]) : path.join(root, "web", "index.html");
 const html = fs.readFileSync(htmlPath, "utf8");
+if (html.includes("我的画室")) {
+  throw new Error("retired studio label is still visible");
+}
 const scripts = [...html.matchAll(/<script(?:\s[^>]*)?>([\s\S]*?)<\/script>/gi)]
   .map((match) => match[1])
   .filter((source) => source.trim());

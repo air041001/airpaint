@@ -4,7 +4,7 @@
 <head>
 <meta charset="utf-8"/>
 <meta content="width=device-width, initial-scale=1.0" name="viewport"/>
-<title>AirPaint · 我的画室</title>
+<title>AirPaint</title>
 <script src="https://cdn.tailwindcss.com"></script>
 <script src="https://cdn.jsdelivr.net/npm/gsap@3.13.0/dist/gsap.min.js"></script>
 
@@ -59,7 +59,7 @@ dialog{color:var(--ap-text);background:var(--ap-surface);border:1px solid var(--
 </div>
 <!-- ===================== 工坊 ===================== -->
 <div class="studio-view" data-has-result="false" data-mobile-panel="prompt" data-view="compose" id="app" style="display:none">
-<header class="studio-header"><a aria-label="AirPaint 画室" class="studio-brand" href="#"><span aria-hidden="true" class="studio-mark">◎</span>airpaint<sup>STUDIO</sup></a><span class="studio-location">我的画室</span><nav aria-label="画室导航" class="studio-nav"><button class="chip" data-open-history="">所有作品</button><button class="chip" id="newDraft">编辑构思</button><span class="mono text-xs text-white/40 px-2 hidden sm:inline" id="quota"></span><button aria-label="切换到纸本画室" aria-pressed="false" class="chip theme-toggle text-sm px-3 py-1.5" id="themeToggle" type="button"><span aria-hidden="true" class="theme-track"></span><span class="theme-label">夜间</span></button><button class="chip text-sm px-3 py-1.5 rounded-lg border border-ink-600 text-white/70" id="navBtn">使用说明</button><button class="chip text-sm px-3 py-1.5 rounded-lg border border-ink-600 text-white/70" id="logoutBtn">退出</button></nav></header>
+<header class="studio-header"><a aria-label="AirPaint 画室" class="studio-brand" href="#"><span aria-hidden="true" class="studio-mark">◎</span>airpaint<sup>STUDIO</sup></a><nav aria-label="画室导航" class="studio-nav"><button class="chip" data-open-history="">所有作品</button><button class="chip" id="newDraft">编辑构思</button><span class="mono text-xs text-white/40 px-2 hidden sm:inline" id="quota"></span><button aria-label="切换到纸本画室" aria-pressed="false" class="chip theme-toggle text-sm px-3 py-1.5" id="themeToggle" type="button"><span aria-hidden="true" class="theme-track"></span><span class="theme-label">夜间</span></button><button class="chip text-sm px-3 py-1.5 rounded-lg border border-ink-600 text-white/70" id="navBtn">使用说明</button><button class="chip text-sm px-3 py-1.5 rounded-lg border border-ink-600 text-white/70" id="logoutBtn">退出</button></nav></header>
 <!-- 公告/教程 -->
 
 <div class="studio-workspace" id="workspace"><div class="studio-stage" id="stagePanel">
@@ -83,7 +83,7 @@ dialog{color:var(--ap-text);background:var(--ap-surface);border:1px solid var(--
 </div>
 <!-- ===================== 暗房 ===================== -->
 <div class="studio-view" id="darkroom" style="display:none">
-<header class="studio-header"><a aria-label="AirPaint 画室" class="studio-brand" href="#"><span aria-hidden="true" class="studio-mark">◎</span>airpaint<sup>STUDIO</sup></a><span class="studio-location">我的画室 / 本次迭代</span><nav aria-label="画室导航" class="studio-nav"><button class="chip" data-open-history="">所有作品</button><button class="chip text-sm px-3 py-1.5 rounded-lg border border-ink-600 text-white/70" id="drBack">返回画布</button><span class="mono text-xs text-white/40 hidden sm:inline" id="drMeta"></span><button aria-label="切换到纸本画室" aria-pressed="false" class="chip theme-toggle text-sm px-3 py-1.5" id="drThemeToggle" type="button"><span aria-hidden="true" class="theme-track"></span><span class="theme-label">夜间</span></button><button class="chip text-sm px-3 py-1.5 rounded-lg border border-ink-600 text-white/70" hidden="" id="drAbandon">结束本次查看</button></nav></header>
+<header class="studio-header"><a aria-label="AirPaint 画室" class="studio-brand" href="#"><span aria-hidden="true" class="studio-mark">◎</span>airpaint<sup>STUDIO</sup></a><span class="studio-location">本次迭代</span><nav aria-label="画室导航" class="studio-nav"><button class="chip" data-open-history="">所有作品</button><button class="chip text-sm px-3 py-1.5 rounded-lg border border-ink-600 text-white/70" id="drBack">返回画布</button><span class="mono text-xs text-white/40 hidden sm:inline" id="drMeta"></span><button aria-label="切换到纸本画室" aria-pressed="false" class="chip theme-toggle text-sm px-3 py-1.5" id="drThemeToggle" type="button"><span aria-hidden="true" class="theme-track"></span><span class="theme-label">夜间</span></button><button class="chip text-sm px-3 py-1.5 rounded-lg border border-ink-600 text-white/70" hidden="" id="drAbandon">结束本次查看</button></nav></header>
 <div class="studio-workspace" id="darkroomWorkspace">
 <main class="studio-stage" id="darkroomCenter">
 <div class="stage-toolbar"><span id="iterationCaption">本次迭代</span><button class="quiet-button" id="branchRecordInfo">作品参数 ↗</button></div><div class="studio-media" id="darkroomStage">

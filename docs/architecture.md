@@ -1,6 +1,6 @@
 # 架构
 
-> 当前状态反映 2026-09-08（最终封版可靠性收尾；参考/Img2Img 图片验收状态见 BUILDHANDOFF）。
+> 当前状态更新至 2026-09-14（第 100 次提交重新封板；验证边界见 BUILDHANDOFF）。
 > 改动架构时同步本文件（见 `AGENTS.md`）。
 
 ## 部署拓扑
@@ -71,7 +71,7 @@ ComfyUI  127.0.0.1:8188  (不对公网开放)
 6. **确定性 Compiler / 可画性护栏**：代码补主体计数、清理精确角色的裸名变体、折叠完整逗号序列的机械复读；用户明确写 `2girls/2boys` 或双人/两人时，多主体 count 会覆盖冲突的单主体 count，并从最终 Prompt 与公开 IR 移除 `solo/solo focus`。性别仍来自用户 exact count 或 Composer 自身语义，不从 LoRA Profile 名猜测。LoRA Prompt 以顶层逗号切分，保留括号内的逐角色属性簇。多人拒绝已复现会诱发分割/裁切的抽象措辞、下半身锁定与近景冲突，以及贴身场景的多句逐部位关系段；只修可确定问题，不以静态规则判定审美。用户明确写全身/完整可见时移除互斥近景。模型补全若同时发明多个手部/服装操作，或用 `upper body/close-up` 承诺裙摆、髋部、大腿等画外交互，会退回 Composer 改为牛仔镜头/四分之三身或删减动作。新文本路径仍不继承旧 `_prepare_painter_tags()` 的自动裸体、固定景别或画风删除。未知角色只由通过原文名字边界校验的显式 `CHAR` 发起 Danbooru exact 验证；`IR.subject` 候选不再自动查询或写 cache。
 7. **缓存与模型调用**：LRU 缓存上限 500，key 是完整 Composer 上下文，因此包含补全档、`concept_override`、LoRA selection 与 registry revision；reroll 跳过缓存并在同一补全档内换构思。Reasoning Model `max_tokens=1800`；普通温度为 faithful 0.35 / auto 0.7 / free 0.8，reroll 使用配置的高温。`/no_think` 与 `enable_thinking:false` 默认关闭思考，失败抛 502。
 
-正向 `quality_prefix` 由工作流代码统一提供 (`masterpiece, best quality, newest, absurdres`)；rating 只保留用户在英文 Prompt 中的明确输入。负面 Prompt 是 `AnimaFull.json` 节点 4 的固定常量，不随输入变化，包含 WAI-Anima 质量项、构图否定词，以及 `bad hands / missing fingers / extra fingers / fused fingers / extra arms / extra legs / bad feet / malformed feet` 的人体防御项。它只能降低部分常见失败概率，不代表人体问题已解决。见 D44/D46。
+正向 `quality_prefix` 由唯一最终化步骤提供 (`masterpiece, best quality, newest, absurdres`)；rating 只保留用户在英文 Prompt 中的明确输入。新文本路径会读取 `AnimaFull.json` 节点 4 的默认负面正文，再把最终负面字面写入配置的负面编码节点 55；用户可完整覆盖或清空，所选用法模板也可追加要求。旧客户端未声明最终文本时仍保留工作流 wildcard 链。默认负面包含 WAI-Anima 质量项、构图否定词和紧凑人体防御词；它只能降低部分常见失败概率，不代表人体问题已解决。见 D44/D46。
 
 Active LoRA 时，Reasoning Model 只看 Asset/Profile 的 `provides` 与允许选择的 ID，不看文件名、强度或 exact trigger；Vision 只观察图片，不接收 LoRA 或用户文字。严格文本协议要求 `LORA` JSON 语义选择，代码再解析 Profile/optional ID 并确定性注入 exact binding。Profile 的 `black/white/swim` 不用于猜发色、瞳色；只有用户显式外观覆盖及既有迭代状态中的外观锁可进入 Composer，越权项修复一次。缓存包含 selection 与 registry revision。
 
@@ -128,7 +128,7 @@ Active LoRA 时，Reasoning Model 只看 Asset/Profile 的 `provides` 与允许�
 3. **统一 seed**：入队前决定并保存实际 seed，传给 `build_prompt(..., seed=...)`；所有 int 型 seed/noise_seed 同步，列表型连接不覆盖。直接调用 build 时缺省仍随机，结果 `_seed` 可读。
 4. **LoRA binding 重解析**：有 snapshot 时只取 key/profile(s)/optional 与逐 Asset 强度，按同一 `registry_revision` 从当前 Registry 重建；旧 `lora_keys` 走 legacy adapter。随后由 Binding Compiler 补回被编辑删除的 required/default exact tags。
 5. **LoRA workflow 注入**：写 `lora_node.loras = {"__value__":[{name,strength,clipStrength,active:true}, ...]}`。逐 Asset 强度可在 0~2 覆盖 Registry 默认值；旧角色/风格分组字段仍以 0~1 兼容。同一 safetensors 最多生成一条 Loader 记录；若不同 binding 对同一文件给出冲突强度则 400 fail closed。LoraManager 的 `text` 字段执行时会被 `del`，不能依赖它加载权重。
-6. 注入 `prompt_node.text = quality_prefix + compiled prompt` 与尺寸；请求宽高会同步到工作流共享的 easy-int 节点 39/47，同时覆盖节点 56 EmptyLatent 的字面值，使 txt2img 与节点 31 的 img2img Resize 使用同一请求尺寸且不切断 Resize 原连接。`safe/sensitive/questionable/explicit` 等 rating tag 仅保留用户手动编辑结果，不自动推断。不再把 Civitai 全量 trainedWords 在生成阶段盲拼。负面继续使用工作流固化模板，并包含常见手指、手臂、腿脚畸形的紧凑防御词。
+6. 注入已经最终化的 `prompt_node.text` 与尺寸；请求宽高会同步到工作流共享的 easy-int 节点 39/47，同时覆盖节点 56 EmptyLatent 的字面值，使 txt2img 与节点 31 的 img2img Resize 使用同一请求尺寸且不切断 Resize 原连接。`safe/sensitive/questionable/explicit` 等 rating tag 仅保留用户手动编辑结果，不自动推断。不再把 Civitai 全量 trainedWords 在生成阶段盲拼。新文本路径把已确认的最终负面字面写入 `negative_node`（节点 55）并切断其旧连接；只有 legacy 请求不提供最终负面时继续沿用节点 4 的 wildcard 链。
 7. **生成分支与 detailer**：每次构建都显式写 ImpactSwitch：txt2img=`input1`（节点 56 EmptyLatent），img2img=`input2`（节点 33 VAEEncode）并覆盖主 KSampler denoise。若有 `detailer:{face,hand,nsfw,eyes}`，删未选 detailer 节点并重连（删掉的节点不可达，不执行）。
 8. 返回 `{prompt, client_id, _seed}`。
 

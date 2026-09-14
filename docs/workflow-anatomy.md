@@ -1,6 +1,6 @@
-# 合并工作流 AnimaFull 解剖 (2026-08-12)
+# 合并工作流 AnimaFull 解剖（更新至 2026-09-14）
 
-> **本文件是当前线上工作流的权威节点参考**。后续 agent 涉及节点 id / 注入点 / 链路, 先查这里, **不用再打开 ComfyUI 读节点源码**。
+> **本文件是当前线上工作流的节点参考**。后续 agent 涉及节点 id / 注入点 / 链路时先查这里；真正修改前仍必须同时核对实际 workflow JSON 与本机节点 `INPUT_TYPES/execute()`，不能只凭本文猜测。
 >
 > **当前形态**: `server/workflows/AnimaFull.json` (55 节点) 一份覆盖 txt2img / img2img / 4路精修 (D32 合并)。build_prompt 运行时按 `detailer:{face,hand,nsfw,eyes}` **删未选 detailer 节点** + 重连, 不是"拨 MUTE 组开关"。
 >
@@ -15,9 +15,9 @@
 | 18 | CLIPLoader | Qwen3-0.6B 文本编码器 | - |
 | 23 | VAELoader | VAE | - |
 | 5 | LoraLoader(LoraManager) | LoRA 加载 | ✅ `loras` widget (D16) |
-| 3/4 | ImpactWildcardProcessor | 正/负向 wildcard | 负向 4=常量 |
+| 3/4 | ImpactWildcardProcessor | 正/负向 wildcard | 节点 4 提供默认负面正文 |
 | 54 | CLIPTextEncode | 正向编码 | ✅ `text` (build_prompt 覆盖) |
-| 55 | CLIPTextEncode | 负向编码 | - |
+| 55 | CLIPTextEncode | 负向编码 | ✅ 新文本路径覆盖 `text`；legacy 保留节点 4 连接 |
 | 56 | EmptyLatentImage | txt2img 空白 latent | ✅ width/height |
 | 6 | KSampler | 主采样 | ✅ seed + img2img denoise |
 | 43 | VAEDecode | latent->图 (detailer 链源) | - |
@@ -51,8 +51,8 @@
 
 > **build_prompt 拼接逻辑** (D32): 遍历 `config detailer_nodes` (顺序 hand->nsfw->face->eyes = 图链顺序), 选中的设 `image` 连前一节点、未选的 `del` (不可达节点 ComfyUI 懒执行跳过, 省时)。全不选 -> `13.images = [43,0]` (VAEDecode 直通 SaveImage = 快速版)。调参已固定 max_size 1024 / steps 12 (~90s 全精修, 见 DEVLOG 19/29)。
 
-### D. LoRA 触发词链 (活跃, D16 断过)
-`37 TriggerWordToggle` + `46/51 StringConcatenate` + `48 RegexReplace` + `57 WidgetToString`。build_prompt 覆盖节点 54 断链, 触发词手动拼进 prompt (config `loras.<key>.trigger`)。
+### D. LoRA 触发词链（workflow 内仍存在，生产注入绕过）
+`37 TriggerWordToggle` + `46/51 StringConcatenate` + `48 RegexReplace` + `57 WidgetToString`。`build_prompt` 覆盖节点 54 后断开这条旧链；当前 exact tags 来自 Registry binding compiler，`config.yaml.loras` 只保留未迁移兼容项。
 
 ### E. 前端专用节点 (sanitize_for_api 剔除)
 - `57 WidgetToString` / `58 Image Saver Metadata`: 依赖 `extra_pnginfo`, API 提交崩。
@@ -75,17 +75,17 @@
 | ~~区域提示词/ControlNet/SAM3~~ | - | ❌ 评估不做 (见 ROADMAP 3.2) |
 
 ## API 耦合 (我们只动这些)
-- **注入**: `54`(正向 text) / `6`(seed, img2img denoise) / `39/47`(共享 width/height) / `56`(txt2img width/height) / `5`(loras) / `0`(image_filename) / `42`(txt2img select=1；img2img select=2)
+- **注入**: `54`(最终正向 text) / `55`(新路径最终负向 text) / `6`(seed, img2img denoise) / `39/47`(共享 width/height) / `56`(txt2img width/height) / `5`(loras) / `0`(image_filename) / `42`(txt2img select=1；img2img select=2)
 - **detailer 拼接**: config `detailer_nodes` = {hand:27, nsfw:28, face:29, eyes:30}
-- **负面 `4`**: 工作流自带常量, 不注入
+- **负面链**: 节点 4 提供默认正文；新文本路径将最终值写入节点 55 并切断旧连接，legacy 请求仍沿用节点 4
 - **剔除**: `57`/`58`/`53`/`67-70` (WidgetToString / Image Saver Metadata / Image Comparer) + `13` 换 SaveImage
 - **其余活跃节点原样跑, 不碰**
 
-## 关键机制备忘 (查证过, 不用再翻源码)
+## 关键机制备忘（已查证；修改时仍需复核源码与实际 JSON）
 - **seed 不崩**: 4 路 detailer + KSampler 的 seed 接 34 (rgthree Seed, widget=-1)。build_prompt 统一只覆写 int 型、跳过连接; rgthree 在 seed∈{-1,-2,-3} 时执行时随机成正整数, 不触发 Impact Pack `np.random.default_rng(-1)` 崩。
 - **输出链**: txt2img/img2img 都走 `43 VAEDecode` -> (detailer 链, 可删) -> `13 SaveImage`。
 - **detailer 参数已调优**: max_size=1024(35), steps=12, denoise 0.4/0.3/0.26/0.24 (手/NSFW/脸/眼)。别再调回社区默认 (1536/16 会超时, 见 DEVLOG 29)。
-- **img2img 与参考图是两回事**: 传 `image_filename` = img2img (图上重采样); `/api/translate` 传 image = 参考图 (VL 提氛围走 txt2img, 图不进 ComfyUI)。
+- **img2img 与参考图是两回事**: workflow 传 `image_filename` = img2img（图上重采样）；`/api/translate` 传 `source_image` = 原图理解，传 `reference_image` = 参考契约。旧 `image` 仅作参考图兼容字段；参考图本身不进 ComfyUI。
 
 ## 安全修改工作流的方法
 1. **加新节点/功能**: 在 ComfyUI 里改 -> Save (API Format) 导出 -> 替换 `server/workflows/AnimaFull.json` -> 核对节点 id (本文档 + config)。

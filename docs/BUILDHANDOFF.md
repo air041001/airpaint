@@ -1,6 +1,6 @@
 # AirPaint Build Handoff
 
-> 更新：2026-09-14（多格模板构图回归与翻译错误区分修复）
+> 更新：2026-09-14（第 100 次提交封板收尾）
 > 用途：新 Agent 只读本文件即可了解当前产品、验证状态、边界和接手路线。开发规约仍以根目录 `AGENTS.md` 为准；代码和本地配置优先于本文。
 
 ## 一句话定位
@@ -9,7 +9,7 @@ AirPaint 是 ComfyUI 上层的 Prompt / Intent / Knowledge Intelligence Layer。
 
 它不替代 ComfyUI，也不是局部修图器。`v1.0.0` 基线仍封存在 `9af5604`（历史验证与 D59 结论见下文，不移动旧 tag）；用户随后解除封版并依次授权 P1、P2A、P2B。FComic 浏览器试用暴露的“资料已关联但模板未执行”及后续“合法多分镜被单镜头检查拒绝”均已做有限修复，不开启新的通用产品阶段；用户已完成一次真实生成有限验收，统计稳定性与其他模板画质仍未验证。
 
-当前接手与用户实测边界：[`SOL_HANDOFF.md`](SOL_HANDOFF.md)。候选加载标签误提取已修复；任务 `0c520c5e5f` 证明“引用存在/警告为空”不能代表模板已执行。当前代码提供独立用法模板选择，选定后由后端保证正向骨架、负面追加、引用与任务快照一致；可信多格布局会显式进入 Composer、解析和构图护栏，“一张输出”不再被当成“单格画布”。2026-09-14 用户有限实测已成功生成一张并认可达到可接受下限，最终正负文本逐项包含所选模板骨架；另有一次 `Failed to fetch` 作为独立传输稳定性问题保留。
+最终接手与验证边界统一记录在本文件。候选加载标签误提取已修复；任务 `0c520c5e5f` 证明“引用存在/警告为空”不能代表模板已执行。当前代码提供独立用法模板选择，选定后由后端保证正向骨架、负面追加、引用与任务快照一致；可信多格布局会显式进入 Composer、解析和构图护栏，“一张输出”不再被当成“单格画布”。2026-09-14 用户有限实测已成功生成一张并认可达到可接受下限，最终正负文本逐项包含所选模板骨架；另有一次 `Failed to fetch` 作为独立传输稳定性问题保留。项目在第 100 次提交重新封板，不再保留阶段性 sol 或契约交接文件作为并列真相源。
 
 ## 当前能力
 
@@ -92,7 +92,7 @@ docs/DEVLOG.md                开发演进
 - 真实 AirPaint 进程以临时本地 ComfyUI 协议替身完成启动、cookie 登录、90 次配额读取、空历史查询和正常 shutdown；没有调用 GPU 或外部模型。
 - 实际空库完成 online backup、manifest/hash/schema/integrity 校验与隔离目录整包恢复；没有覆盖生产目录。
 - 浏览器在桌面与 `390×844`、纸本与石墨主题下完成结果恢复、Prompt/seed/配额、异常卡片、设置、历史分支与迭代暗房验收；移动端无横向溢出。纸本 Img2Img 画幅适配的近黑下拉框已修复。
-- README 已保存当前真实界面截图与演示记录；中央图片为项目已有生成结果，任务状态明确标记为本地演示夹具，不冒充实时生成。
+- README 保存了 2026-09-09 界面截图与演示记录；中央图片为项目已有生成结果，任务状态明确标记为本地演示夹具，不冒充实时生成。第 100 次提交移除顶部位置文字后，该截图只作历史布局证据。
 - `docs/showcase.md` 另存两张 D59 真实 SFW 原图，并从 PNG 内嵌 workflow 核对 Prompt、seed、尺寸、模型与采样参数；未把演示夹具字段当作真实参数。
 
 `v1.0.0` 已封存于 `9af5604`。用户随后明确授权最后一次前端改版，选择「沉浸展台」并要求竖图优先、加宽编辑器、降低信息密度；这次是已授权的界面收尾，不重开 Prompt/模型/workflow 开发，也不移动旧 tag。当前前端验证与证据见 `docs/demo.md`。
@@ -130,9 +130,9 @@ docs/DEVLOG.md                开发演进
 
 - 新增 `lora_usage` 不可变版本表（`SCHEMA_VERSION` 2，事务迁移）：版本ID = 规范化完整记录的 sha256；正文完整保存，结构化候选可空、不伪造。
 - Registry 只存 `usage.ref(s)` 引用；`resolve_lora_usage` 返回 `no_ref/not_applicable/ok/partial/invalid` 与 `shared`/`profiles[pid]`，不相关 Profile 不返回，缺失/不符分别报告。
-- `.tools/register_lora.py --usage`（必须显式 `--db`）写记录并打印可合并片段；示例见 `docs/lora_usage.example.yaml`；契约见 `docs/LORA_USAGE_CONTRACT.md` §9。
+- `.tools/register_lora.py --usage`（必须显式 `--db`）写记录并打印可合并片段；输入示例见 `docs/lora_usage.example.yaml`，当前行为以工具帮助、代码、测试与 `docs/api.md` 为准。
 - 初次交付记录：测试使用临时库，当时报告生产库 mtime 不变、真实 Registry 未写；零真实模型/GPU 调用。2026-09-12 后续只读核对发现生产库已为 schema 2，迁移触发来源未核实，不能继续把“尚未迁移”作为当前状态。
-- 2026-09-13 审阅修补：资料读取核验正文与完整版本哈希，损坏内容不会被视为可用；无适用 Profile 与坏引用明确区分。入库工具按需加载依赖，`--help/--usage` 不再初始化生产 runtime。资料完整性、命令隔离及相关入库/恢复回归通过；未做真实模型/GPU 与实图验收，生成路径尚不消费资料（待 P2B）。
+- 2026-09-13 P2A 审阅修补：资料读取核验正文与完整版本哈希，损坏内容不会被视为可用；无适用 Profile 与坏引用明确区分。入库工具按需加载依赖，`--help/--usage` 不再初始化生产 runtime。该轮资料完整性、命令隔离及相关入库/恢复回归通过；当时生成路径尚未消费资料，随后已由下文 P2B 接通。
 
 ### 用法资料登记入口（P2A 接线，2026-09-13）
 
@@ -153,7 +153,7 @@ docs/DEVLOG.md                开发演进
 - 人体负面词只能降低常见失败概率，不能解决模型人体能力。
 - `char_dict.yaml` 是历史资产，不代表每条已逐一验证。
 - `server/config.yaml` 含密钥且被忽略。敏感值不得进入代码、文档或提交。
-- 本机 `server/lora_registry.yaml` 使用 skip-worktree，是运行时真相。本轮经用户授权将 FComic 引用切换到含 3 个模板的新不可变记录；该文件不暂存、不推送。写入前完整备份位于 `server/state/pre-fcomic-template-20260913-203125.zip`（gitignored）。
+- 本机 `server/lora_registry.yaml` 使用 skip-worktree，是运行时真相。2026-09-13 经用户授权将 FComic 引用切换到含 3 个模板的新不可变记录；该文件不暂存、不推送。写入前完整备份位于 `server/state/pre-fcomic-template-20260913-203125.zip`（gitignored）。
 
 ## 封版边界与接手路线
 
@@ -178,5 +178,5 @@ docs/DEVLOG.md                开发演进
 - 多格兼容修复：布局权限只从服务端已校验的所选模板派生；可信多格允许不同分镜分别出现 full body/visible feet 与 upper body/close-up，不再被全局单镜头互斥、连续构图或短关系句规则误拒。无模板、仅正文自称 multi-panel、明确单格仍使用原校验；人数、身份、资源与协议检查不放宽。
 - `/api/translate` 的 Composer 校验失败、上游服务失败和响应异常返回结构化 `error_kind`；前端保留 HTTP 状态，并把后端 502、非 JSON HTTP 错误、fetch 传输失败与取消/超时分开显示，不自动重试或清空草稿。
 - FComic 本机资料现提供 `comic_base / one_boy / group` 三个模板，旧正文记录保留，新记录仍为 `verified=unverified`。Registry 校验 16 个 Asset；接口已确认能读出三模板和 832×1216 建议。
-- 验证：`.tools/test_p2b_usage.py` + `.tools/test_p2b_runtime.py` 覆盖严格 schema、可信布局派生、真实 CLIENT 响应解析、一次调用通过、明确单格与无模板两次拒绝、参考图→Composer→预览/最终化、API 列表→预览→任务→workflow 字面一致及 dialog 规划；既有 Prompt 与前端检查保持通过。自动测试使用隔离夹具；本轮未改 Registry/生产数据库，未调用真实模型/GPU 或做实图验收。
-- 当前 P2B 定向套件为 19 项用法语义 + 26 项运行时/API，Prompt unit 58 项及前端错误分类检查通过。当前后端日志未找到交接所述七次失败的可独立复核文本，因此次数/耗时仍只作为外部报告；未做桌面/手机真实服务视口 QA，不作模型画质结论。
+- 验证：`.tools/test_p2b_usage.py` + `.tools/test_p2b_runtime.py` 覆盖严格 schema、可信布局派生、真实 CLIENT 响应解析、一次调用通过、明确单格与无模板两次拒绝、参考图→Composer→预览/最终化、API 列表→预览→任务→workflow 字面一致及 dialog 规划；既有 Prompt 与前端检查保持通过。该自动测试轮次使用隔离夹具，未改 Registry/生产数据库，也未调用真实模型/GPU。
+- 当前 P2B 定向套件为 19 项用法语义 + 26 项运行时/API，Prompt unit 58 项及前端错误分类检查通过。2026-09-14 用户另做一次真实生成并认可达到可接受下限；另一次 `Failed to fetch` 没有足够证据归因。未做统计稳定性、其他模板画质或最终桌面/手机视口 QA，不扩大为通用模型画质结论。

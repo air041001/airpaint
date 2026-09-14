@@ -204,7 +204,7 @@
 
 **背景**: ⑤ 多轮对话精修是北极星("再亮一点"式迭代)。用户调研发现同一对话里不同意图对应不同能力: 换一版=txt2img 重抽, 微调=img2img, 保姿势=ControlNet, 保氛围=③ 参考图。若靠 LLM 猜意图(Qwen3-8B 弱)既慢又不准。
 **决定** (MVP 骨架 + A/D):
-1. **显式路由**: 每张生成图挂操作按钮 [换一版 / 保氛围](B img2img 下阶段), 用户点按钮决定路由, 不猜意图。delta 文本只作提示词增量, 不作意图判断。
+1. **显式路由**: 每张生成图挂操作按钮“换一版 / 保氛围”（B img2img 下阶段）, 用户点按钮决定路由, 不猜意图。delta 文本只作提示词增量, 不作意图判断。
 2. **A 换一版**: delta 有则 `session.raw += delta` 重翻译; 无则复用 `current_en`(免 LLM)换 seed。
 3. **D 保氛围**: 上一张图读文件 base64 -> `siliconflow_vision_translate(mode="iterate")` 全量提取(锁主体+氛围)再变体。**与 ③ 不同**: ③ 用户参考图是 vibe-only 禁抄主体; D 要锁住实际出图的主体+氛围, 故独立 VISION_ITERATE_SYSTEM_PROMPT。
 4. **会话存储**: SESSIONS 内存 dict(sid -> raw/current_en/turns), 与 JOBS/USAGE 同套, 重启清零(迭代线程本就临时)。每轮入队复用抽出的 `_enqueue`(create_job 与 dialog 共用, worker 不动)。

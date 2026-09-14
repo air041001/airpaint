@@ -27,7 +27,7 @@ Authorization: Bearer <token>
 
 响应 `200`:
 ```json
-{ "ok": true, "comfy": true, "database": true, "schema_version": 1 }
+{ "ok": true, "comfy": true, "database": true, "schema_version": 2 }
 ```
 `comfy` = 本机 ComfyUI (127.0.0.1:8188) 是否可达。
 
@@ -164,7 +164,13 @@ Composer 必须返回 `CONCEPT + 精确 12 字段 IR + CHAR + [LORA] + PROMPT`�
      "strength_model":1.0,"strength_clip":1.0}
   ],
   "lora_warnings": [],
-  "registry_revision": "16-char-content-hash"
+  "registry_revision": "16-char-content-hash",
+  "final_prompt_en": "masterpiece, best quality, newest, absurdres, 1girl, white dress, ...",
+  "final_negative": "lowres, bad anatomy, ...",
+  "negative_source": "workflow_default",
+  "usage_templates": [],
+  "usage_template_refs": [],
+  "effective_layout": null
 }
 ```
 - `concept`: Composer 的中文构思控制面，结构为 `用户锁定：…｜模型补全：…`。文本与图像路径均返回；纯角色 canonical 快路返回“模型补全：无”，非 Reasoning legacy 路径可能为 `null`。
@@ -178,6 +184,10 @@ Composer 必须返回 `CONCEPT + 精确 12 字段 IR + CHAR + [LORA] + PROMPT`�
 - `lora_bindings`: 本次翻译解析出的 Asset/Profile/optional/逐 Asset 强度 snapshot；同一 Asset 多 Profile 仍只有一个 binding，`prompt_en` 已由代码幂等合入各 Profile 的 Registry exact tags。
 - `lora_warnings`: default Profile、未知 optional 等可恢复提醒。
 - `registry_revision`: versioned Registry 内容 hash。客户端提交 job 时一并回传；Registry 改动后旧 binding 返回 409，要求重新翻译。
+- `final_prompt_en/final_negative/negative_source`: 本次预览后将实际提交的完整正负文本及负面来源；用户可在生成前编辑。人工 final 和显式用户负面优先于模板与默认值。
+- `usage_templates/usage_template_refs/effective_layout`: 已确定执行的模板快照、来源记录和可信布局。`effective_layout` 仅为 `multi_panel | single_panel | null`，由服务端校验过的模板与用户明确单格意图派生，不能由模型正文自行声明。
+
+Composer 协议/构图校验失败、上游服务失败或响应无效时返回结构化 `502`：`detail.message` 是可显示说明，`detail.error_kind` 分别为 `composer_validation_failed`、`translation_service_failed` 或 `translation_response_invalid`。浏览器 `Failed to fetch` 表示没有取得 HTTP 响应，不等同于其中任一 502。
 
 `prompt_ir_meta.mode` 的图像路径为 `visual_composer_reference` / `visual_composer_source`。参考图不再绕开 Composer 或走字典全命中快路；图像理解和增量修改需要 Reasoning Model，不能降级成旧翻译器。`google`/`none` 仅保留普通文本 legacy 行为。
 
@@ -375,12 +385,12 @@ failed (失败):
 | 409 | 幂等 key 与请求冲突 / LoRA revision 变化 / 任务状态不可恢复 |
 | 429 | 当日已达上限 |
 | 500 | 服务器内部错误 / 未知 translate 后端 |
-| 502 | 翻译失败 (LLM/Google 返回异常或超时) |
+| 502 | 翻译/构思失败；`detail.error_kind` 区分 Composer 校验、上游服务与响应格式异常 |
 
 ### P2B 用法资料字段（2026-09-13）
 
 - `/api/dialog/turn` 的 `action=start` 接收中文并现场编译，因此固定按 `assisted/body` 最终化；客户端的 `manual/final` 声明不适用于此入口。直接英文生成继续使用 `/api/jobs`。
 - `GET /api/loras` 对含结构化模板的 Asset additive 返回 `usage_templates[]`：`id/name/description/profile/positive/layout_positive/layout/negative_add/pose_options/recommended_size`。`pose_options` 供用户用中文指定，不作为未展开语法注入。这只是可选目录；选择物理 LoRA 不等于选择模板。
-- `lora_selections[]` 可带 `usage_template`（模板 ID），与 `profile(s)` 独立。`/api/translate` 新增 `usage_templates`（本次确定执行快照）与 `usage_template_refs`（模板来源记录），同时保留 `usage_provided`、`usage_applied`（**仅为模型声明采用**）、`usage_warnings`、依据/限制、`usage_negative` 和 `usage_revision`。
+- `lora_selections[]` 可带 `usage_template`（模板 ID），与 `profile(s)` 独立。`/api/translate` 新增 `usage_templates`（本次确定执行快照）、`usage_template_refs`（模板来源记录）与 `effective_layout`（`multi_panel | single_panel | null`），同时保留 `usage_provided`、`usage_applied`（**仅为模型声明采用**）、`usage_warnings`、依据/限制、`usage_negative` 和 `usage_revision`。
 - `POST /api/jobs`、`POST /api/dialog/turn` 新增可选 `usage_refs`（字符串数组）：客户端提交的**参考资料**；服务端按当前选择重新校验，只保留确实适用的 ID 并落库为 `usage_refs`，**不代表模型实际采用**。类型错误返回 400。
 - 入队会重新解析 binding 中的 `usage_template`，自动把模板来源并入已核验 `usage_refs`，并保存 `usage_templates` 快照。任务/历史响应提供 `usage_refs`、`usage_warnings`、`usage_revision`、`usage_templates`。
