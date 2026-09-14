@@ -18,6 +18,30 @@ scripts.forEach((source, index) => {
 
 console.log(`${scripts.length} inline scripts parsed: ${path.relative(root, htmlPath)}`);
 
+const apiHelpers = html.match(/function apiResponseError[\s\S]*?(?=\nasync function api\()/);
+if (!apiHelpers) throw new Error("API error classifiers are missing");
+const classify = new Function(`${apiHelpers[0]}; return { apiResponseError, apiTransportError };`)();
+const backend502 = classify.apiResponseError(502, {
+  detail: { message: "构思校验未通过", error_kind: "composer_validation_failed" },
+});
+if (backend502.message !== "构思校验未通过"
+    || backend502.errorKind !== "composer_validation_failed") {
+  throw new Error("structured translate 502 is not preserved");
+}
+const nonJson = classify.apiResponseError(503, {});
+if (nonJson.message !== "服务器错误 503" || nonJson.errorKind !== "http_error") {
+  throw new Error("non-JSON HTTP failure fallback changed");
+}
+const rejected = classify.apiTransportError(new TypeError("Failed to fetch"));
+if (rejected.errorKind !== "transport_failure" || !rejected.message.includes("未收到服务器响应")) {
+  throw new Error("fetch rejection must remain distinct from backend HTTP errors");
+}
+const aborted = classify.apiTransportError({ name: "AbortError", message: "aborted" });
+if (aborted.errorKind !== "request_aborted" || !aborted.message.includes("取消或等待超时")) {
+  throw new Error("abort/timeout failure classification changed");
+}
+console.log("Backend HTTP, non-JSON, fetch rejection, and abort errors classified separately");
+
 // Img2Img is a full-image redraw, not a guarantee of isolated edits (D59).
 for (const claim of ["只写改动即可，其余内容从原图理解", "留空则保留原图内容", "直接在这张图上改、保留构图"]) {
   if (html.includes(claim)) throw new Error(`unsupported Img2Img claim: ${claim}`);

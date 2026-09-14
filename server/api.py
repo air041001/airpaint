@@ -790,6 +790,7 @@ async def translate_prompt(req: Request, token: str = Depends(verify_token)):
         "usage_limits_model": prompt_ir_meta.get("usage_limits_model", ""),
         "usage_templates": prompt_ir_meta.get("usage_templates", []),
         "usage_template_refs": prompt_ir_meta.get("usage_template_refs", []),
+        "effective_layout": prompt_ir_meta.get("effective_layout"),
     }
 
 def _dialog_usage_refs(source, action, delta, body, meta):

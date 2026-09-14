@@ -209,9 +209,11 @@ class TranslateUsageTests(unittest.TestCase):
         prompt._TRANSLATE_CACHE.clear()
 
     def _fake(self, usage_object=None):
-        async def fake(context, reroll=False, prior_state=None, usage_expected=False):
+        async def fake(context, reroll=False, prior_state=None, usage_expected=False,
+                       layout_mode=None):
             self.captured["usage_expected"] = usage_expected
             self.captured["context"] = context
+            self.captured["layout_mode"] = layout_mode
             lines = ["CONCEPT: 用户锁定：少女｜模型补全：坐姿",
                      "IR: " + json.dumps(IR, ensure_ascii=False),
                      "CHAR: none"]
@@ -276,8 +278,10 @@ class TranslateUsageTests(unittest.TestCase):
         })
         lora_module.get_lora_registry = lambda: {"demo": asset_with_refs([record["usage_id"]])}
 
-        async def conflicting(context, reroll=False, prior_state=None, usage_expected=False):
-            self.captured.update({"usage_expected": usage_expected, "context": context})
+        async def conflicting(context, reroll=False, prior_state=None, usage_expected=False,
+                              layout_mode=None):
+            self.captured.update({"usage_expected": usage_expected, "context": context,
+                                  "layout_mode": layout_mode})
             ir = dict(IR)
             ir["composition"] = ["single illustration"]
             ir["constraints"] = ["no multiple panels", "no text or speech bubbles"]
@@ -307,6 +311,7 @@ class TranslateUsageTests(unittest.TestCase):
         self.assertEqual(meta["usage_templates"][0]["id"], "comic_base")
         self.assertIn("多格漫画", meta["concept"])
         self.assertIn("One output image may contain multiple comic panels", self.captured["context"])
+        self.assertEqual(self.captured["layout_mode"], "multi_panel")
 
     def test_explicit_single_panel_disables_only_layout_part(self):
         record = make_record(candidate={

@@ -482,6 +482,24 @@ $('paramsToggle').onclick = () => setMobilePanel('settings');
 
 // ---------------- API ----------------
 let workflows = [];
+function apiResponseError(status, data) {
+  const detail = data && data.detail;
+  const message = (detail && typeof detail === 'object' && typeof detail.message === 'string')
+    ? detail.message
+    : (typeof detail === 'string' && detail ? detail : `服务器错误 ${status}`);
+  return {
+    message,
+    errorKind: (detail && typeof detail === 'object' && typeof detail.error_kind === 'string')
+      ? detail.error_kind : 'http_error',
+  };
+}
+function apiTransportError(error) {
+  if (error && error.name === 'AbortError') {
+    return { message:'请求已取消或等待超时，服务器是否收到请求尚不确定', errorKind:'request_aborted' };
+  }
+  const reason = error && error.message ? ` (${error.message})` : '';
+  return { message:`未收到服务器响应${reason}，请检查网络连接后再试`, errorKind:'transport_failure' };
+}
 async function api(path, opts = {}) {
   opts.credentials = 'include';
   opts.headers = Object.assign({}, opts.headers);
@@ -490,11 +508,17 @@ async function api(path, opts = {}) {
   if (opts.json) { opts.method = opts.method || 'POST'; opts.headers['Content-Type'] = 'application/json'; opts.body = JSON.stringify(opts.json); }
   let r;
   try { r = await fetch(API + path, opts); }
-  catch (e) { throw new Error(`请求失败 (${e.message}) -- 可能网络问题或服务器响应超时`); }
+  catch (e) {
+    const info = apiTransportError(e);
+    const error = new Error(info.message);
+    error.status = 0; error.errorKind = info.errorKind;
+    throw error;
+  }
   const data = await r.json().catch(() => ({}));
   if (!r.ok) {
-    const error = new Error(data.detail || `服务器错误 ${r.status}`);
-    error.status = r.status; error.detail = data.detail;
+    const info = apiResponseError(r.status, data);
+    const error = new Error(info.message);
+    error.status = r.status; error.detail = data.detail; error.errorKind = info.errorKind;
     throw error;
   }
   return data;

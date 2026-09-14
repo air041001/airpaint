@@ -6,7 +6,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 os.environ.setdefault("AIRPAINT_STATE_DIR", tempfile.mkdtemp(prefix="airpaint-test-state-"))
@@ -229,6 +229,106 @@ class DialogRefsTests(unittest.TestCase):
             api._dialog_usage_refs({"usage_refs": ["s"]}, "redo", "", {"usage_refs": ["x"]}, {}), ["x"])
 
 
+class LayoutValidationTests(unittest.IsolatedAsyncioTestCase):
+    def setUp(self):
+        self.cfg = patch.dict(
+            prompt.CFG, {"translate": "siliconflow", "siliconflow_api_key": "test-key"},
+            clear=False)
+        self.cfg.start()
+
+    def tearDown(self):
+        self.cfg.stop()
+
+    @staticmethod
+    def _output(extra=""):
+        value = dict(IR)
+        value["subject"] = ["2girls"]
+        value["pose"] = ["full body", "visible feet"]
+        value["interaction"] = ["body contact"]
+        value["composition"] = ["upper body panel", "close-up panel"]
+        prompt_line = (
+            "2girls, full body, visible feet, upper body, close-up, body contact. "
+            "One panel shows both figures while another panel focuses on their faces."
+        )
+        if extra:
+            prompt_line = "2girls, full body, visible feet, close-up, " + extra
+        return "\n".join([
+            "CONCEPT: 用户锁定：两人漫画｜模型补全：全身与面部特写分镜",
+            "IR: " + json.dumps(value, ensure_ascii=False),
+            "CHAR: none",
+            "PROMPT: " + prompt_line,
+        ])
+
+    async def _run(self, context, layout_mode, extra=""):
+        calls = []
+        output = self._output(extra)
+
+        class Response:
+            status_code = 200
+            text = ""
+
+            def json(self):
+                return {"choices": [{"message": {"content": output}}]}
+
+        class Client:
+            async def post(self, *args, **kwargs):
+                calls.append(kwargs["json"])
+                return Response()
+
+        with patch.object(prompt, "CLIENT", Client()):
+            try:
+                result = await prompt.siliconflow_translate(
+                    context, layout_mode=layout_mode)
+            except prompt.ComposerValidationError as exc:
+                exc.calls = calls
+                raise
+        return result, calls
+
+    async def test_trusted_multi_panel_relaxes_only_cross_panel_shape_checks(self):
+        context = "COMPLETION LEVEL: FAITHFUL\nUSER IDEA:\n两人漫画"
+        result, calls = await self._run(context, "multi_panel")
+        self.assertEqual(len(calls), 1)
+        self.assertIn("full body", result[0])
+        self.assertIn(prompt._MULTI_PANEL_SYSTEM_ADDENDUM,
+                      calls[0]["messages"][0]["content"])
+
+        for raw_context, layout in (
+                (context + "，multi-panel", None),
+                (context, "single_panel")):
+            with self.assertRaises(prompt.ComposerValidationError) as error:
+                await self._run(raw_context, layout)
+            self.assertEqual(len(error.exception.calls), 2)
+
+        with self.assertRaises(prompt.ComposerValidationError):
+            await self._run(context, "multi_panel", "clear separation")
+
+    def test_effective_layout_uses_only_validated_selection_and_explicit_override(self):
+        selected = [{"layout": {"kind": "multi_panel"}}]
+        self.assertEqual(prompt._effective_usage_layout(
+            selected, explicit_single_panel=False), "multi_panel")
+        self.assertEqual(prompt._effective_usage_layout(
+            selected, explicit_single_panel=True), "single_panel")
+        self.assertIsNone(prompt._effective_usage_layout(
+            [], explicit_single_panel=False))
+        self.assertIsNone(prompt._EXPLICIT_SINGLE_PANEL_RE.search("画一张多格漫画"))
+
+    async def test_upstream_http_failure_has_separate_safe_error_kind(self):
+        class Response:
+            status_code = 503
+            text = "provider body must not reach the client"
+
+        class Client:
+            async def post(self, *args, **kwargs):
+                return Response()
+
+        with patch.object(prompt, "CLIENT", Client()):
+            with self.assertRaises(Exception) as error:
+                await prompt.translate("未知场景描述")
+        self.assertEqual(getattr(error.exception, "status_code", None), 502)
+        self.assertEqual(error.exception.detail["error_kind"], "translation_service_failed")
+        self.assertNotIn("provider body", error.exception.detail["message"])
+
+
 class ApiIntegrationTests(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self):
         self.temp = tempfile.TemporaryDirectory()
@@ -261,7 +361,8 @@ class ApiIntegrationTests(unittest.IsolatedAsyncioTestCase):
     async def test_translate_then_job_keeps_literal_final_and_refs(self):
         record = make_record()
 
-        async def fake_translate(context, reroll=False, prior_state=None, usage_expected=False):
+        async def fake_translate(context, reroll=False, prior_state=None, usage_expected=False,
+                                 layout_mode=None):
             return ("1girl, sitting", None, "", dict(IR), [], {},
                     "用户锁定：少女｜模型补全：坐姿", False, [],
                     {"applied": [record["usage_id"]], "negative": "NEG-NEW",
@@ -308,7 +409,8 @@ class ApiIntegrationTests(unittest.IsolatedAsyncioTestCase):
         )
         record, _ = self.store.save_lora_usage(record)
 
-        async def fake_translate(context, reroll=False, prior_state=None, usage_expected=False):
+        async def fake_translate(context, reroll=False, prior_state=None, usage_expected=False,
+                                 layout_mode=None):
             ir = dict(IR)
             ir["subject"] = ["1girl", "solo"]
             ir["composition"] = ["single illustration"]
@@ -364,10 +466,141 @@ class ApiIntegrationTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(request["prompt"][NEG_NODE]["inputs"]["text"],
                          preview["final_negative"])
 
+    async def test_selected_multi_panel_passes_real_parser_preview_and_reference_chain_once(self):
+        record = make_record(candidate={
+            "default_template": "comic_group",
+            "templates": [{
+                "id": "comic_group", "name": "群体漫画",
+                "positive": ["comic style", "focus lines"],
+                "negative_add": ["standing portrait"],
+                "subject_tags": ["2girls"],
+                "layout": {"kind": "multi_panel", "positive": [
+                    "3-5 comic panels", "text and speech bubbles"]},
+            }],
+        })
+        record, _ = self.store.save_lora_usage(record)
+        lora_module.get_lora_registry = lambda: {
+            "demo": asset("demo", [record["usage_id"]])}
+        calls = []
+        contract = {"scope": "composition", "fields": dict(IR), "source_model": "vision-test"}
+        contract["fields"]["composition"] = ["comic page"]
+
+        value = dict(IR)
+        value["subject"] = ["2girls"]
+        value["pose"] = ["full body", "visible feet"]
+        value["interaction"] = ["body contact"]
+        value["composition"] = ["upper body panel", "close-up panel"]
+        usage = {"applied": [], "negative": None, "evidence": "", "limits": ""}
+        output = "\n".join([
+            "CONCEPT: 用户锁定：两人多格漫画｜模型补全：全身与面部特写分镜",
+            "IR: " + json.dumps(value, ensure_ascii=False),
+            "CHAR: none",
+            'LORA: {"demo":{"profile":null,"optional":[]}}',
+            "USAGE: " + json.dumps(usage, ensure_ascii=False),
+            ("PROMPT: 2girls, full body, visible feet, upper body, close-up, body contact. "
+             "One panel shows both figures while another panel focuses on their faces."),
+        ])
+
+        class Response:
+            status_code = 200
+            text = ""
+
+            def json(self):
+                return {"choices": [{"message": {"content": output}}]}
+
+        class Client:
+            async def post(self, *args, **kwargs):
+                calls.append(kwargs["json"])
+                return Response()
+
+        data_image = (
+            "data:image/png;base64,"
+            "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/"
+            "x8AAwMCAO+/a9sAAAAASUVORK5CYII="
+        )
+        selection = {"key": "demo", "mode": "explicit", "usage_template": "comic_group"}
+        with patch.object(prompt, "CLIENT", Client()), \
+                patch.object(prompt, "siliconflow_vision_translate",
+                             AsyncMock(return_value=contract)), \
+                patch.object(prompt, "_default_usage_fetch", self.store.get_lora_usage):
+            preview = await api.translate_prompt(Request(
+                prompt="画一张两人全身与面部特写漫画", workflow="anima", reference_image=data_image,
+                lora_selections=[selection]), token="t")
+
+        self.assertEqual(len(calls), 1)
+        self.assertEqual(preview["effective_layout"], "multi_panel")
+        self.assertIn(prompt._MULTI_PANEL_SYSTEM_ADDENDUM,
+                      calls[0]["messages"][0]["content"])
+        self.assertIn("full body", preview["final_prompt_en"])
+        self.assertIn("close-up", preview["final_prompt_en"])
+        self.assertIn("3-5 comic panels", preview["final_prompt_en"])
+        self.assertIn("standing portrait", preview["final_negative"])
+        self.assertEqual(preview["reference_contract"], contract)
+
+    async def test_selected_template_single_panel_override_keeps_original_rejection(self):
+        record = make_record(candidate={
+            "templates": [{
+                "id": "comic", "name": "漫画", "positive": ["comic style"],
+                "layout": {"kind": "multi_panel", "positive": ["3-5 comic panels"]},
+            }],
+        })
+        record, _ = self.store.save_lora_usage(record)
+        lora_module.get_lora_registry = lambda: {
+            "demo": asset("demo", [record["usage_id"]])}
+        calls = []
+        value = dict(IR)
+        value["subject"] = ["2girls"]
+        value["pose"] = ["full body", "visible feet"]
+        value["composition"] = ["upper body", "close-up"]
+        output = "\n".join([
+            "CONCEPT: 用户锁定：两人单格漫画｜模型补全：无",
+            "IR: " + json.dumps(value, ensure_ascii=False),
+            "CHAR: none",
+            'LORA: {"demo":{"profile":null,"optional":[]}}',
+            'USAGE: {"applied":[],"negative":null,"evidence":"","limits":""}',
+            "PROMPT: 2girls, full body, visible feet, upper body, close-up",
+        ])
+
+        class Response:
+            status_code = 200
+            text = ""
+
+            def json(self):
+                return {"choices": [{"message": {"content": output}}]}
+
+        class Client:
+            async def post(self, *args, **kwargs):
+                calls.append(kwargs["json"])
+                return Response()
+
+        selection = {"key": "demo", "mode": "explicit", "usage_template": "comic"}
+        with patch.object(prompt, "CLIENT", Client()), \
+                patch.object(prompt, "_default_usage_fetch", self.store.get_lora_usage):
+            with self.assertRaises(Exception) as error:
+                await api.translate_prompt(Request(
+                    prompt="画成明确单格漫画", workflow="anima",
+                    lora_selections=[selection]), token="t")
+        self.assertEqual(getattr(error.exception, "status_code", None), 502)
+        self.assertEqual(error.exception.detail["error_kind"], "composer_validation_failed")
+        self.assertIn("构思校验未通过", error.exception.detail["message"])
+        self.assertEqual(len(calls), 2)
+
+        calls.clear()
+        with patch.object(prompt, "CLIENT", Client()), \
+                patch.object(prompt, "_default_usage_fetch", self.store.get_lora_usage):
+            with self.assertRaises(Exception) as raw_error:
+                await api.translate_prompt(Request(
+                    prompt="两人 multi-panel 漫画", workflow="anima",
+                    lora_selections=[{"key": "demo", "mode": "explicit"}]), token="t")
+        self.assertEqual(raw_error.exception.detail["error_kind"],
+                         "composer_validation_failed")
+        self.assertEqual(len(calls), 2)
+
     async def test_dialog_start_is_always_assisted_body(self):
         record = make_record()
 
-        async def fake_translate(context, reroll=False, prior_state=None, usage_expected=False):
+        async def fake_translate(context, reroll=False, prior_state=None, usage_expected=False,
+                                 layout_mode=None):
             return ("1girl, sitting", None, "", dict(IR), [], {},
                     "用户锁定：少女｜模型补全：坐姿", False, [],
                     {"applied": [record["usage_id"]], "negative": "NEG-NEW",
@@ -427,7 +660,8 @@ class DialogBranchBaselineTests(unittest.IsolatedAsyncioTestCase):
     async def _source_job(self, record):
         record, _ = self.store.save_lora_usage(record)
 
-        async def fake_translate(context, reroll=False, prior_state=None, usage_expected=False):
+        async def fake_translate(context, reroll=False, prior_state=None, usage_expected=False,
+                                 layout_mode=None):
             return ("1girl, sitting", None, "", dict(IR), [], {},
                     "用户锁定：少女｜模型补全：坐姿", False, [],
                     {"applied": [record["usage_id"]], "negative": None, "evidence": "", "limits": ""})

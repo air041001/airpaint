@@ -144,7 +144,8 @@ def _composer_character_lora_appearance_issue(prompt_ir: dict, prompt_line: str,
             + "；请从 IR.appearance 与 PROMPT 删除这些属性，让角色 LoRA 提供身份外观")
 
 def _composer_multi_prompt_shape_issue(prompt_ir: dict, prompt_line: str,
-                                       context: str) -> str | None:
+                                       context: str,
+                                       layout_mode: str | None = None) -> str | None:
     """Reject only reproduced multi-character wording that encourages split/crop failures."""
     source = context.lower()
     subjects = " ".join(str(item).lower() for item in prompt_ir.get("subject", []))
@@ -177,6 +178,11 @@ def _composer_multi_prompt_shape_issue(prompt_ir: dict, prompt_line: str,
             "color separation, clear depth, foreground-background layering 等词，只用具名角色短句"
             "表达同一画面中的位置、接触和道具归属"
         )
+
+    # 多格模板的 framing/动作描述属于不同分镜，不能继续当成同一镜头做全局互斥。
+    # 抽象防失败措辞仍然无效且不依赖布局，因此上面的检查始终保留。
+    if layout_mode == "multi_panel":
+        return None
 
     semantic_text = " ".join(
         [low]
@@ -625,6 +631,19 @@ _EXPLICIT_SINGLE_PANEL_RE = re.compile(
     r"(?:单格(?:漫画|画面|构图)?|单一画格|单面板|single[- ]panel|one[- ]panel)",
     re.IGNORECASE,
 )
+
+_LAYOUT_MODES = {"multi_panel", "single_panel"}
+
+
+def _effective_usage_layout(selected: list[dict], *,
+                            explicit_single_panel: bool) -> str | None:
+    """只从服务端已解析模板与明确用户覆盖派生 Composer 布局权限。"""
+    if explicit_single_panel:
+        return "single_panel"
+    if any((template.get("layout") or {}).get("kind") == "multi_panel"
+           for template in selected):
+        return "multi_panel"
+    return None
 
 
 def _resolve_selected_usage_templates(selections, records: list[dict]) -> list[dict]:
@@ -1082,7 +1101,8 @@ _COMPOSER_MANUAL_ACTION_TERMS = (
 )
 
 def _composer_feasibility_issue(prompt_ir: dict, concept: str,
-                                prompt_line: str) -> str | None:
+                                prompt_line: str,
+                                layout_mode: str | None = None) -> str | None:
     """拒绝少量可确定的画面容量冲突，让第二次模型调用重新规划。
 
     这里只检查跨 checkpoint 都明显不可同时呈现的组合；不尝试用代码决定审美、
@@ -1096,7 +1116,8 @@ def _composer_feasibility_issue(prompt_ir: dict, concept: str,
     render_text = f"{ir_text} {prompt_line.lower()}"
     close_crop = any(term in render_text for term in _COMPOSER_CLOSE_CROP_TERMS)
     extended_body = any(term in render_text for term in _COMPOSER_EXTENDED_BODY_TERMS)
-    if close_crop and extended_body:
+    multi_panel = layout_mode == "multi_panel"
+    if not multi_panel and close_crop and extended_body:
         return ("Composer 可画性冲突：近景/上半身构图同时要求完整下肢或全身信息；"
                 "请改为中景/四分之三身，或删除画面外动作")
 
@@ -1114,7 +1135,7 @@ def _composer_feasibility_issue(prompt_ir: dict, concept: str,
     added_close_crop = any(
         term in added.lower() for term in _COMPOSER_ADDED_CLOSE_CROP_TERMS
     )
-    if (close_crop and (lower_frame_action or lower_manual_clauses)
+    if (not multi_panel and close_crop and (lower_frame_action or lower_manual_clauses)
             and (added_close_crop or lower_manual_clauses)):
         return ("Composer 可画性冲突：近景/上半身构图同时把裙摆、髋部或大腿交互设为重点；"
                 "请改为牛仔镜头/四分之三身并让交互区域完整入镜，或删除画面外动作")
@@ -1124,7 +1145,7 @@ def _composer_feasibility_issue(prompt_ir: dict, concept: str,
         if any(target in clause for target in _COMPOSER_MANUAL_TARGET_TERMS)
         and any(action in clause for action in _COMPOSER_MANUAL_ACTION_TERMS)
     ]
-    if len(manual_clauses) > 1:
+    if not multi_panel and len(manual_clauses) > 1:
         return ("Composer 可画性冲突：模型补全同时发明了多个手部/服装操作；"
                 "只保留一个主要交互，让另一只手支撑姿态或自然放置")
     return None
@@ -1143,7 +1164,8 @@ def _normalize_optional_concept(value, field_name: str = "concept") -> str | Non
     return concept
 
 def _parse_composer_output(out: str, active_lora: bool = False,
-                           require_character_line: bool = False) -> tuple:
+                           require_character_line: bool = False,
+                           layout_mode: str | None = None) -> tuple:
     """严格解析 Visual Composer 的 CONCEPT + IR + [CHAR] + [LORA] + PROMPT 协议。"""
     text = out.strip().strip("`").strip()
     lines = [line.strip() for line in text.splitlines() if line.strip()]
@@ -1195,13 +1217,15 @@ def _parse_composer_output(out: str, active_lora: bool = False,
     prompt_line, repetition_collapsed = collapse_exact_prompt_repetition(prompt_line)
     if len(prompt_line) > MAX_PROMPT_EN_CHARS:
         raise RuntimeError(f"Composer PROMPT 过长(>{MAX_PROMPT_EN_CHARS})")
-    feasibility_issue = _composer_feasibility_issue(prompt_ir, concept, prompt_line)
+    feasibility_issue = _composer_feasibility_issue(
+        prompt_ir, concept, prompt_line, layout_mode=layout_mode)
     if feasibility_issue:
         raise RuntimeError(feasibility_issue)
     return (prompt_line, breakdown, nl, prompt_ir, character_hints,
             lora_choices, concept, repetition_collapsed)
 
-def _parse_revision_output(out: str, prior_state: dict, active_lora: bool) -> tuple:
+def _parse_revision_output(out: str, prior_state: dict, active_lora: bool,
+                           layout_mode: str | None = None) -> tuple:
     lines = out.strip().splitlines()
     if not lines or not lines[0].strip().lower().startswith("change_fields:"):
         raise RuntimeError("增量修改缺少 CHANGE_FIELDS")
@@ -1212,7 +1236,9 @@ def _parse_revision_output(out: str, prior_state: dict, active_lora: bool) -> tu
     if (not isinstance(changed, list) or any(not isinstance(x, str) or x not in _IR_FIELDS for x in changed)
             or len(set(changed)) != len(changed)):
         raise RuntimeError("CHANGE_FIELDS 只能列出不重复的十二字段名称")
-    parsed = _parse_composer_output("\n".join(lines[1:]), active_lora, require_character_line=True)
+    parsed = _parse_composer_output(
+        "\n".join(lines[1:]), active_lora, require_character_line=True,
+        layout_mode=layout_mode)
     baseline = _validate_prompt_ir(prior_state.get("prompt_ir"))
     if baseline is not None and not prior_state.get("prompt_edited"):
         drift = [field for field in _IR_FIELDS if field not in changed and parsed[3][field] != baseline[field]]
@@ -1221,10 +1247,27 @@ def _parse_revision_output(out: str, prior_state: dict, active_lora: bool) -> tu
     return parsed + (changed,)
 
 
+_MULTI_PANEL_SYSTEM_ADDENDUM = """TRUSTED LAYOUT MODE: MULTI_PANEL.
+The selected server-validated usage template requires one output canvas containing multiple comic panels. Different panels may intentionally use full-body, visible-feet, upper-body, and close-up shots together. Treat those framings and panel-specific actions as separate shots: do not delete them or force one global camera crop merely because they conflict inside a single frame. The ordinary single-frame crop, one-continuous-composition, and compact-relation-tail limits do not apply globally across panels. Preserve the selected layout skeleton. All subject count, identity, user-lock, resource, and output-protocol rules still apply."""
+
+
+class ComposerValidationError(RuntimeError):
+    """Composer 两次输出均未通过本地协议或语义校验。"""
+
+    error_kind = "composer_validation_failed"
+
+
+class TranslationServiceError(RuntimeError):
+    """上游翻译服务明确返回失败状态。"""
+
+    error_kind = "translation_service_failed"
+
+
 async def siliconflow_translate(context: str, reroll: bool = False,
                                 completion_level: str | None = None,
                                 prior_state: dict | None = None,
-                                usage_expected: bool = False) -> tuple:
+                                usage_expected: bool = False,
+                                layout_mode: str | None = None) -> tuple:
     """走 Reasoning Model 生成 Visual Composer 协议。
 
     返回 (prompt, breakdown, nl, prompt_ir, character_hints, lora_choices,
@@ -1234,6 +1277,8 @@ async def siliconflow_translate(context: str, reroll: bool = False,
     model = CFG.get("siliconflow_model", "deepseek-ai/DeepSeek-V4-Flash")
     if not api_key:
         raise RuntimeError("siliconflow_api_key 未在 config.yaml 中配置")
+    if layout_mode is not None and layout_mode not in _LAYOUT_MODES:
+        raise RuntimeError("无效的 Composer 布局模式")
 
     # thinking 默认关 (D2: 思考慢 30s+ 且易复读); 结构化字段已是强制表态机制, 不依赖 CoT.
     # 隐喻/场景仍弱时 config 翻 translate_enable_thinking: true 重测, 不动代码 (见 D18).
@@ -1283,6 +1328,12 @@ async def siliconflow_translate(context: str, reroll: bool = False,
             )
             if prior_state is not None:
                 repair += "REVISION PROTOCOL: put CHANGE_FIELDS JSON array before CONCEPT, and copy undeclared IR fields exactly from PRIOR STATE.\n"
+            if layout_mode == "multi_panel":
+                repair += (
+                    "LAYOUT REPAIR: keep the trusted multi-panel skeleton. Mixed full-body, "
+                    "visible-feet, upper-body, and close-up shots are valid when they belong to "
+                    "different panels; do not collapse them into one global camera crop.\n"
+                )
         r = await CLIENT.post(
             "https://api.siliconflow.cn/v1/chat/completions",
             headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
@@ -1293,7 +1344,9 @@ async def siliconflow_translate(context: str, reroll: bool = False,
                         MULTI_CHARACTER_SYSTEM_PROMPT
                         if multi_character_protocol else PAINTER_SYSTEM_PROMPT
                     ) + ("\n\n" + REVISION_SYSTEM_RULES if prior_state is not None else "")
-                      + ("\n\n" + _USAGE_SYSTEM_ADDENDUM if usage_expected else "")},
+                      + ("\n\n" + _USAGE_SYSTEM_ADDENDUM if usage_expected else "")
+                      + ("\n\n" + _MULTI_PANEL_SYSTEM_ADDENDUM
+                         if layout_mode == "multi_panel" else "")},
                     # /no_think: Qwen3 软开关, 强制不进思考模式 (思考会慢到 30s+ 且易复读). thinking 开则不前置.
                     {"role": "user", "content": user_content + repair},
                 ],
@@ -1305,7 +1358,7 @@ async def siliconflow_translate(context: str, reroll: bool = False,
             timeout=60,
         )
         if r.status_code != 200:
-            raise RuntimeError(f"翻译服务返回 {r.status_code}: {r.text[:200]}")
+            raise TranslationServiceError(f"翻译服务返回 HTTP {r.status_code}")
         data = r.json()
         out = data["choices"][0]["message"]["content"].strip()
         # 极端情况下模型可能仍带 <think>, 清一下
@@ -1315,9 +1368,11 @@ async def siliconflow_translate(context: str, reroll: bool = False,
             raise RuntimeError("翻译服务返回空内容")
 
         try:
-            parsed = (_parse_revision_output(out, prior_state, active_lora)
+            parsed = (_parse_revision_output(
+                          out, prior_state, active_lora, layout_mode=layout_mode)
                       if prior_state is not None else _parse_composer_output(
-                          out, active_lora=active_lora, require_character_line=True))
+                          out, active_lora=active_lora, require_character_line=True,
+                          layout_mode=layout_mode))
             character_hint_issue = _character_hint_issue(
                 parsed[4], _user_idea_from_composer_context(context)
             )
@@ -1330,7 +1385,7 @@ async def siliconflow_translate(context: str, reroll: bool = False,
                 if identity_issue:
                     raise RuntimeError(identity_issue)
             multi_shape_issue = _composer_multi_prompt_shape_issue(
-                parsed[3], parsed[0], context
+                parsed[3], parsed[0], context, layout_mode=layout_mode
             )
             if multi_shape_issue:
                 raise RuntimeError(multi_shape_issue)
@@ -1340,7 +1395,7 @@ async def siliconflow_translate(context: str, reroll: bool = False,
             parsed = None
 
     if parsed is None:
-        raise RuntimeError(f"Composer 协议修复失败: {last_protocol_error}")
+        raise ComposerValidationError(f"Composer 协议修复失败: {last_protocol_error}")
     # 统一返回 11 项：索引 8 = change_fields，9 = USAGE 对象，10 = USAGE 解析告警。
     usage_object, usage_parse_warnings = _parse_usage_object(out, usage_expected)
     if prior_state is not None:
@@ -1526,7 +1581,8 @@ def _lock_explicit_multi_subject_count(tags: list[str], prompt_ir: dict | None,
     return cleaned
 
 def _prepare_composer_tags(tags: list[str], prompt_ir: dict | None,
-                           original_text: str, char_tags: list[str]) -> list[str]:
+                           original_text: str, char_tags: list[str],
+                           layout_mode: str | None = None) -> list[str]:
     """Visual Composer 的最小代码护栏：主体计数 + 显式全身构图一致性。
 
     不继承旧 Painter 的 nude、默认镜头、剪影或风格删改启发式；这些视觉决定
@@ -1536,7 +1592,7 @@ def _prepare_composer_tags(tags: list[str], prompt_ir: dict | None,
     source = original_text.lower()
     result = _lock_explicit_multi_subject_count(result, prompt_ir, original_text)
     full_body_locked = any(term in source for term in _FULL_BODY_LOCK_TERMS)
-    if full_body_locked:
+    if full_body_locked and layout_mode != "multi_panel":
         result = [tag for tag in result
                   if not any(term in tag.lower() for term in _FULL_BODY_CONFLICT_TERMS)]
         if not any(term in tag.lower() for term in ("full body", "entire figure")
@@ -1694,6 +1750,8 @@ async def translate(text: str, reroll: bool = False, image_b64: str | None = Non
     selected_usage_templates = _resolve_selected_usage_templates(normalized_loras, usage_records)
     explicit_single_panel = bool(_EXPLICIT_SINGLE_PANEL_RE.search(
         text + (("\n" + concept_override) if concept_override else "")))
+    effective_layout = _effective_usage_layout(
+        selected_usage_templates, explicit_single_panel=explicit_single_panel)
     preserve_manual_template = bool(prior_state and prior_state.get("prompt_edited"))
     template_negative = (
         None if prior_state and prior_state.get("negative_source") == "user"
@@ -1744,6 +1802,7 @@ async def translate(text: str, reroll: bool = False, image_b64: str | None = Non
                 str(item.get("usage_id") or "") for item in selected_usage_templates
                 if str(item.get("usage_id") or "")
             )),
+            "effective_layout": effective_layout,
         })
         result = (prompt_en, breakdown, prompt_ir)
         return result + (meta,) if include_meta else result
@@ -1912,9 +1971,11 @@ async def translate(text: str, reroll: bool = False, image_b64: str | None = Non
             _usage_expected = bool(usage_records)
             translated = (await siliconflow_translate(
                               context, reroll=reroll, prior_state=prior_state,
-                              usage_expected=_usage_expected)
+                              usage_expected=_usage_expected,
+                              layout_mode=effective_layout)
                           if prior_state is not None else await siliconflow_translate(
-                              context, reroll=reroll, usage_expected=_usage_expected))
+                              context, reroll=reroll, usage_expected=_usage_expected,
+                              layout_mode=effective_layout))
             new_tags, breakdown, nl, prompt_ir, character_hints = translated[:5]
             lora_choices = translated[5] if len(translated) > 5 else {}
             concept = translated[6] if len(translated) > 6 else None
@@ -1939,8 +2000,23 @@ async def translate(text: str, reroll: bool = False, image_b64: str | None = Non
                 for _item in _usage_negative_suggestions(_record):
                     if _item not in negative_suggestions:
                         negative_suggestions.append(_item)
-        except Exception as e:
-            raise HTTPException(502, f"翻译失败, 请稍后重试 ({e})")
+        except ComposerValidationError as e:
+            raise HTTPException(502, detail={
+                "message": "构思校验未通过，请检查当前描述与所选模板后重试",
+                "error_kind": e.error_kind,
+            })
+        except TranslationServiceError as e:
+            raise HTTPException(502, detail={
+                "message": str(e),
+                "error_kind": e.error_kind,
+            })
+        except HTTPException:
+            raise
+        except Exception:
+            raise HTTPException(502, detail={
+                "message": "翻译服务响应异常，请稍后重试",
+                "error_kind": "translation_response_invalid",
+            })
         if concept_override is not None:
             concept = concept_override
         concept = _align_usage_template_concept(
@@ -1977,7 +2053,8 @@ async def translate(text: str, reroll: bool = False, image_b64: str | None = Non
         new_list = [t.strip() for t in new_tags.split(",") if t.strip()]
         control_text = text + (("\n" + concept_override) if concept_override else "")
         composer_tags = _prepare_composer_tags(new_list, prompt_ir, control_text,
-                                               resolved_char_tags)
+                                               resolved_char_tags,
+                                               layout_mode=effective_layout)
         result = compile_prompt(resolved_char_tags, composer_tags, nl,
                                 infer_render_profile(prompt_ir))
         bindings, lora_warnings, _ = resolve_lora_selections(normalized_loras, lora_choices)
